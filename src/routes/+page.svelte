@@ -187,8 +187,11 @@
   <!-- Row 1: the window's own chrome. Draggable, and kept nearly empty — it
        shares this strip with the macOS traffic lights. -->
   <div class="titlebar" data-tauri-drag-region>
-    <span class="brand">LGTM</span>
-    <span class="spacer"></span>
+    <!-- Only the element carrying the attribute is draggable, so the label and
+         the empty stretch carry it too — otherwise the grabbable area is just
+         the few pixels of gap between them. -->
+    <span class="brand" data-tauri-drag-region>LGTM</span>
+    <span class="spacer" data-tauri-drag-region></span>
     <button class="btn icon" onclick={() => theme.cycle()} title="Cycle theme">
       {theme.label}
     </button>
