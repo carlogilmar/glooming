@@ -1,0 +1,126 @@
+@import "tailwindcss";
+
+/* Class-based dark mode: the `.dark` class is toggled on <html> by the theme
+   store. Light is the default — lgtm is a reading tool, and reading happens on
+   paper more often than on a screen. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ============================================================
+   Design tokens. The two panes are deliberately different
+   surfaces: code is a cool screen, the doc is warm paper.
+   ============================================================ */
+:root {
+  --bg:        #ffffff;
+  --bg-raised: #fbfbfc;
+  --bg-inset:  #f4f5f7;
+  --line:      #e2e5ea;
+  --line-soft: #edeff2;
+  --fg:        #14161a;
+  --fg-dim:    #56606e;
+  --fg-faint:  #8b93a1;
+  --accent:    #2563eb;
+  --pub:       #15803d;
+  --priv:      #b45309;
+  --mark:      #7c3aed;
+  --sel:       #eaf1fd;
+  --shadow:    0 1px 2px rgba(16, 24, 40, .04);
+
+  --code-bg:   #ffffff;
+  --doc-bg:    #faf9f5;
+  --doc-fg:    #2c2a26;
+  --doc-line:  #e7e3d9;
+
+  --who-1:     #2563eb;
+  --who-2:     #7c3aed;
+  --who-3:     #b45309;
+
+  --syn-kw:    #7c3aed;
+  --syn-fn:    #2563eb;
+  --syn-at:    #0e7490;
+  --syn-str:   #15803d;
+  --syn-com:   #9aa3b0;
+  --syn-atom:  #b45309;
+
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
+}
+
+html.dark {
+  --bg:        #14161a;
+  --bg-raised: #1a1d23;
+  --bg-inset:  #101216;
+  --line:      #262a32;
+  --line-soft: #1f232a;
+  --fg:        #d6dae1;
+  --fg-dim:    #8b93a1;
+  --fg-faint:  #5c6472;
+  --accent:    #7aa2f7;
+  --pub:       #9ece6a;
+  --priv:      #e0af68;
+  --mark:      #bb9af7;
+  --sel:       #232d45;
+  --shadow:    none;
+
+  --code-bg:   #14161a;
+  --doc-bg:    #191b21;
+  --doc-fg:    #d9dce2;
+  --doc-line:  #2b2f38;
+
+  --who-1:     #7aa2f7;
+  --who-2:     #bb9af7;
+  --who-3:     #e0af68;
+
+  --syn-kw:    #bb9af7;
+  --syn-fn:    #7aa2f7;
+  --syn-at:    #7dcfff;
+  --syn-str:   #9ece6a;
+  --syn-com:   #4f5666;
+  --syn-atom:  #e0af68;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* ---------- shared controls ---------- */
+.btn {
+  font: inherit; font-size: 11.5px;
+  background: transparent; color: var(--fg-dim);
+  border: 1px solid var(--line); border-radius: 5px;
+  padding: 4px 9px; cursor: pointer; white-space: nowrap;
+}
+.btn:hover { color: var(--fg); border-color: var(--fg-faint); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.primary {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.btn.icon { font-size: 12px; line-height: 1; padding: 4px 8px; }
+
+.panehead {
+  height: 32px; flex: none;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-raised);
+  font-size: 11px; color: var(--fg-faint);
+  text-transform: uppercase; letter-spacing: .09em;
+}
+.panehead .spacer { flex: 1; }
+
+/* ---------- highlight.js → our syntax tokens ---------- */
+.hljs-keyword, .hljs-literal, .hljs-built_in { color: var(--syn-kw); }
+.hljs-title, .hljs-title.function_, .hljs-function .hljs-title { color: var(--syn-fn); }
+.hljs-meta, .hljs-attr { color: var(--syn-at); }
+.hljs-string, .hljs-doctag { color: var(--syn-str); }
+.hljs-comment { color: var(--syn-com); font-style: italic; }
+.hljs-symbol, .hljs-number, .hljs-variable { color: var(--syn-atom); }
+.hljs-title.class_, .hljs-type { color: var(--fg); }

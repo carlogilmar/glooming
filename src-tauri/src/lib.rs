@@ -2,9 +2,11 @@ mod commands;
 mod db;
 mod error;
 mod git;
-mod parse;
-mod reconcile;
-mod seed;
+
+// Public so the integration tests in tests/ can exercise the pipeline directly.
+pub mod parse;
+pub mod reconcile;
+pub mod seed;
 
 use commands::AppState;
 use tauri::Manager;

@@ -4,8 +4,10 @@
 > outline of it, and write an explanation next to it in extended markdown.
 > Elixir first; the architecture assumes more languages later.
 
-Status: plan. Nothing implemented yet. The validated UI mockup lives at
-`mockup/index.html` and is the visual contract for Milestones 1–8.
+Status: **M0–M12 implemented** (see §7 for what each covers). 40 Rust tests
+pass, `pnpm check` is clean, the app builds and runs. The validated UI mockup at
+`mockup/index.html` is the visual contract, and `src-tauri/tests/pipeline.rs`
+asserts the parser still matches it line-for-line.
 
 ---
 
