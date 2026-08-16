@@ -1,0 +1,666 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>lgtm — mockup</title>
+<style>
+  /* ============================================================
+     Light is the default. Dark is opt-in via `.dark` on <html>,
+     same convention as Alexandria (theme.svelte.ts).
+     ============================================================ */
+  :root {
+    --bg:        #ffffff;
+    --bg-raised: #fbfbfc;
+    --bg-inset:  #f4f5f7;
+    --line:      #e2e5ea;
+    --line-soft: #edeff2;
+    --fg:        #14161a;
+    --fg-dim:    #56606e;
+    --fg-faint:  #8b93a1;
+    --accent:    #2563eb;
+    --pub:       #15803d;
+    --priv:      #b45309;
+    --mark:      #7c3aed;
+    --sel:       #eaf1fd;
+    --shadow:    0 1px 2px rgba(16, 24, 40, .04);
+
+    /* the two panes are deliberately different surfaces:
+       code = cool white screen, doc = warm paper */
+    --code-bg:   #ffffff;
+    --doc-bg:    #faf9f5;
+    --doc-fg:    #2c2a26;
+    --doc-line:  #e7e3d9;
+
+    /* blame authors */
+    --who-1:     #2563eb;
+    --who-2:     #7c3aed;
+    --who-3:     #b45309;
+
+    --syn-kw:    #7c3aed;
+    --syn-fn:    #2563eb;
+    --syn-at:    #0e7490;
+    --syn-str:   #15803d;
+    --syn-com:   #9aa3b0;
+    --syn-atom:  #b45309;
+
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
+  }
+
+  html.dark {
+    --bg:        #14161a;
+    --bg-raised: #1a1d23;
+    --bg-inset:  #101216;
+    --line:      #262a32;
+    --line-soft: #1f232a;
+    --fg:        #d6dae1;
+    --fg-dim:    #8b93a1;
+    --fg-faint:  #5c6472;
+    --accent:    #7aa2f7;
+    --pub:       #9ece6a;
+    --priv:      #e0af68;
+    --mark:      #bb9af7;
+    --sel:       #232d45;
+    --shadow:    none;
+
+    --code-bg:   #14161a;
+    --doc-bg:    #191b21;
+    --doc-fg:    #d9dce2;
+    --doc-line:  #2b2f38;
+
+    --who-1:     #7aa2f7;
+    --who-2:     #bb9af7;
+    --who-3:     #e0af68;
+
+    --syn-kw:    #bb9af7;
+    --syn-fn:    #7aa2f7;
+    --syn-at:    #7dcfff;
+    --syn-str:   #9ece6a;
+    --syn-com:   #4f5666;
+    --syn-atom:  #e0af68;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: var(--sans); font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+
+  /* ---------- title bar ---------- */
+  .titlebar {
+    height: 38px; flex: none;
+    display: flex; align-items: center; gap: 12px;
+    padding: 0 12px;
+    background: var(--bg-raised);
+    border-bottom: 1px solid var(--line);
+    -webkit-user-select: none; user-select: none;
+  }
+  .traffic { display: flex; gap: 7px; margin-right: 4px; }
+  .traffic i { width: 11px; height: 11px; border-radius: 50%; display: block; }
+  .traffic i:nth-child(1) { background: #ec6a5e; }
+  .traffic i:nth-child(2) { background: #f4bf4f; }
+  .traffic i:nth-child(3) { background: #61c554; }
+  .brand { font-weight: 700; letter-spacing: .08em; font-size: 11px; color: var(--fg-dim); }
+  .crumb { font-family: var(--mono); font-size: 11.5px; color: var(--fg-faint); }
+  .crumb b { color: var(--fg); font-weight: 500; }
+  .titlebar .spacer { flex: 1; }
+  .btn {
+    font: inherit; font-size: 11.5px;
+    background: transparent; color: var(--fg-dim);
+    border: 1px solid var(--line); border-radius: 5px;
+    padding: 4px 9px; cursor: pointer;
+  }
+  .btn:hover { color: var(--fg); border-color: var(--fg-faint); }
+  .btn.primary { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+                 background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .btn.icon { font-size: 13px; line-height: 1; padding: 4px 7px; }
+
+  /* ---------- layout ---------- */
+  .split { flex: 1; display: flex; min-height: 0; }
+  .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .pane.left  { flex: 0 0 52%; }
+  .pane.right { flex: 1 1 auto; }
+
+  /* draggable divider */
+  .divider {
+    flex: 0 0 5px; cursor: col-resize; position: relative;
+    background: var(--line); transition: background .12s ease;
+  }
+  .divider::after {                       /* fat invisible hit area */
+    content: ""; position: absolute; inset: 0 -4px;
+  }
+  .divider:hover, .divider.dragging { background: var(--accent); }
+  body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none; }
+  .panehead {
+    height: 32px; flex: none;
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--line-soft);
+    background: var(--bg-raised);
+    font-size: 11px; color: var(--fg-faint);
+    text-transform: uppercase; letter-spacing: .09em;
+  }
+  .panehead .spacer { flex: 1; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--priv); display: inline-block; }
+  .panebody { flex: 1; overflow: auto; background: var(--bg); }
+
+  /* ---------- code pane ---------- */
+  .pane.left .panebody { background: var(--code-bg); }
+  .code { font-family: var(--mono); font-size: 12.5px; line-height: 1.65; padding: 10px 0 60vh; }
+  .row {
+    display: flex; padding-right: 12px;
+    transition: opacity .18s ease, background .18s ease;
+  }
+  .row .ln {
+    width: 46px; flex: none; text-align: right; padding-right: 14px;
+    color: var(--fg-faint); opacity: .6; -webkit-user-select: none; user-select: none;
+  }
+  .row .src { white-space: pre; }
+
+  /* ---- git blame gutter ---- */
+  .row .bl {
+    display: none; flex: none; width: 128px; overflow: hidden;
+    align-items: baseline; gap: 6px;
+    padding: 0 10px 0 8px; margin-right: 4px;
+    border-right: 1px solid var(--line-soft);
+    font-size: 10.5px; white-space: nowrap;
+    -webkit-user-select: none; user-select: none;
+  }
+  body.blame .row .bl { display: flex; }
+  .row .bl i {
+    width: 3px; height: 11px; border-radius: 2px; flex: none;
+    align-self: center; background: var(--who-1); opacity: .8;
+  }
+  .row .bl[data-who="a.mendez"] i { background: var(--who-2); }
+  .row .bl[data-who="j.rivera"] i { background: var(--who-3); }
+  .row .bl b  { font-weight: 500; color: var(--fg-faint); }
+  .row .bl em { font-style: normal; color: var(--fg-faint); opacity: .6; margin-left: auto; }
+  .row:hover .bl b, .row:hover .bl em { color: var(--fg-dim); opacity: 1; }
+
+  /* ---- selection: highlight the function, dim everything else ----
+     borrowed from Xray's .focusing / tmPulse idioms                */
+  .row.hit { background: var(--sel); }
+  .row.hit .ln { opacity: 1; color: var(--accent); }
+  .code.focusing .row:not(.hit) { opacity: .32; }
+  .row.hit.head {
+    box-shadow: inset 2px 0 0 var(--accent);
+    animation: rowPulse 2.1s ease-in-out infinite;
+  }
+  @keyframes rowPulse {
+    0%, 100% { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 35%, transparent); }
+    50%      { box-shadow: inset 3px 0 0 var(--accent); }
+  }
+  .row.flash { animation: rowFlash .55s ease-out; }
+  @keyframes rowFlash {
+    from { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+    to   { background: var(--sel); }
+  }
+  .k  { color: var(--syn-kw); }
+  .fn { color: var(--syn-fn); }
+  .at { color: var(--syn-at); }
+  .s  { color: var(--syn-str); }
+  .c  { color: var(--syn-com); font-style: italic; }
+  .a  { color: var(--syn-atom); }
+
+  /* ---------- doc pane ---------- */
+  .toggle { display: flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+  .toggle button {
+    font: inherit; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+    background: transparent; color: var(--fg-faint); border: 0;
+    padding: 3px 10px; cursor: pointer;
+  }
+  .toggle button.on { background: var(--bg-inset); color: var(--fg); }
+
+  .pane.right .panebody { background: var(--doc-bg); color: var(--doc-fg); }
+  .pane.right .panehead { background: var(--doc-bg); border-bottom-color: var(--doc-line); }
+
+  .doc { padding: 26px 30px 60vh; max-width: 760px; }
+  .doc h1 { font-size: 20px; margin: 0 0 6px; letter-spacing: -.01em; color: var(--doc-fg); }
+  .doc h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .1em;
+            color: var(--fg-faint); margin: 30px 0 10px; }
+  .doc p  { color: var(--fg-dim); line-height: 1.7; margin: 0 0 14px; }
+  .doc blockquote {
+    margin: 0 0 20px; padding: 0 0 0 14px;
+    border-left: 2px solid var(--line); color: var(--fg-dim); font-style: italic;
+  }
+  .doc code { font-family: var(--mono); font-size: 12px; background: var(--bg-inset);
+              padding: 1px 5px; border-radius: 4px; color: var(--fg-dim); }
+
+  /* the extended-markdown block, rendered */
+  .block {
+    border: 1px solid var(--doc-line); border-radius: 8px;
+    background: var(--code-bg); overflow: hidden; margin: 0 0 22px;
+    box-shadow: var(--shadow);
+  }
+  .block > header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 12px; border-bottom: 1px solid var(--line-soft);
+    background: var(--bg-inset);
+    font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--fg-faint);
+  }
+  .block > header .tag { font-family: var(--mono); color: var(--mark); text-transform: none; letter-spacing: 0; }
+  .block > header .count { margin-left: auto; font-family: var(--mono); }
+  .grp { padding: 4px 0; }
+  .grp + .grp { border-top: 1px solid var(--line-soft); }
+  .grp > .label {
+    display: flex; align-items: center; gap: 7px;
+    padding: 8px 12px 4px; font-size: 10.5px;
+    letter-spacing: .1em; text-transform: uppercase;
+  }
+  .grp.public  > .label { color: var(--pub); }
+  .grp.private > .label { color: var(--priv); }
+  .grp > .label .bar { width: 3px; height: 11px; border-radius: 2px; background: currentColor; }
+
+  .fnrow {
+    display: grid; grid-template-columns: minmax(150px, auto) 1fr;
+    gap: 14px; align-items: baseline;
+    padding: 7px 12px; cursor: pointer; border-left: 2px solid transparent;
+  }
+  .fnrow { position: relative; transition: background .14s ease, border-color .14s ease; }
+  .fnrow:hover  { background: var(--bg-inset); border-left-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+
+  /* selected: the row breathes in time with the code pane (same 2.1s as Xray's
+     tmPulse), gets a glow, and grows a caret pointing at the code */
+  .fnrow.active {
+    background: var(--sel);
+    border-left-color: var(--accent);
+    animation: fnPulse 2.1s ease-in-out infinite;
+  }
+  @keyframes fnPulse {
+    0%, 100% {
+      box-shadow: inset 3px 0 0 -1px var(--accent),
+                  0 0 0 0 color-mix(in srgb, var(--accent) 22%, transparent);
+    }
+    50% {
+      box-shadow: inset 3px 0 0 0 var(--accent),
+                  0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+  }
+  .fnrow.active .sig { color: var(--accent); font-weight: 600; }
+  .fnrow.active::after {
+    content: "◂"; position: absolute; right: 8px; top: 50%;
+    transform: translateY(-50%);
+    color: var(--accent); font-size: 11px;
+    animation: caretNudge 2.1s ease-in-out infinite;
+  }
+  @keyframes caretNudge {
+    0%, 100% { opacity: .35; transform: translate(2px, -50%); }
+    50%      { opacity: 1;   transform: translate(-2px, -50%); }
+  }
+  .fnrow.active .why.empty { opacity: 1; }
+
+  /* "Esc to exit" hint, shown only while a function is focused */
+  .pane.left { position: relative; }
+  .focushint {
+    position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+    display: none; align-items: center; gap: 7px;
+    padding: 5px 11px; border-radius: 999px;
+    background: var(--bg-raised); border: 1px solid var(--line);
+    box-shadow: 0 4px 16px rgba(16, 24, 40, .12);
+    font-size: 11px; color: var(--fg-dim); white-space: nowrap;
+    -webkit-user-select: none; user-select: none; cursor: pointer;
+    animation: hintIn .16s ease-out;
+  }
+  body.focused .focushint { display: flex; }
+  .focushint kbd {
+    font-family: var(--mono); font-size: 10px;
+    border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px;
+    padding: 1px 5px; color: var(--fg);
+  }
+  .focushint:hover { color: var(--fg); border-color: var(--fg-faint); }
+  @keyframes hintIn { from { opacity: 0; transform: translate(-50%, 6px); }
+                      to   { opacity: 1; transform: translate(-50%, 0); } }
+  .fnrow .sig { font-family: var(--mono); font-size: 12.5px; color: var(--fg); }
+  .fnrow .sig .ar { color: var(--fg-faint); }
+  .fnrow .why { color: var(--fg-dim); font-size: 12.5px; line-height: 1.5; }
+  .fnrow .why.empty { color: var(--fg-faint); font-style: italic; opacity: .7; }
+  .fnrow .why.empty::before { content: "explain…"; }
+
+  /* raw source view */
+  .raw {
+    display: none; font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
+    white-space: pre-wrap; padding: 26px 30px 60vh; color: var(--fg-dim);
+  }
+  .raw .tok  { color: var(--mark); }
+  .raw .hash { color: var(--accent); }
+  body.editing .doc { display: none; }
+  body.editing .raw { display: block; }
+
+  /* ---------- status bar ---------- */
+  .status {
+    height: 24px; flex: none; display: flex; align-items: center; gap: 16px;
+    padding: 0 12px; background: var(--bg-raised); border-top: 1px solid var(--line);
+    font-family: var(--mono); font-size: 11px; color: var(--fg-faint);
+  }
+  .status .spacer { flex: 1; }
+  .status b { color: var(--pub); font-weight: 500; }
+</style>
+</head>
+<body>
+
+<div class="titlebar">
+  <div class="traffic"><i></i><i></i><i></i></div>
+  <span class="brand">LGTM</span>
+  <span class="crumb">~/code/my_app/lib/my_app/<b>accounts.ex</b></span>
+  <span class="spacer"></span>
+  <button class="btn">Open file…</button>
+  <button class="btn">Re-parse</button>
+  <button class="btn icon" id="theme" title="Cycle theme: light → dark → system">☀︎ Light</button>
+  <button class="btn primary">Saved ✓</button>
+</div>
+
+<div class="split">
+
+  <!-- ============ LEFT: source ============ -->
+  <div class="pane left">
+    <div class="panehead">
+      <span>accounts.ex</span>
+      <span class="spacer"></span>
+      <button class="btn icon" id="blame" title="Toggle blame gutter">◫ Blame</button>
+      <span>elixir · 42 lines</span>
+    </div>
+    <div class="focushint" id="focushint">
+      <span>Reading <b id="hintfn">create_user/1</b></span>
+      <kbd>esc</kbd>
+      <span>to exit</span>
+    </div>
+    <div class="panebody" id="codebody">
+      <div class="code">
+        <div class="row" data-line="1"><span class="bl" data-who="carlo"><i></i><b>carlo</b><em>2y</em></span><span class="ln">1</span><span class="src"><span class="k">defmodule</span> MyApp.Accounts <span class="k">do</span></span></div>
+        <div class="row" data-line="2"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">2</span><span class="src">  <span class="at">@moduledoc</span> <span class="s">&quot;&quot;&quot;</span></span></div>
+        <div class="row" data-line="3"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">3</span><span class="src">  <span class="s">Reads and writes for the `users` table.</span></span></div>
+        <div class="row" data-line="4"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">4</span><span class="src">  <span class="s">&quot;&quot;&quot;</span></span></div>
+        <div class="row" data-line="5"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">5</span><span class="src">&nbsp;</span></div>
+        <div class="row" data-line="6"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">6</span><span class="src">  <span class="k">import</span> Ecto.Changeset</span></div>
+        <div class="row" data-line="7"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">7</span><span class="src">  <span class="k">alias</span> MyApp.{Repo, User}</span></div>
+        <div class="row" data-line="8"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">8</span><span class="src">&nbsp;</span></div>
+        <div class="row" data-line="9"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">9</span><span class="src">  <span class="at">@required</span> [<span class="a">:email</span>, <span class="a">:name</span>]</span></div>
+        <div class="row" data-line="10"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">10</span><span class="src">&nbsp;</span></div>
+        <div class="row" data-line="11"><span class="bl" data-who="a.mendez"><i></i><b>a.mendez</b><em>3mo</em></span><span class="ln">11</span><span class="src">  <span class="at">@doc</span> <span class="s">"Creates a user from raw attrs."</span></span></div>
+        <div class="row" data-line="12"><span class="bl" data-who="a.mendez"><i></i><b></b><em></em></span><span class="ln">12</span><span class="src">  <span class="k">def</span> <span class="fn">create_user</span>(attrs) <span class="k">do</span></span></div>
+        <div class="row" data-line="13"><span class="bl" data-who="a.mendez"><i></i><b></b><em></em></span><span class="ln">13</span><span class="src">    attrs</span></div>
+        <div class="row" data-line="14"><span class="bl" data-who="a.mendez"><i></i><b></b><em></em></span><span class="ln">14</span><span class="src">    |&gt; normalize()</span></div>
+        <div class="row" data-line="15"><span class="bl" data-who="a.mendez"><i></i><b></b><em></em></span><span class="ln">15</span><span class="src">    |&gt; <span class="k">then</span>(&amp;changeset(%User{}, &amp;1))</span></div>
+        <div class="row" data-line="16"><span class="bl" data-who="a.mendez"><i></i><b></b><em></em></span><span class="ln">16</span><span class="src">    |&gt; Repo.insert()</span></div>
+        <div class="row" data-line="17"><span class="bl" data-who="a.mendez"><i></i><b></b><em></em></span><span class="ln">17</span><span class="src">  <span class="k">end</span></span></div>
+        <div class="row" data-line="18"><span class="bl" data-who="carlo"><i></i><b>carlo</b><em>2y</em></span><span class="ln">18</span><span class="src">&nbsp;</span></div>
+        <div class="row" data-line="19"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">19</span><span class="src">  <span class="at">@doc</span> <span class="s">"Fetches a user, or nil."</span></span></div>
+        <div class="row" data-line="20"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">20</span><span class="src">  <span class="k">def</span> <span class="fn">get_user</span>(id) <span class="k">do</span></span></div>
+        <div class="row" data-line="21"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">21</span><span class="src">    Repo.get(User, id)</span></div>
+        <div class="row" data-line="22"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">22</span><span class="src">  <span class="k">end</span></span></div>
+        <div class="row" data-line="23"><span class="bl" data-who="j.rivera"><i></i><b>j.rivera</b><em>6d</em></span><span class="ln">23</span><span class="src">&nbsp;</span></div>
+        <div class="row" data-line="24"><span class="bl" data-who="j.rivera"><i></i><b></b><em></em></span><span class="ln">24</span><span class="src">  <span class="k">def</span> <span class="fn">get_user!</span>(id) <span class="k">do</span></span></div>
+        <div class="row" data-line="25"><span class="bl" data-who="j.rivera"><i></i><b></b><em></em></span><span class="ln">25</span><span class="src">    Repo.get!(User, id)</span></div>
+        <div class="row" data-line="26"><span class="bl" data-who="j.rivera"><i></i><b></b><em></em></span><span class="ln">26</span><span class="src">  <span class="k">end</span></span></div>
+        <div class="row" data-line="27"><span class="bl" data-who="carlo"><i></i><b>carlo</b><em>1y</em></span><span class="ln">27</span><span class="src">&nbsp;</span></div>
+        <div class="row" data-line="28"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">28</span><span class="src"><span class="c">  # -- private ---------------------------------------------------------</span></span></div>
+        <div class="row" data-line="29"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">29</span><span class="src">&nbsp;</span></div>
+        <div class="row" data-line="30"><span class="bl" data-who="a.mendez"><i></i><b>a.mendez</b><em>3mo</em></span><span class="ln">30</span><span class="src">  <span class="k">defp</span> <span class="fn">normalize</span>(%{email: email} = attrs) <span class="k">do</span></span></div>
+        <div class="row" data-line="31"><span class="bl" data-who="a.mendez"><i></i><b></b><em></em></span><span class="ln">31</span><span class="src">    %{attrs | email: email |&gt; String.trim() |&gt; String.downcase()}</span></div>
+        <div class="row" data-line="32"><span class="bl" data-who="a.mendez"><i></i><b></b><em></em></span><span class="ln">32</span><span class="src">  <span class="k">end</span></span></div>
+        <div class="row" data-line="33"><span class="bl" data-who="a.mendez"><i></i><b></b><em></em></span><span class="ln">33</span><span class="src">&nbsp;</span></div>
+        <div class="row" data-line="34"><span class="bl" data-who="a.mendez"><i></i><b></b><em></em></span><span class="ln">34</span><span class="src">  <span class="k">defp</span> <span class="fn">normalize</span>(attrs), <span class="k">do</span>: attrs</span></div>
+        <div class="row" data-line="35"><span class="bl" data-who="carlo"><i></i><b>carlo</b><em>1y</em></span><span class="ln">35</span><span class="src">&nbsp;</span></div>
+        <div class="row" data-line="36"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">36</span><span class="src">  <span class="k">defp</span> <span class="fn">changeset</span>(user, attrs) <span class="k">do</span></span></div>
+        <div class="row" data-line="37"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">37</span><span class="src">    user</span></div>
+        <div class="row" data-line="38"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">38</span><span class="src">    |&gt; cast(attrs, <span class="at">@required</span>)</span></div>
+        <div class="row" data-line="39"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">39</span><span class="src">    |&gt; validate_required(<span class="at">@required</span>)</span></div>
+        <div class="row" data-line="40"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">40</span><span class="src">    |&gt; unique_constraint(<span class="a">:email</span>)</span></div>
+        <div class="row" data-line="41"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">41</span><span class="src">  <span class="k">end</span></span></div>
+        <div class="row" data-line="42"><span class="bl" data-who="carlo"><i></i><b></b><em></em></span><span class="ln">42</span><span class="src"><span class="k">end</span></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider" id="divider"></div>
+
+  <!-- ============ RIGHT: explanation ============ -->
+  <div class="pane right">
+    <div class="panehead">
+      <span class="dot" title="unsaved"></span>
+      <span>accounts.ex.md</span>
+      <span class="spacer"></span>
+      <div class="toggle">
+        <button id="tPrev" class="on">Preview</button>
+        <button id="tEdit">Edit</button>
+      </div>
+    </div>
+    <div class="panebody">
+
+      <!-- rendered -->
+      <div class="doc">
+        <h1>MyApp.Accounts</h1>
+        <blockquote>The only module allowed to touch the <code>users</code> table.
+          Everything above it speaks in structs; everything below it speaks in SQL.</blockquote>
+
+        <h2>Surface</h2>
+
+        <div class="block">
+          <header>
+            <span class="tag">lgtm:functions</span>
+            <span>MyApp.Accounts</span>
+            <span class="count">3 public · 2 private</span>
+          </header>
+
+          <div class="grp public">
+            <div class="label"><span class="bar"></span>public</div>
+            <div class="fnrow" data-line="12">
+              <span class="sig">create_user<span class="ar">/1</span></span>
+              <span class="why">Entry point. Normalizes the attrs, runs the changeset, inserts. Returns <code>{:ok, user}</code> or <code>{:error, changeset}</code>.</span>
+            </div>
+            <div class="fnrow" data-line="20">
+              <span class="sig">get_user<span class="ar">/1</span></span>
+              <span class="why">Plain fetch by id. Returns <code>nil</code> when missing — the bang-free half of the pair.</span>
+            </div>
+            <div class="fnrow" data-line="24">
+              <span class="sig">get_user!<span class="ar">/1</span></span>
+              <span class="why empty"></span>
+            </div>
+          </div>
+
+          <div class="grp private">
+            <div class="label"><span class="bar"></span>private</div>
+            <div class="fnrow" data-line="30">
+              <span class="sig">normalize<span class="ar">/1</span></span>
+              <span class="why">Trims and downcases the email so uniqueness actually holds. Two clauses — the second is the passthrough.</span>
+            </div>
+            <div class="fnrow" data-line="36">
+              <span class="sig">changeset<span class="ar">/2</span></span>
+              <span class="why">Cast + validate. The single place field rules live.</span>
+            </div>
+          </div>
+        </div>
+
+        <h2>Notes</h2>
+        <p>The public trio is deliberately thin: <code>create_user/1</code> is the only writer, and both
+          readers are wrappers over the same query. Any new validation belongs in
+          <code>changeset/2</code>, never in the public function.</p>
+      </div>
+
+      <!-- raw markdown -->
+      <div class="raw"><span class="hash"># MyApp.Accounts</span>
+
+&gt; The only module allowed to touch the `users` table.
+&gt; Everything above it speaks in structs; everything below it speaks in SQL.
+
+<span class="hash">## Surface</span>
+
+<span class="tok">```lgtm:functions module=MyApp.Accounts</span>
+public:
+  - create_user/1 : Entry point. Normalizes the attrs, runs the changeset, inserts. Returns `{:ok, user}` or `{:error, changeset}`.
+  - get_user/1    : Plain fetch by id. Returns `nil` when missing — the bang-free half of the pair.
+  - get_user!/1   :
+private:
+  - normalize/1   : Trims and downcases the email so uniqueness actually holds. Two clauses — the second is the passthrough.
+  - changeset/2   : Cast + validate. The single place field rules live.
+<span class="tok">```</span>
+
+<span class="hash">## Notes</span>
+
+The public trio is deliberately thin: `create_user/1` is the only writer, and both
+readers are wrappers over the same query. Any new validation belongs in
+`changeset/2`, never in the public function.
+</div>
+
+    </div>
+  </div>
+</div>
+
+<div class="status">
+  <span>tree-sitter-elixir · parsed in 3.1 ms</span>
+  <span>5 functions · 1 module</span>
+  <span class="spacer"></span>
+  <span>doc <b>#a41f</b> → sqlite</span>
+</div>
+
+<script>
+// ---- theme: light default, dark opt-in via .dark on <html> ---------------
+// Mirrors Alexandria's theme store: preference is light | dark | system,
+// persisted under "theme"; only the DEFAULT differs (light, not system).
+var THEME_KEY = 'theme';
+var ORDER = ['light', 'dark', 'system'];
+var LABEL = { light: '☀︎ Light', dark: '☾ Dark', system: '◐ System' };
+
+function readPref() {
+  var v = localStorage.getItem(THEME_KEY);
+  return v === 'light' || v === 'dark' || v === 'system' ? v : 'light';
+}
+function systemPrefersDark() {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+function applyTheme(pref) {
+  var isDark = pref === 'dark' || (pref === 'system' && systemPrefersDark());
+  document.documentElement.classList.toggle('dark', isDark);
+  document.getElementById('theme').textContent = LABEL[pref];
+}
+
+var pref = readPref();
+applyTheme(pref);
+document.getElementById('theme').onclick = function () {
+  pref = ORDER[(ORDER.indexOf(pref) + 1) % ORDER.length];
+  localStorage.setItem(THEME_KEY, pref);
+  applyTheme(pref);
+};
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+  if (pref === 'system') applyTheme(pref);
+});
+
+// ---- blame gutter -------------------------------------------------------
+var blameBtn = document.getElementById('blame');
+blameBtn.onclick = function () {
+  var on = document.body.classList.toggle('blame');
+  blameBtn.classList.toggle('primary', on);
+};
+
+// ---- resizable divider --------------------------------------------------
+var divider = document.getElementById('divider');
+var left = document.querySelector('.pane.left');
+var split = document.querySelector('.split');
+
+divider.addEventListener('mousedown', function (e) {
+  e.preventDefault();
+  divider.classList.add('dragging');
+  document.body.classList.add('resizing');
+
+  function move(ev) {
+    var box = split.getBoundingClientRect();
+    var pct = ((ev.clientX - box.left) / box.width) * 100;
+    left.style.flexBasis = Math.min(80, Math.max(20, pct)) + '%';
+  }
+  function up() {
+    divider.classList.remove('dragging');
+    document.body.classList.remove('resizing');
+    window.removeEventListener('mousemove', move);
+    window.removeEventListener('mouseup', up);
+  }
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', up);
+});
+
+// double-click resets to the default split
+divider.addEventListener('dblclick', function () { left.style.flexBasis = '52%'; });
+
+// ---- doc → code linking -------------------------------------------------
+var body = document.getElementById('codebody');
+var code = document.querySelector('.code');
+var rows = [].slice.call(document.querySelectorAll('.row'));
+
+// Leaving focus. Four ways out, because one is never enough:
+//   · Esc            · click the selected row again
+//   · click the hint · click empty space in the code pane
+function clearFocus() {
+  code.classList.remove('focusing');
+  document.body.classList.remove('focused');
+  rows.forEach(function (r) { r.classList.remove('hit', 'head', 'flash'); });
+  [].forEach.call(document.querySelectorAll('.fnrow.active'), function (r) {
+    r.classList.remove('active');
+  });
+}
+
+[].forEach.call(document.querySelectorAll('.fnrow'), function (row) {
+  row.addEventListener('click', function () {
+    // clicking the already-selected row toggles focus off
+    if (row.classList.contains('active')) { clearFocus(); return; }
+
+    [].forEach.call(document.querySelectorAll('.fnrow.active'), function (r) {
+      r.classList.remove('active');
+    });
+    row.classList.add('active');
+    document.body.classList.add('focused');
+    document.getElementById('hintfn').textContent =
+      row.querySelector('.sig').textContent;
+
+    var start = parseInt(row.getAttribute('data-line'), 10);
+    rows.forEach(function (r) { r.classList.remove('hit', 'head', 'flash'); });
+
+    // highlight from the def through its matching `end`
+    var depth = 0, done = false;
+    for (var i = start - 1; i < rows.length && !done; i++) {
+      var txt = rows[i].querySelector('.src').textContent;
+      rows[i].classList.add('hit');
+      if (/\bdo\s*$/.test(txt)) depth++;
+      else if (i === start - 1) done = true;          // single-line def
+      if (depth && /^\s*end\s*$/.test(txt)) { depth--; if (!depth) done = true; }
+    }
+
+    // the def line keeps a slow breathing accent bar; the whole body flashes once
+    var target = rows[start - 1];
+    target.classList.add('head');
+    code.classList.add('focusing');
+    rows.filter(function (r) { return r.classList.contains('hit'); })
+        .forEach(function (r) {
+          r.classList.remove('flash');
+          void r.offsetWidth;                          // restart the animation
+          r.classList.add('flash');
+        });
+
+    body.scrollTo({ top: target.offsetTop - body.clientHeight / 3, behavior: 'smooth' });
+  });
+});
+
+// clicking bare code, the hint, or pressing Esc all exit
+body.addEventListener('click', function (e) {
+  if (!e.target.closest('.row')) clearFocus();
+});
+document.getElementById('focushint').addEventListener('click', clearFocus);
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') clearFocus();
+});
+
+// ---- edit / preview toggle ---------------------------------------------
+var tEdit = document.getElementById('tEdit'), tPrev = document.getElementById('tPrev');
+tEdit.onclick = function () {
+  document.body.classList.add('editing');
+  tEdit.classList.add('on'); tPrev.classList.remove('on');
+};
+tPrev.onclick = function () {
+  document.body.classList.remove('editing');
+  tPrev.classList.add('on'); tEdit.classList.remove('on');
+};
+</script>
+</body>
+</html>
