@@ -160,7 +160,8 @@
   }
 
   .doc {
-    padding: 26px 30px 60vh;
+    /* Enough tail room to clear the window edge, not a screenful of nothing. */
+    padding: 26px 30px 40px;
     max-width: 760px;
   }
 

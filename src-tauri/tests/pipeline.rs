@@ -130,3 +130,37 @@ fn a_later_edit_to_the_file_never_costs_you_prose() {
     // The deleted one is struck through, not erased.
     assert!(merged.contains("~~get_user!/1~~"), "{merged}");
 }
+
+/// The frontend reads `endLine` and `minArity`. Rust's field names are snake
+/// case, so the serde rename is load-bearing: without it the doc pane gets
+/// `undefined` for the end line and highlights only the `def` line instead of
+/// the whole function body.
+#[test]
+fn the_wire_format_is_camel_case() {
+    let o = outline();
+    let json = serde_json::to_string(&o.modules[0].functions[0]).expect("serializes");
+
+    assert!(json.contains("\"endLine\""), "got: {json}");
+    assert!(json.contains("\"minArity\""), "got: {json}");
+    assert!(!json.contains("end_line"), "snake case leaked: {json}");
+    assert!(!json.contains("min_arity"), "snake case leaked: {json}");
+}
+
+/// A focused function must cover its whole body, header through `end`.
+#[test]
+fn end_lines_span_the_whole_function_body() {
+    let o = outline();
+    let f = |sig: &str| {
+        o.modules[0]
+            .functions
+            .iter()
+            .find(|f| f.signature() == sig)
+            .unwrap_or_else(|| panic!("missing {sig}"))
+    };
+
+    // create_user/1 runs from `def` on 12 to its `end` on 17.
+    assert_eq!((f("create_user/1").line, f("create_user/1").end_line), (12, 17));
+    assert_eq!((f("get_user/1").line, f("get_user/1").end_line), (20, 22));
+    assert_eq!((f("get_user!/1").line, f("get_user!/1").end_line), (24, 26));
+    assert_eq!((f("changeset/2").line, f("changeset/2").end_line), (36, 41));
+}

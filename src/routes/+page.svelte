@@ -184,21 +184,36 @@
 <svelte:window onkeydown={onKeydown} />
 
 <div class="app">
+  <!-- Row 1: the window's own chrome. Draggable, and kept nearly empty — it
+       shares this strip with the macOS traffic lights. -->
   <div class="titlebar" data-tauri-drag-region>
     <span class="brand">LGTM</span>
-    {#if file}
-      <span class="crumb">{file.path.replace(/\/[^/]+$/, "/")}<b>{file.filename}</b></span>
-      {#if file.branch}<span class="branch">{file.branch}</span>{/if}
-    {/if}
     <span class="spacer"></span>
-    <button class="btn" onclick={pickFile}>Open file…</button>
-    <button class="btn" onclick={() => (showLibrary = true)}>Library</button>
-    <button class="btn" onclick={reparseNow} disabled={!file}>Re-parse</button>
     <button class="btn icon" onclick={() => theme.cycle()} title="Cycle theme">
       {theme.label}
     </button>
-    <span class="save" class:dirty>{saving ? "Saving…" : dirty ? "Unsaved" : doc ? "Saved ✓" : ""}</span>
   </div>
+
+  <!-- Row 2: the app's own header. Everything about the file being read lives
+       here, where there is room for it. -->
+  {#if file}
+    <div class="apphead">
+      <div class="ident">
+        <span class="name">{file.filename}</span>
+        <span class="path">{file.path.replace(/\/[^/]+$/, "")}</span>
+      </div>
+      {#if file.branch}
+        <span class="branch" title="Branch, read from .git/HEAD">⑂ {file.branch}</span>
+      {/if}
+
+      <span class="spacer"></span>
+
+      <span class="save" class:dirty>{saving ? "Saving…" : dirty ? "Unsaved" : doc ? "Saved ✓" : ""}</span>
+      <button class="btn" onclick={reparseNow}>Re-parse</button>
+      <button class="btn" onclick={() => (showLibrary = true)}>Library</button>
+      <button class="btn primary" onclick={pickFile}>Open file…</button>
+    </div>
+  {/if}
 
   {#if error}
     <div class="banner">
@@ -209,6 +224,7 @@
 
   {#if !file}
     <div class="welcome">
+      <img src="/app-icon.png" alt="" class="hero" />
       <h1>lgtm</h1>
       <p>Open an Elixir file. The source goes left, your explanation goes right.</p>
       <div class="actions">
@@ -311,25 +327,48 @@
     font-size: 11px;
     color: var(--fg-dim);
   }
-  .crumb {
+
+  /* Row 2 — the file being read, with room to breathe. */
+  .apphead {
+    flex: none;
+    height: 46px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 12px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+  }
+  .ident {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    line-height: 1.25;
+  }
+  .ident .name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .ident .path {
     font-family: var(--mono);
-    font-size: 11.5px;
+    font-size: 10.5px;
     color: var(--fg-faint);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .crumb b {
-    color: var(--fg);
-    font-weight: 500;
+    direction: rtl; /* truncate the front of a long path, not the end */
+    text-align: left;
   }
   .branch {
     font-family: var(--mono);
     font-size: 10.5px;
     color: var(--fg-dim);
+    background: var(--bg-inset);
     border: 1px solid var(--line);
     border-radius: 999px;
-    padding: 1px 7px;
+    padding: 2px 9px;
+    white-space: nowrap;
   }
   .spacer {
     flex: 1;
@@ -403,6 +442,18 @@
     align-items: center;
     justify-content: center;
     gap: 6px;
+  }
+  .hero {
+    width: 168px;
+    height: 168px;
+    border-radius: 30px;
+    margin-bottom: 18px;
+    box-shadow: 0 10px 34px rgba(16, 24, 40, 0.14);
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+  :global(html.dark) .hero {
+    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
   }
   .welcome h1 {
     font-size: 34px;

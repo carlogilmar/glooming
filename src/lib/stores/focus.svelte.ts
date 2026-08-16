@@ -12,6 +12,12 @@ class FocusStore {
     return this.line !== null;
   }
 
+  /** How many lines the focused definition spans, header through `end`. */
+  get lineCount(): number {
+    if (this.line === null) return 0;
+    return (this.endLine ?? this.line) - this.line + 1;
+  }
+
   /** Is line `n` inside the focused definition? */
   contains(n: number): boolean {
     if (this.line === null) return false;

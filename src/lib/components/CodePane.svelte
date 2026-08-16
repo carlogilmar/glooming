@@ -25,6 +25,26 @@
   let showBlame = $state(false);
   let blaming = $state(false);
 
+  // ---- font size ----------------------------------------------------------
+  // Reading at someone else's font size is a small, constant tax. Persisted so
+  // it survives a restart.
+  const FONT_KEY = "codeFontSize";
+  const MIN = 10;
+  const MAX = 22;
+  const DEFAULT = 12.5;
+
+  let fontSize = $state(DEFAULT);
+
+  $effect(() => {
+    const stored = parseFloat(localStorage.getItem(FONT_KEY) ?? "");
+    if (stored >= MIN && stored <= MAX) fontSize = stored;
+  });
+
+  function setFont(next: number) {
+    fontSize = Math.min(MAX, Math.max(MIN, Math.round(next * 2) / 2));
+    localStorage.setItem(FONT_KEY, String(fontSize));
+  }
+
   const lines = $derived(source.length ? source.split("\n") : []);
 
   // Highlight the whole file once, then split — hljs needs full context to get
@@ -38,7 +58,9 @@
         /* fall through */
       }
     }
-    return lines.map((l) => l.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;")));
+    return lines.map((l) =>
+      l.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;")),
+    );
   });
 
   /** Blame is lazy: nothing runs until you ask for it. */
@@ -75,14 +97,13 @@
     return `var(--who-${(h % 3) + 1})`;
   }
 
-  // Scroll the focused definition into view whenever focus changes.
+  // Scroll the focused definition into view. scrollIntoView clamps at the end
+  // of the document, so this works without padding the file with dead space.
   $effect(() => {
     const line = focus.line;
     if (!line || !body) return;
     const row = body.querySelector<HTMLElement>(`[data-line="${line}"]`);
-    if (row) {
-      body.scrollTo({ top: row.offsetTop - body.clientHeight / 3, behavior: "smooth" });
-    }
+    row?.scrollIntoView({ behavior: "smooth", block: "center" });
   });
 
   function clickBackground(e: MouseEvent) {
@@ -94,24 +115,39 @@
   <div class="panehead">
     <span>{filename || "no file"}</span>
     <span class="spacer"></span>
+
+    <div class="fontsize" title="Code font size">
+      <button onclick={() => setFont(fontSize - 0.5)} disabled={fontSize <= MIN} aria-label="Smaller">
+        A<small>−</small>
+      </button>
+      <button class="val" onclick={() => setFont(DEFAULT)} title="Reset to default">{fontSize}</button>
+      <button onclick={() => setFont(fontSize + 0.5)} disabled={fontSize >= MAX} aria-label="Larger">
+        A<small>+</small>
+      </button>
+    </div>
+
     {#if hasGit}
       <button class="btn icon" class:primary={showBlame} onclick={toggleBlame} disabled={blaming}>
         {blaming ? "…" : "◫ Blame"}
       </button>
     {/if}
-    <span>{lang ?? "text"} · {lines.length} lines</span>
+    <span class="meta">{lang ?? "text"} · {lines.length} lines</span>
   </div>
 
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="panebody" bind:this={body} onclick={clickBackground}>
-    <div class="code" class:focusing={focus.active} class:blame={showBlame}>
+    <div
+      class="code"
+      class:focusing={focus.active}
+      style:font-size="{fontSize}px"
+    >
       {#each highlighted as html, i}
         {@const n = i + 1}
-        {@const hit = focus.contains(n)}
         <div
           class="row"
-          class:hit
+          class:hit={focus.contains(n)}
           class:head={focus.line === n}
+          class:tail={focus.endLine === n && focus.endLine !== focus.line}
           data-line={n}
         >
           {#if showBlame}
@@ -134,6 +170,7 @@
   {#if focus.active}
     <button class="focushint" onclick={() => focus.clear()}>
       <span>Reading <b>{focus.sig}</b></span>
+      <span class="span">{focus.lineCount} lines</span>
       <kbd>esc</kbd>
       <span>to exit</span>
     </button>
@@ -154,12 +191,55 @@
     overflow: auto;
     background: var(--code-bg);
   }
+  .meta {
+    white-space: nowrap;
+  }
+
+  /* Font size stepper */
+  .fontsize {
+    display: flex;
+    align-items: stretch;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    overflow: hidden;
+  }
+  .fontsize button {
+    font: inherit;
+    font-size: 11px;
+    background: transparent;
+    color: var(--fg-dim);
+    border: 0;
+    padding: 2px 7px;
+    cursor: pointer;
+    line-height: 1.6;
+  }
+  .fontsize button small {
+    font-size: 9px;
+    vertical-align: super;
+  }
+  .fontsize button:hover:not(:disabled) {
+    background: var(--bg-inset);
+    color: var(--fg);
+  }
+  .fontsize button:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+  .fontsize .val {
+    font-family: var(--mono);
+    font-size: 10px;
+    min-width: 30px;
+    border-left: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+    color: var(--fg-faint);
+  }
 
   .code {
     font-family: var(--mono);
-    font-size: 12.5px;
     line-height: 1.65;
-    padding: 10px 0 60vh;
+    /* Just enough tail room to see the last line clear of the window edge —
+       not a screenful of emptiness. scrollIntoView handles focus scrolling. */
+    padding: 10px 0 24px;
   }
   .row {
     display: flex;
@@ -222,10 +302,10 @@
     opacity: 1;
   }
 
-  /* ---- selection: highlight the function, dim everything else ----
-     Xray's .focusing / tmPulse idioms, applied to source lines. */
+  /* ---- selection: the whole body highlights, everything else dims ---- */
   .row.hit {
     background: var(--sel);
+    box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 30%, transparent);
   }
   .row.hit .ln {
     opacity: 1;
@@ -234,8 +314,15 @@
   .code.focusing .row:not(.hit) {
     opacity: 0.32;
   }
+  /* The `def` line breathes; the closing `end` gets a quiet cap so the extent
+     of the selection is unmistakable. */
   .row.hit.head {
     animation: rowPulse 2.1s ease-in-out infinite;
+  }
+  .row.hit.tail {
+    box-shadow:
+      inset 2px 0 0 color-mix(in srgb, var(--accent) 30%, transparent),
+      inset 0 -1px 0 color-mix(in srgb, var(--accent) 25%, transparent);
   }
   @keyframes rowPulse {
     0%,
@@ -271,6 +358,10 @@
   .focushint:hover {
     color: var(--fg);
     border-color: var(--fg-faint);
+  }
+  .focushint .span {
+    font-family: var(--mono);
+    color: var(--fg-faint);
   }
   .focushint kbd {
     font-family: var(--mono);

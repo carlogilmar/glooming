@@ -17,6 +17,7 @@ pub enum Visibility {
 /// a single `FnInfo` whose `clauses` counts them — Elixir routinely spreads one
 /// function across several `def`s, and the reader wants one row, not four.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FnInfo {
     pub name: String,
     pub arity: u8,
@@ -43,6 +44,7 @@ impl FnInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ModuleInfo {
     pub name: String,
     pub line: u32,
@@ -51,6 +53,7 @@ pub struct ModuleInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Outline {
     pub lang: String,
     pub modules: Vec<ModuleInfo>,
