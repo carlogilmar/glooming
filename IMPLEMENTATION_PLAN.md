@@ -114,30 +114,36 @@ Node or Rust is the single most common way a Tauri build fails confusingly.
 
 ### Layout
 
+As built:
+
 ```
 src/
-  routes/+page.svelte            app shell: titlebar, split, status bar
+  routes/+layout.svelte          theme init, global css
+  routes/+page.svelte            app shell: titlebar, split, status bar, autosave
   lib/
     components/
-      CodePane.svelte            source + line numbers + blame gutter + focus
-      DocPane.svelte             edit/preview toggle, autosave
-      Divider.svelte             draggable split
-      FocusHint.svelte           the "esc to exit" pill
-      Library.svelte             list of saved docs (M11)
+      CodePane.svelte            source + line numbers + blame gutter + focus + hint pill
+      DocPane.svelte             edit/preview toggle, block styling, row wiring
+      Divider.svelte             draggable split, double-click reset
+      Library.svelte             saved docs, search, delete
     stores/
       theme.svelte.ts            ported from Alexandria, default light
-      doc.svelte.ts              current doc + dirty tracking + autosave
-      focus.svelte.ts            which function is selected, shared by panes
-    markdownit.ts                markdown-it instance + lgtm:* fence renderers
-    lgtmBlock.ts                 parse/serialize the lgtm:functions body
+      focus.svelte.ts            which function is selected, shared by both panes
+    markdownit.ts                markdown-it instance + the lgtm:functions fence renderer
+    lgtmBlock.ts                 parsing the block body (mirrors reconcile.rs)
     ipc.ts                       typed wrappers over invoke()
+  app.css                        design tokens for light and dark
 src-tauri/
   src/
-    commands/{mod,files,docs,blame}.rs
-    db/{mod,models}.rs
+    commands/{mod,files,docs}.rs IPC surface (blame lives in files.rs)
+    db/{mod,models,docs}.rs      pool, serde shapes, doc CRUD
     parse/{mod,elixir}.rs        tree-sitter → Outline
+    seed.rs                      Outline → starter markdown
+    reconcile.rs                 doc + re-parsed source → merged doc
+    git.rs                       .git/HEAD read + lazy git blame
     error.rs  lib.rs  main.rs
   migrations/0001_initial.sql
+  tests/pipeline.rs              end-to-end, pinned to the mockup
 ```
 
 ---
