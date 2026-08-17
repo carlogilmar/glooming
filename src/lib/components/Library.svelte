@@ -3,6 +3,7 @@
   // hundred docs rather than a few: search, three orderings, folder grouping,
   // and full keyboard navigation — a flat list stops being usable at about ten.
   import { listDocs, deleteDoc, type DocSummary } from "$lib/ipc";
+  import { when } from "$lib/when";
 
   let { onopen, onclose }: { onopen: (d: DocSummary) => void; onclose: () => void } = $props();
 
@@ -80,15 +81,6 @@
     const rest = path.slice(home.length);
     const cut = rest.indexOf("/");
     return cut === -1 ? "~" : "~" + rest.slice(cut);
-  }
-
-  function when(iso: string): string {
-    const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
-    if (days <= 0) return "today";
-    if (days === 1) return "yesterday";
-    if (days < 30) return `${days}d ago`;
-    if (days < 365) return `${Math.floor(days / 30)}mo ago`;
-    return `${Math.floor(days / 365)}y ago`;
   }
 
   async function confirmDelete(doc: DocSummary) {

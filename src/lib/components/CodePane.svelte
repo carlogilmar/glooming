@@ -15,6 +15,7 @@
     path = "",
     hasGit = false,
     outline = null,
+    keysEnabled = true,
   }: {
     source: string;
     lang: string | null;
@@ -22,15 +23,23 @@
     path: string;
     hasGit: boolean;
     outline: Outline | null;
+    /** False while a modal is up — motions must not fire behind a dialog. */
+    keysEnabled: boolean;
   } = $props();
 
   let body = $state<HTMLDivElement | null>(null);
   let blame = $state<BlameLine[]>([]);
   let showBlame = $state(false);
   let blaming = $state(false);
-  /** Brief confirmation after the path is copied. */
-  let copied = $state(false);
-  let copyTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Brief confirmation for copies — the path, or a yanked line. */
+  let toast = $state("");
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function flash(message: string) {
+    toast = message;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (toast = ""), 1600);
+  }
 
   /**
    * The filename is a copy button: the path is what you need to open the file
@@ -40,9 +49,7 @@
     if (!path) return;
     try {
       await writeText(path);
-      copied = true;
-      if (copyTimer) clearTimeout(copyTimer);
-      copyTimer = setTimeout(() => (copied = false), 1600);
+      flash("path copied ✓");
     } catch {
       /* no clipboard in a plain browser — nothing worth interrupting for */
     }
@@ -64,22 +71,6 @@
   function setFont(next: number) {
     fontSize = Math.min(MAX, Math.max(MIN, Math.round(next * 2) / 2));
     localStorage.setItem(FONT_KEY, String(fontSize));
-  }
-
-  // ---- soft wrap ----------------------------------------------------------
-  // On by default: reading a file shouldn't require scrolling sideways to
-  // finish a line. Off is there for the rare case where column alignment
-  // matters more than seeing the whole line.
-  const WRAP_KEY = "codeWrap";
-  let wrap = $state(true);
-
-  $effect(() => {
-    wrap = localStorage.getItem(WRAP_KEY) !== "0";
-  });
-
-  function toggleWrap() {
-    wrap = !wrap;
-    localStorage.setItem(WRAP_KEY, wrap ? "1" : "0");
   }
 
   const lines = $derived(source.length ? source.split("\n") : []);
@@ -114,8 +105,9 @@
   }
 
   // Highlight the whole file once, then split — hljs needs full context to get
-  // multi-line constructs (heredocs, block comments) right.
-  const highlighted = $derived.by(() => {
+  // multi-line constructs (heredocs, block comments) right. Kept separate from
+  // the search pass below so typing a query doesn't re-run any of this.
+  const syntaxLines = $derived.by(() => {
     if (!source) return [];
     let html: string;
     if (lang && hljs.getLanguage(lang)) {
@@ -133,6 +125,158 @@
         const def = defLines.get(i + 1);
         return def ? markDefName(lineHtml, def.name, def.sig) : lineHtml;
       });
+  });
+
+  /** Syntax + search marks. Only this pass re-runs while you type a query. */
+  const highlighted = $derived.by(() => {
+    if (!query) return syntaxLines;
+    let n = 0;
+    return syntaxLines.map((lineHtml) => {
+      const [html, used] = markMatches(lineHtml, query, caseSensitive, n);
+      n += used;
+      return html;
+    });
+  });
+
+  // ---- search ------------------------------------------------------------
+  //
+  // Every occurrence is marked, not just the one you jumped to — seeing where a
+  // name appears across the file is most of why you searched for it.
+
+  let searching = $state(false);
+  let query = $state("");
+  let queryInput = $state<HTMLInputElement | null>(null);
+  let matchIdx = $state(0);
+
+  /** smartcase, as vim does it: a lowercase query ignores case, any capital doesn't. */
+  const caseSensitive = $derived(/[A-Z]/.test(query));
+
+  /** One entry per occurrence, in file order. */
+  const matches = $derived.by(() => {
+    if (!query) return [] as { line: number; col: number }[];
+    const out: { line: number; col: number }[] = [];
+    const needle = caseSensitive ? query : query.toLowerCase();
+    lines.forEach((raw, i) => {
+      const hay = caseSensitive ? raw : raw.toLowerCase();
+      let from = 0;
+      for (;;) {
+        const at = hay.indexOf(needle, from);
+        if (at === -1) break;
+        out.push({ line: i + 1, col: at });
+        from = at + Math.max(needle.length, 1);
+      }
+    });
+    return out;
+  });
+
+  function decodeEntities(t: string): string {
+    return t
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#x27;|&#39;/g, "'")
+      .replace(/&amp;/g, "&");
+  }
+
+  /**
+   * Wrap every occurrence in one line of highlighted HTML.
+   *
+   * Tag-aware like colorModules, but it also decodes entities before matching
+   * and re-escapes after: hljs writes `|&gt;`, so a search for `|>` would never
+   * match the raw HTML. Returns the line plus how many marks it added, so the
+   * caller can keep a file-wide match index.
+   */
+  function markMatches(
+    html: string,
+    needle: string,
+    cased: boolean,
+    startIndex: number,
+  ): [string, number] {
+    const parts = html.split(/(<[^>]+>)/);
+    const find = cased ? needle : needle.toLowerCase();
+    let used = 0;
+
+    const out = parts.map((part) => {
+      if (part.startsWith("<") || !part) return part;
+      const text = decodeEntities(part);
+      const hay = cased ? text : text.toLowerCase();
+
+      let built = "";
+      let from = 0;
+      for (;;) {
+        const at = hay.indexOf(find, from);
+        if (at === -1) break;
+        built +=
+          escapeAll(text.slice(from, at)) +
+          `<mark class="sm" data-m="${startIndex + used}">` +
+          escapeAll(text.slice(at, at + needle.length)) +
+          `</mark>`;
+        used++;
+        from = at + Math.max(needle.length, 1);
+      }
+      return from === 0 ? part : built + escapeAll(text.slice(from));
+    });
+
+    return [out.join(""), used];
+  }
+
+  function openSearch() {
+    searching = true;
+    // If the bar is already on screen (confirmed a search, then pressed `/`
+    // again) the element exists and can be focused now. On a fresh open it
+    // doesn't exist yet — Svelte hasn't rendered it — so the effect below
+    // catches that case once the binding lands.
+    queryInput?.focus();
+    queryInput?.select();
+  }
+
+  // Focus the query field the moment it exists, so `/` puts you straight into
+  // typing the way vim does. Depends only on `searching` and the binding, so
+  // confirming a search (which blurs) never steals focus back.
+  $effect(() => {
+    if (searching && queryInput) {
+      queryInput.focus();
+      queryInput.select();
+    }
+  });
+
+  function closeSearch() {
+    searching = false;
+    query = "";
+    matchIdx = 0;
+  }
+
+  /** Land on the first match at or after wherever the reader is. */
+  function confirmSearch() {
+    if (!matches.length) return;
+    const from = focus.cursorLine ?? 1;
+    const at = matches.findIndex((m) => m.line >= from);
+    matchIdx = at === -1 ? 0 : at;
+    gotoMatch(matchIdx);
+    queryInput?.blur();
+  }
+
+  function stepMatch(dir: 1 | -1) {
+    if (!matches.length) return;
+    matchIdx = (matchIdx + dir + matches.length) % matches.length;
+    gotoMatch(matchIdx);
+  }
+
+  function gotoMatch(i: number) {
+    const m = matches[i];
+    if (!m) return;
+    focus.gotoLine(m.line, lines.length);
+  }
+
+  // Mark the current occurrence by class rather than by rebuilding the HTML —
+  // stepping with n/N shouldn't re-render the whole file.
+  $effect(() => {
+    const i = matchIdx;
+    const _ = query;
+    if (!body) return;
+    for (const el of body.querySelectorAll(".sm")) {
+      el.classList.toggle("on", (el as HTMLElement).dataset.m === String(i));
+    }
   });
 
   function escapeAll(s: string): string {
@@ -219,18 +363,31 @@
     showBlame = true;
   }
 
+  /**
+   * A hue per author, handed out in order of first appearance rather than
+   * hashed from the name: hashing produces near-identical colours for unlucky
+   * pairs of names, and the point is telling people apart. Evenly spread, so
+   * the first eight authors in a file are always clearly distinct.
+   */
+  const HUES = [212, 150, 35, 280, 340, 190, 95, 18];
+
+  const authorHues = $derived.by(() => {
+    const map = new Map<string, number>();
+    for (const b of blame) {
+      if (b.author && !map.has(b.author)) map.set(b.author, HUES[map.size % HUES.length]);
+    }
+    return map;
+  });
+
   const blameRows = $derived.by(() =>
     blame.map((b, i) => ({
       ...b,
+      hue: authorHues.get(b.author) ?? 212,
       show: i === 0 || blame[i - 1]?.author !== b.author,
+      /** Last line of a run by this author — closes the stripe. */
+      last: i === blame.length - 1 || blame[i + 1]?.author !== b.author,
     })),
   );
-
-  function authorTone(author: string): string {
-    let h = 0;
-    for (const c of author) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-    return `var(--who-${(h % 3) + 1})`;
-  }
 
   // ---- sticky function header -------------------------------------------
   // Deep inside a long function you lose track of which one you're in. This
@@ -240,31 +397,46 @@
   let topLine = $state(1);
   let rafPending = false;
 
+  /**
+   * The line whose row occupies a given scroll offset.
+   *
+   * Binary search by `offsetTop` rather than dividing by a line height: with
+   * soft wrap on, rows have different heights and the arithmetic lies.
+   */
+  function lineAtOffset(offset: number): number {
+    if (!body) return 1;
+    const rows = body.querySelectorAll<HTMLElement>(".row");
+    if (!rows.length) return 1;
+    let lo = 0;
+    let hi = rows.length - 1;
+    let hit = 0;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (rows[mid].offsetTop <= offset) {
+        hit = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return hit + 1;
+  }
+
+  /** First and last line currently on screen — what H, M, L and ⌃d work from. */
+  function visibleRange(): { top: number; bottom: number } {
+    if (!body) return { top: 1, bottom: 1 };
+    return {
+      top: lineAtOffset(body.scrollTop),
+      bottom: lineAtOffset(body.scrollTop + body.clientHeight - 1),
+    };
+  }
+
   function onScroll() {
     if (rafPending || !body) return;
     rafPending = true;
     requestAnimationFrame(() => {
       rafPending = false;
-      if (!body) return;
-      const rows = body.querySelectorAll<HTMLElement>(".row");
-      if (!rows.length) return;
-
-      // Binary search by offsetTop rather than dividing by a line height:
-      // with soft wrap on, rows have different heights and arithmetic lies.
-      const top = body.scrollTop;
-      let lo = 0;
-      let hi = rows.length - 1;
-      let hit = 0;
-      while (lo <= hi) {
-        const mid = (lo + hi) >> 1;
-        if (rows[mid].offsetTop <= top) {
-          hit = mid;
-          lo = mid + 1;
-        } else {
-          hi = mid - 1;
-        }
-      }
-      topLine = hit + 1;
+      topLine = lineAtOffset(body?.scrollTop ?? 0);
     });
   }
 
@@ -301,6 +473,217 @@
     if (!n || !body) return;
     body.querySelector<HTMLElement>(`[data-line="${n}"]`)?.scrollIntoView({ block: "nearest" });
   });
+
+  // ---- vim motions -------------------------------------------------------
+  //
+  // Only motions, because the pane is read-only: there is no insert mode, no
+  // operators, no registers, nothing to undo. What's left is the part of vim
+  // that is actually about reading.
+  //
+  // Two deliberate deviations from vim: `?` opens help rather than searching
+  // backwards (it is the web convention, and lgtm had it first), and `[`/`]`
+  // step functions with one keypress instead of `[[`/`]]`.
+
+  /** Buffer for two-key sequences: gg, zz, yy. */
+  let pending = $state("");
+  /** Digits typed before a motion — 5j, 42G. */
+  let count = $state("");
+  let seqTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function resetSeq() {
+    pending = "";
+    count = "";
+    if (seqTimer) clearTimeout(seqTimer);
+    seqTimer = null;
+  }
+
+  /** A half-finished sequence expires, the way vim's timeoutlen does. */
+  function armSeq() {
+    if (seqTimer) clearTimeout(seqTimer);
+    seqTimer = setTimeout(resetSeq, 700);
+  }
+
+  function takeCount(fallback = 1): number {
+    const n = parseInt(count, 10);
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+  }
+
+  const total = $derived(lines.length);
+
+  function centreCursor() {
+    const n = focus.cursorLine;
+    if (!n || !body) return;
+    body.querySelector<HTMLElement>(`[data-line="${n}"]`)?.scrollIntoView({ block: "center" });
+  }
+
+  /**
+   * `}` — forward to the end of this blank-line-separated block. In Elixir that
+   * lands on function and pipeline boundaries without any parsing, which is why
+   * paragraph motion is more useful here than it looks.
+   */
+  function paragraph(dir: 1 | -1) {
+    const blank = (n: number) => (lines[n - 1] ?? "").trim() === "";
+    let i = focus.cursorLine ?? (dir === 1 ? 0 : total + 1);
+
+    i += dir;
+    while (i >= 1 && i <= total && blank(i)) i += dir;
+    while (i >= 1 && i <= total && !blank(i)) i += dir;
+    focus.gotoLine(Math.min(Math.max(i, 1), total), total);
+  }
+
+  /** `[` / `]` — previous / next definition, selected whole. */
+  function jumpFunction(dir: 1 | -1) {
+    const fns = [...(outline?.modules?.[0]?.functions ?? [])].sort((a, b) => a.line - b.line);
+    if (!fns.length) return;
+    const from = focus.cursorLine ?? focus.ranges[0]?.start ?? 0;
+    const next = dir === 1 ? fns.find((f) => f.line > from) : [...fns].reverse().find((f) => f.line < from);
+    if (!next) return; // stay put at either end rather than wrapping
+    const sig = displaySig(next);
+    const at = locate(sig, outline?.modules?.[0] ?? null);
+    if (at) focus.select(sig, at.ranges, at.related, at.spec, at.doc);
+  }
+
+  async function yankLine() {
+    const n = focus.cursorLine;
+    if (!n) return;
+    try {
+      await writeText(lines[n - 1] ?? "");
+      flash(`line ${n} copied ✓`);
+    } catch {
+      /* no clipboard outside the app shell */
+    }
+  }
+
+  function onVimKey(e: KeyboardEvent) {
+    if (!keysEnabled || e.metaKey || e.altKey) return;
+    const el = e.target as HTMLElement | null;
+    if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+
+    // ⌃d / ⌃u — half a screen, the way vim measures it: from what's on screen.
+    if (e.ctrlKey) {
+      if (e.key !== "d" && e.key !== "u") return;
+      e.preventDefault();
+      const { top, bottom } = visibleRange();
+      const half = Math.max(1, Math.floor((bottom - top) / 2));
+      focus.moveCursor(e.key === "d" ? half : -half, total);
+      resetSeq();
+      return;
+    }
+
+    // Counts. A leading 0 is a column motion in vim and meaningless here, so it
+    // only counts as a digit once a count is under way.
+    if (/^[0-9]$/.test(e.key) && !(e.key === "0" && count === "")) {
+      count += e.key;
+      armSeq();
+      e.preventDefault();
+      return;
+    }
+
+    // Two-key sequences.
+    if (pending) {
+      const seq = pending + e.key;
+      const n = takeCount(0);
+      resetSeq();
+      if (seq === "gg") {
+        e.preventDefault();
+        focus.gotoLine(n || 1, total);
+        return;
+      }
+      if (seq === "zz") {
+        e.preventDefault();
+        centreCursor();
+        return;
+      }
+      if (seq === "yy") {
+        e.preventDefault();
+        yankLine();
+        return;
+      }
+      // Not a sequence we know — fall through and treat the key on its own.
+    }
+
+    if (e.key === "g" || e.key === "z" || e.key === "y") {
+      pending = e.key;
+      armSeq();
+      e.preventDefault();
+      return;
+    }
+
+    if (e.key === "Escape" && query) {
+      closeSearch();
+      // The page's Escape also clears the selection — "back to plain code" is
+      // one keypress, not two.
+      return;
+    }
+    if (e.key === "/") {
+      e.preventDefault();
+      resetSeq();
+      openSearch();
+      return;
+    }
+    if (matches.length && (e.key === "n" || e.key === "N")) {
+      e.preventDefault();
+      resetSeq();
+      stepMatch(e.key === "n" ? 1 : -1);
+      return;
+    }
+
+    const n = takeCount();
+    const { top, bottom } = visibleRange();
+    let handled = true;
+
+    switch (e.key) {
+      case "j":
+      case "ArrowDown":
+        focus.moveCursor(n, total);
+        break;
+      case "k":
+      case "ArrowUp":
+        focus.moveCursor(-n, total);
+        break;
+      case "G":
+        focus.gotoLine(count ? n : total, total);
+        break;
+      case "H":
+        focus.gotoLine(top, total);
+        break;
+      case "M":
+        focus.gotoLine(Math.floor((top + bottom) / 2), total);
+        break;
+      case "L":
+        focus.gotoLine(bottom, total);
+        break;
+      case "}":
+        paragraph(1);
+        break;
+      case "{":
+        paragraph(-1);
+        break;
+      case "]":
+        jumpFunction(1);
+        break;
+      case "[":
+        jumpFunction(-1);
+        break;
+      default:
+        handled = false;
+    }
+
+    if (handled) e.preventDefault();
+    resetSeq();
+  }
+
+  /**
+   * Whether to dim the rest of the file.
+   *
+   * Dimming answers "show me this one function". Blame and search ask the
+   * opposite kind of question — who wrote all of this, where does this name
+   * appear — and dimming 68% of the file hides precisely the answer. So while
+   * either is active the selection keeps its own highlight (you don't lose your
+   * place, and the pill still says where you are) but stops suppressing
+   * everything else.
+   */
+  const dimming = $derived(focus.active && !showBlame && !query);
 
   function onCodeClick(e: MouseEvent) {
     // A drag that selects text ends in a click; don't treat that as a click.
@@ -339,13 +722,15 @@
   }
 </script>
 
+<svelte:window onkeydown={onVimKey} />
+
 <div class="pane">
   <div class="panehead">
     {#if filename}
       <button class="name" onclick={copyPath} title="Click to copy the full path&#10;{path}">
         {filename}
       </button>
-      {#if copied}<span class="copied">path copied ✓</span>{/if}
+      {#if toast}<span class="copied">{toast}</span>{/if}
     {:else}
       <span>no file</span>
     {/if}
@@ -370,12 +755,13 @@
       </button>
     </div>
 
-    <button class="btn icon" class:primary={wrap} onclick={toggleWrap} title="Soft wrap long lines">
-      ↵ Wrap
-    </button>
   </div>
 
-  {#if sticky}
+  <!-- The stage holds only the code and the things that float over it. The
+       search bar and footer live outside it, so an overlay anchored to the
+       stage's bottom can never collide with them. -->
+  <div class="stage">
+    {#if sticky}
     <button
       class="sticky"
       class:priv={sticky.visibility === "private"}
@@ -389,41 +775,98 @@
       <span class="sig">{sticky.sig}</span>
       <span class="at">line {sticky.line}</span>
     </button>
-  {/if}
+    {/if}
 
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="panebody" bind:this={body} onclick={onCodeClick} onkeydown={onCodeKey} onscroll={onScroll}>
-    <div class="code" class:focusing={focus.active} class:wrap style:font-size="{fontSize}px">
-      {#each highlighted as html, i}
-        {@const n = i + 1}
-        <div
-          class="row"
-          class:hit={focus.contains(n)}
-          class:head={focus.isHead(n)}
-          class:tail={focus.isTail(n)}
-          class:related={focus.isRelated(n)}
-          class:spec={focus.isSpec(n)}
-          class:docsel={focus.isDoc(n)}
-          class:docline={docLines.has(n)}
-          class:cursor={focus.cursorLine === n}
-          data-line={n}
-        >
-          {#if showBlame}
-            {@const b = blameRows[i]}
-            <span class="bl">
-              {#if b}
-                <i style:background={authorTone(b.author)}></i>
-                <b>{b.show ? b.author : ""}</b>
-                <em>{b.show ? b.when : ""}</em>
-              {/if}
-            </span>
-          {/if}
-          <span class="ln">{n}</span>
-          <span class="src">{@html html || "&nbsp;"}</span>
-        </div>
-      {/each}
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+    <div class="panebody" bind:this={body} onclick={onCodeClick} onkeydown={onCodeKey} onscroll={onScroll}>
+      <div class="code" class:focusing={dimming} style:font-size="{fontSize}px">
+        {#each highlighted as html, i}
+          {@const n = i + 1}
+          <div
+            class="row"
+            class:hit={focus.contains(n)}
+            class:head={focus.isHead(n)}
+            class:tail={focus.isTail(n)}
+            class:related={focus.isRelated(n)}
+            class:spec={focus.isSpec(n)}
+            class:docsel={focus.isDoc(n)}
+            class:docline={docLines.has(n)}
+            class:cursor={focus.cursorLine === n}
+            class:authored={showBlame && !!blameRows[i]}
+            style:--who-h={showBlame ? (blameRows[i]?.hue ?? 212) : undefined}
+            data-line={n}
+          >
+            {#if showBlame}
+              {@const b = blameRows[i]}
+              <span class="bl" class:runstart={b?.show} class:runend={b?.last}>
+                {#if b}
+                  <i></i>
+                  <b>{b.show ? b.author : ""}</b>
+                  <em>{b.show ? b.when : ""}</em>
+                {/if}
+              </span>
+            {/if}
+            <span class="ln">{n}</span>
+            <span class="src">{@html html || "&nbsp;"}</span>
+          </div>
+        {/each}
+      </div>
     </div>
+
+    {#if focus.anything}
+      <button class="focushint" onclick={() => focus.clear()}>
+        {#if focus.active}
+          <span>Reading <b>{focus.sig}</b></span>
+          <span class="span">
+            {focus.lineCount} lines{focus.clauseCount > 1 ? ` · ${focus.clauseCount} clauses` : ""}
+          </span>
+        {/if}
+        {#if focus.cursorLine !== null}
+          <span class="span">line {focus.cursorLine}</span>
+          <kbd>↑</kbd><kbd>↓</kbd>
+        {/if}
+        <kbd>esc</kbd>
+        <span>to exit</span>
+      </button>
+    {/if}
   </div>
+
+  {#if searching || query}
+    <div class="searchbar">
+      <span class="slash">/</span>
+      <input
+        bind:this={queryInput}
+        bind:value={query}
+        placeholder="find a name, a param, anything…"
+        spellcheck="false"
+        autocapitalize="off"
+        onkeydown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            confirmSearch();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            closeSearch();
+          }
+        }}
+      />
+      <span class="count" class:none={query && !matches.length}>
+        {#if !query}
+          &nbsp;
+        {:else if matches.length}
+          {matchIdx + 1}/{matches.length}
+          {matches.length === 1 ? "match" : "matches"}
+        {:else}
+          no matches
+        {/if}
+      </span>
+      {#if caseSensitive}<span class="flag" title="A capital letter makes the search case-sensitive">Aa</span>{/if}
+      <button class="btn icon" onclick={() => stepMatch(-1)} disabled={!matches.length} title="Previous (N)">↑</button>
+      <button class="btn icon" onclick={() => stepMatch(1)} disabled={!matches.length} title="Next (n)">↓</button>
+      <button class="btn icon" onclick={closeSearch} title="Clear (Esc)">×</button>
+    </div>
+  {/if}
 
   <div class="panefoot">
     <span class="meta">{lang ?? "text"} · {lines.length} lines</span>
@@ -440,23 +883,6 @@
       </button>
     {/if}
   </div>
-
-  {#if focus.anything}
-    <button class="focushint" onclick={() => focus.clear()}>
-      {#if focus.active}
-        <span>Reading <b>{focus.sig}</b></span>
-        <span class="span">
-          {focus.lineCount} lines{focus.clauseCount > 1 ? ` · ${focus.clauseCount} clauses` : ""}
-        </span>
-      {/if}
-      {#if focus.cursorLine !== null}
-        <span class="span">line {focus.cursorLine}</span>
-        <kbd>↑</kbd><kbd>↓</kbd>
-      {/if}
-      <kbd>esc</kbd>
-      <span>to exit</span>
-    </button>
-  {/if}
 </div>
 
 <style>
@@ -467,6 +893,13 @@
     min-height: 0;
     height: 100%;
     position: relative;
+  }
+  .stage {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    display: flex;
+    flex-direction: column;
   }
   .panebody {
     flex: 1;
@@ -506,7 +939,7 @@
      disappearing never shifts the lines you are reading. */
   .sticky {
     position: absolute;
-    top: 32px; /* clears the pane header */
+    top: 0; /* the stage already starts below the pane header */
     left: 0;
     right: 0;
     z-index: 3;
@@ -546,6 +979,69 @@
     font-size: 10.5px;
     color: var(--fg-faint);
     margin-left: auto;
+  }
+
+  /* Search sits at the bottom, where vim puts it, and stays visible while a
+     search is live so the match count and n/N are never invisible state. */
+  .searchbar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 10px;
+    border-top: 1px solid var(--line);
+    background: var(--bg-raised);
+  }
+  .searchbar .slash {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent);
+  }
+  .searchbar input {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 3px 6px;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    background: var(--bg);
+    color: var(--fg);
+    outline: none;
+  }
+  .searchbar input:focus {
+    border-color: var(--accent);
+  }
+  .searchbar .count {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--fg-faint);
+    white-space: nowrap;
+  }
+  .searchbar .count.none {
+    color: var(--priv);
+  }
+  .searchbar .flag {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-dim);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0 4px;
+  }
+
+  /* Every occurrence is marked; the one you are on is marked harder. */
+  .code :global(mark.sm) {
+    background: color-mix(in srgb, var(--syn-atom) 34%, transparent);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+  .code :global(mark.sm.on) {
+    background: var(--syn-atom);
+    color: #fff;
+    box-shadow: 0 0 0 1px var(--syn-atom);
   }
 
   /* The pane's own footer: what this file is, and the one control that reads
@@ -624,16 +1120,16 @@
   .row .src {
     flex: 1 1 auto;
     min-width: 0;
-    white-space: pre;
     user-select: text;
     cursor: text;
   }
 
-  /* Soft wrap. `anywhere` rather than `break-word` because a single long
-     string or URL would otherwise still force the pane sideways — and the
-     whole point is that there is nothing to scroll to. The hanging indent
-     makes a continuation visibly a continuation, not a new statement. */
-  .code.wrap .row .src {
+  /* Always soft-wrapped: reading a file should never mean scrolling sideways
+     to finish a line, and there is no case where that trade is worth it.
+     `anywhere` rather than `break-word` because a single long string or URL has
+     no break opportunity and would still force the pane wide. The hanging
+     indent makes a continuation visibly a continuation, not a new statement. */
+  .code .row .src {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     padding-left: 2ch;
@@ -663,13 +1159,21 @@
     user-select: none;
     align-self: flex-start;
   }
+  /* One continuous stripe per author rather than a dash per line, so a run of
+     lines by the same person reads as a single block. */
   .row .bl i {
     width: 3px;
-    height: 11px;
-    border-radius: 2px;
     flex: none;
-    align-self: center;
-    opacity: 0.8;
+    align-self: stretch;
+    background: hsl(var(--who-h) 62% 48%);
+  }
+  .row .bl.runstart i {
+    border-top-left-radius: 2px;
+    border-top-right-radius: 2px;
+  }
+  .row .bl.runend i {
+    border-bottom-left-radius: 2px;
+    border-bottom-right-radius: 2px;
   }
   .row .bl b {
     font-weight: 500;
@@ -687,6 +1191,16 @@
   .row:hover .bl em {
     color: var(--fg-dim);
     opacity: 1;
+  }
+
+  /* Each author's lines tinted with their hue. Deliberately faint — it sits
+     under code and must not compete with it.
+     ONE rule at two classes' specificity, with the per-theme strength coming
+     from tokens rather than a `html.dark` override: that override would carry
+     an extra element selector and quietly outrank every selection state below,
+     so in dark mode the blame tint would beat focus, spec, doc and cursor. */
+  .row.authored {
+    background: hsl(var(--who-h) 70% var(--who-l) / var(--who-a));
   }
 
   /* ---- documentation reads as commentary ----
@@ -724,31 +1238,31 @@
   /* The @doc of a selected function: present, but the faintest of the three
      weights — dashed marker for the prose, violet for the contract, solid
      accent for the body. */
-  .row.docsel {
+  .code .row.docsel {
     background: color-mix(in srgb, var(--accent) 7%, transparent);
     box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 22%, transparent);
   }
 
   /* ---- selection: whole body, all clauses, spec alongside ---- */
-  .row.hit {
+  .code .row.hit {
     background: var(--sel);
     box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 30%, transparent);
   }
-  .row.hit .ln {
+  .code .row.hit .ln {
     opacity: 1;
     color: var(--accent);
   }
   /* Same function name at a different arity: present, but clearly secondary. */
-  .row.related {
+  .code .row.related {
     background: color-mix(in srgb, var(--accent) 7%, transparent);
     box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 18%, transparent);
   }
   /* The @spec gets its own color — it's the contract, not the body. */
-  .row.spec {
+  .code .row.spec {
     background: color-mix(in srgb, var(--mark) 12%, transparent);
     box-shadow: inset 2px 0 0 var(--mark);
   }
-  .row.spec .ln {
+  .code .row.spec .ln {
     opacity: 1;
     color: var(--mark);
   }
@@ -756,10 +1270,10 @@
     opacity: 0.32;
   }
 
-  .row.hit.head {
+  .code .row.hit.head {
     animation: rowPulse 2.1s ease-in-out infinite;
   }
-  .row.hit.tail {
+  .code .row.hit.tail {
     box-shadow:
       inset 2px 0 0 color-mix(in srgb, var(--accent) 30%, transparent),
       inset 0 -1px 0 color-mix(in srgb, var(--accent) 25%, transparent);
@@ -797,9 +1311,9 @@
   .focushint {
     position: absolute;
     left: 50%;
-    /* Clear of the pane footer (26px) — the pill floats over the code, not
-       over the controls. */
-    bottom: 38px;
+    /* Anchored to the stage, so the search bar and footer can come and go
+       without the pill ever landing on top of them. */
+    bottom: 16px;
     transform: translateX(-50%);
     display: flex;
     align-items: center;

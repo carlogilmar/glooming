@@ -35,10 +35,40 @@
     {
       title: "Navigating",
       rows: [
-        { keys: ["↑", "↓"], what: "Move the review cursor one line — also j and k" },
-        { keys: ["[", "]"], what: "Previous / next function. Does not wrap at either end" },
+        { keys: ["↑", "↓"], what: "Move the review cursor one line" },
+        { keys: ["[", "]"], what: "Previous / next function, selected whole. Does not wrap at either end" },
         { keys: ["⌘P"], what: "Jump to a function by name. Type a prefix, or an abbreviation like cu" },
         { keys: ["Esc"], what: "Clear the selection" },
+      ],
+    },
+    {
+      title: "Search",
+      note:
+        "Every occurrence in the file is marked, not just the one you jumped to — seeing where a " +
+        "name appears is most of why you searched for it. smartcase, as vim does it: a lowercase " +
+        "query ignores case, a capital letter makes it exact. A selected function keeps its " +
+        "highlight but stops dimming the file, so no match is ever hidden.",
+      rows: [
+        { keys: ["/"], what: "Open the search bar and start typing" },
+        { keys: ["↵"], what: "Jump to the first match at or after the line you're on" },
+        { keys: ["n", "N"], what: "Next / previous occurrence, wrapping around the file" },
+        { keys: ["Esc"], what: "Clear the search and its highlights" },
+      ],
+    },
+    {
+      title: "Vim motions",
+      note:
+        "Always on, no mode to remember — the code pane is read-only, so only the motions exist. " +
+        "Counts work: 5j, 42G. Two deviations from vim: ? opens this help rather than searching " +
+        "backwards (use / then N), and [ / ] step functions with one key instead of [[ / ]].",
+      rows: [
+        { keys: ["j", "k"], what: "Down / up a line — 5j moves five" },
+        { keys: ["⌃d", "⌃u"], what: "Half a screen down / up, measured from what's actually visible" },
+        { keys: ["g g", "G"], what: "First / last line. 42G goes to line 42" },
+        { keys: ["H", "M", "L"], what: "Highest / middle / lowest line on screen" },
+        { keys: ["{", "}"], what: "Previous / next blank-line block — in Elixir, function and pipeline boundaries" },
+        { keys: ["z z"], what: "Centre the current line in the pane" },
+        { keys: ["y y"], what: "Copy the current line" },
       ],
     },
     {
@@ -55,10 +85,16 @@
       title: "The code pane's controls",
       rows: [
         { action: "A− / A+", what: "Font size, 10–22px. Remembered between sessions" },
-        { action: "↵ Wrap", what: "Soft wrap long lines so nothing needs horizontal scrolling" },
         {
           action: "◫ Blame",
-          what: "Who last touched each line. Only shown inside a git repo, and only runs git blame when pressed",
+          what:
+            "Tints each line with its author's colour and names them in the gutter — runs of lines by " +
+            "one person read as blocks. Stops any selection from dimming the file, so every author " +
+            "stays visible. Only shown inside a git repo, and only runs git blame when pressed",
+        },
+        {
+          action: "long lines",
+          what: "Always soft-wrapped, so reading never means scrolling sideways",
         },
       ],
     },

@@ -7,6 +7,7 @@
   import FnPalette from "$lib/components/FnPalette.svelte";
   import HelpModal from "$lib/components/HelpModal.svelte";
   import { displaySig, locate } from "$lib/select";
+  import { when } from "$lib/when";
   import { theme } from "$lib/stores/theme.svelte";
   import { focus } from "$lib/stores/focus.svelte";
   import * as ipc from "$lib/ipc";
@@ -27,6 +28,8 @@
   let showPalette = $state(false);
   /** `?` — what everything does. */
   let showHelp = $state(false);
+  /** The last few readings, offered on the welcome screen for a one-click reopen. */
+  let recents = $state<DocSummary[]>([]);
   /** Existing docs for a just-opened path, awaiting your choice. */
   let chooser = $state<DocSummary[] | null>(null);
 
@@ -34,6 +37,16 @@
   /** The file on disk has changed since this doc was written. */
   const stale = $derived(!!doc && !!file && doc.sourceSha !== file.sourceSha);
   const moduleCount = $derived(outline?.modules?.length ?? 0);
+
+  // The welcome screen is the only place these are shown, so only load them
+  // while it's up.
+  $effect(() => {
+    if (file) return;
+    ipc
+      .listDocs(undefined, 6)
+      .then((r) => (recents = r))
+      .catch(() => (recents = []));
+  });
 
   // ---- opening ------------------------------------------------------------
 
@@ -181,34 +194,12 @@
 
   // ---- keyboard -----------------------------------------------------------
 
-  /** Functions in source order — the order `[` and `]` walk. */
-  const bySource = $derived.by(() =>
-    [...(outline?.modules?.[0]?.functions ?? [])].sort((a, b) => a.line - b.line),
-  );
-
   /** Select a whole function: every clause, its @spec and its @doc. */
   function selectFunction(f: ipc.FnInfo) {
     const sig = displaySig(f);
     const at = locate(sig, outline?.modules?.[0] ?? null);
     // `select`, not `set` — navigation must never toggle focus off.
     if (at) focus.select(sig, at.ranges, at.related, at.spec, at.doc);
-  }
-
-  /**
-   * Step to the next or previous definition. The starting point is whatever the
-   * reader is looking at: the review cursor if there is one, else the focused
-   * function, else the top of the file.
-   */
-  function jumpFunction(dir: 1 | -1) {
-    if (!bySource.length) return;
-    const from = focus.cursorLine ?? focus.ranges[0]?.start ?? 0;
-    const next =
-      dir === 1
-        ? bySource.find((f) => f.line > from)
-        : [...bySource].reverse().find((f) => f.line < from);
-    // At either end, stay put rather than wrapping — wrapping in a file loses
-    // your sense of where you are.
-    if (next) selectFunction(next);
   }
 
   /** True while a text field owns the keyboard — never steal keys from typing. */
@@ -264,26 +255,9 @@
       return;
     }
 
-    // Navigation keys. Only when nothing modal is up and nothing is being
-    // typed into.
-    if (showLibrary || showPath || showPalette || showHelp || meta || isTyping(e.target)) return;
-    if (!file) return;
-
-    // ↑/↓ walk the review cursor a line at a time…
-    if (e.key === "ArrowDown" || e.key === "j") {
-      e.preventDefault();
-      focus.moveCursor(1, file.source.split("\n").length);
-    } else if (e.key === "ArrowUp" || e.key === "k") {
-      e.preventDefault();
-      focus.moveCursor(-1, file.source.split("\n").length);
-      // …and [ / ] step whole functions, the coarse counterpart.
-    } else if (e.key === "]") {
-      e.preventDefault();
-      jumpFunction(1);
-    } else if (e.key === "[") {
-      e.preventDefault();
-      jumpFunction(-1);
-    }
+    // Everything else that moves around the code — j/k, [ ], gg, G, H/M/L,
+    // { }, ⌃d/⌃u, zz, yy — belongs to CodePane, which owns the viewport those
+    // motions are measured against.
   }
 </script>
 
@@ -362,6 +336,24 @@
         />
         <button class="btn" type="submit" disabled={!pathInput.trim()}>Open</button>
       </form>
+
+      {#if recents.length}
+        <div class="recents">
+          <div class="rhead">
+            <span>Pick up where you left off</span>
+            <button class="more" onclick={() => (showLibrary = true)}>all readings →</button>
+          </div>
+          {#each recents as doc (doc.id)}
+            <button class="recent" onclick={() => openExisting(doc)}>
+              <span class="title">{doc.title}</span>
+              <span class="file">{doc.filename}</span>
+              <span class="spacer"></span>
+              {#if doc.branch}<span class="branch">⑂ {doc.branch}</span>{/if}
+              <span class="ago">{when(doc.updatedAt)}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
     </div>
   {:else}
     <div class="split">
@@ -373,6 +365,7 @@
           path={file.path}
           hasGit={file.hasGit}
           {outline}
+          keysEnabled={!showLibrary && !showPath && !showPalette && !showHelp}
         />
       </div>
 
@@ -421,8 +414,8 @@
       <span class="spacer"></span>
       {#if outline}
         <span class="keys">
-          <kbd>⌘P</kbd> jump · <kbd>[</kbd><kbd>]</kbd> functions · <kbd>↑</kbd><kbd>↓</kbd> lines ·
-          <kbd>?</kbd> help
+          <kbd>/</kbd> find · <kbd>⌘P</kbd> jump · <kbd>[</kbd><kbd>]</kbd> fns ·
+          <kbd>j</kbd><kbd>k</kbd><kbd>gg</kbd><kbd>G</kbd> vim · <kbd>?</kbd> help
         </span>
       {/if}
       {#if doc}<span>doc #{doc.id} → sqlite</span>{/if}
@@ -676,6 +669,87 @@
   }
   .pathform input:focus {
     border-color: var(--accent);
+  }
+
+  /* Recent readings — the fastest route back into a file you were already in. */
+  .recents {
+    width: min(560px, 84vw);
+    margin-top: 28px;
+    border-top: 1px solid var(--line);
+    padding-top: 10px;
+  }
+  .rhead {
+    display: flex;
+    align-items: baseline;
+    padding: 0 4px 6px;
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+  }
+  .rhead .more {
+    margin-left: auto;
+    font: inherit;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: none;
+    background: none;
+    border: 0;
+    color: var(--fg-faint);
+    cursor: pointer;
+  }
+  .rhead .more:hover {
+    color: var(--accent);
+  }
+  .recent {
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+    width: 100%;
+    text-align: left;
+    font: inherit;
+    background: none;
+    border: 0;
+    border-left: 2px solid transparent;
+    border-radius: 5px;
+    padding: 6px 8px;
+    cursor: pointer;
+    color: var(--fg);
+  }
+  .recent:hover {
+    background: var(--bg-inset);
+    border-left-color: var(--accent);
+  }
+  .recent .title {
+    font-size: 12.5px;
+    font-weight: 550;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .recent .file {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--fg-faint);
+    white-space: nowrap;
+  }
+  .recent .spacer {
+    flex: 1;
+  }
+  .recent .branch {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-dim);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 0 6px;
+    white-space: nowrap;
+  }
+  .recent .ago {
+    font-size: 10.5px;
+    color: var(--fg-faint);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
   }
 
   .scrim {

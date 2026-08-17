@@ -135,6 +135,11 @@ class FocusStore {
     this.cursorLine = Math.min(Math.max(from + delta, 1), Math.max(total, 1));
   }
 
+  /** Absolute jump — `42G`, `gg`, `H`. Never toggles; "go here" means go here. */
+  gotoLine(n: number, total: number) {
+    this.cursorLine = Math.min(Math.max(n, 1), Math.max(total, 1));
+  }
+
   clearFunction() {
     this.sig = "";
     this.ranges = [];

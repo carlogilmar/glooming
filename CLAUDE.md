@@ -86,7 +86,7 @@ src/
     +page.svelte               shell: titlebar, app header, split, status bar, autosave
   lib/
     components/
-      CodePane.svelte          source, line numbers, blame gutter, focus, font size, wrap
+      CodePane.svelte          source, line numbers, blame, focus, search, vim motions, font size
       DocPane.svelte           edit/preview toggle, block styling, row wiring, treemap tooltip
       Divider.svelte           draggable split, double-click reset
       Library.svelte           saved docs: search, sort, folder grouping, keyboard nav, delete
@@ -239,6 +239,14 @@ pill. One is never enough; the pill exists so the exit is discoverable.
 Treemap tiles and table rows are the same gesture — both carry `data-sig`, and
 `DocPane.select()` handles either.
 
+**Dimming yields to file-wide views.** `.focusing` (the dim-to-32%) is right for
+"show me this one function" and wrong for any question about the whole file, so
+it is suppressed while blame or a search is active — see `dimming` in
+`CodePane.svelte`. The selection keeps its own highlight and the pill still says
+where you are; it just stops hiding the author colours or the matches you asked
+for. Without this, turning on blame with a function selected leaves 68% of the
+authors invisible.
+
 ### The library
 
 `⌘K`. Built for a few hundred docs, not a few: search over title/filename/path/
@@ -301,11 +309,18 @@ toggle. Everything about the open file lives in the app header below it.
 `scrollIntoView({block: "center"})` clamps at the document end by itself. The
 padding was visible as dead space below the last line.
 
-**Soft wrap needs `overflow-wrap: anywhere`,** not `break-word` — a long string
-or URL has no break opportunity and will still force a horizontal scrollbar,
-which defeats the point. Line numbers and the blame gutter need
-`align-self: flex-start` so they stay level with the *first* visual line of a
-wrapped row.
+**Soft wrap is unconditional** — there is no toggle. It needs
+`overflow-wrap: anywhere`, not `break-word`: a long string or URL has no break
+opportunity and will still force a horizontal scrollbar, which defeats the
+point. Line numbers and the blame gutter need `align-self: flex-start` so they
+stay level with the *first* visual line of a wrapped row.
+
+**The blame tint must lose to every selection state.** `.row.authored` is
+deliberately one rule at two classes' specificity, with per-theme strength in
+the `--who-l` / `--who-a` tokens. A `html.dark .row.authored` override would
+carry an extra element selector and silently outrank focus, spec, doc and
+cursor — so in dark mode the blame tint would win. Every selection state is
+prefixed `.code ` to sit above it.
 
 **Multi-clause functions collapse to one row.** Elixir routinely spreads a
 function across several `def`s; the outline reports one `name/arity` entry with

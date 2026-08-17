@@ -33,6 +33,11 @@
   --who-1:     #2563eb;
   --who-2:     #7c3aed;
   --who-3:     #b45309;
+  /* Per-author blame tint. Hue comes from the row; these set how strongly it
+     prints, which differs by theme — a tint that reads on paper disappears on
+     a dark screen. */
+  --who-l:     50%;
+  --who-a:     0.09;
 
   --syn-kw:    #7c3aed;
   --syn-fn:    #2563eb;
@@ -71,6 +76,8 @@ html.dark {
   --who-1:     #7aa2f7;
   --who-2:     #bb9af7;
   --who-3:     #e0af68;
+  --who-l:     56%;
+  --who-a:     0.14;
 
   --syn-kw:    #bb9af7;
   --syn-fn:    #7aa2f7;
