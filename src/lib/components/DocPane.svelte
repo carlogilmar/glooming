@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createMarkdownIt } from "$lib/markdownit";
+  import { locate } from "$lib/select";
   import { focus } from "$lib/stores/focus.svelte";
   import type { Outline } from "$lib/ipc";
 
@@ -25,38 +26,13 @@
   const md = $derived(createMarkdownIt(outline));
   const html = $derived(md.render(markdown));
 
-  /**
-   * Everything a selection should light up:
-   *   · every clause of this exact name/arity  → primary
-   *   · the same name at other arities         → related (they're the same
-   *     function to a reader, even though BEAM treats them as separate)
-   *   · the @spec above it                     → its own color
-   */
-  function locate(sig: string) {
-    const fns = outline?.modules?.[0]?.functions ?? [];
-    const bare = sig.replace(/~~/g, "");
-    const slash = bare.lastIndexOf("/");
-    const name = slash === -1 ? bare : bare.slice(0, slash);
-    const arity = parseInt(bare.slice(slash + 1).split("..").pop() ?? "0", 10) || 0;
-
-    const hit = fns.find((f) => f.name === name && f.arity === arity);
-    if (!hit) return null;
-
-    const related = fns
-      .filter((f) => f.name === name && f.arity !== arity)
-      .flatMap((f) => f.clauseRanges);
-
-    const ranges = hit.clauseRanges.length ? hit.clauseRanges : [{ start: hit.line, end: hit.endLine }];
-    return { ranges, related, spec: hit.specRange };
-  }
-
   function select(target: HTMLElement) {
     // Table rows and treemap tiles are the same gesture — both carry data-sig.
     const row = target.closest<HTMLElement>(".fnrow[data-line], .tm-tile[data-sig]");
     if (!row) return false;
     const sig = row.dataset.sig ?? "";
-    const at = locate(sig);
-    if (at) focus.set(sig, at.ranges, at.related, at.spec);
+    const at = locate(sig, outline?.modules?.[0] ?? null);
+    if (at) focus.set(sig, at.ranges, at.related, at.spec, at.doc);
     return true;
   }
 
