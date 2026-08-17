@@ -9,6 +9,7 @@ import { parseBlock, withOutline, type FnEntry } from "$lib/lgtmBlock";
 import { renderTreemap } from "$lib/treemap";
 import { renderStats } from "$lib/stats";
 import { renderDeps } from "$lib/deps";
+import { renderSurface } from "$lib/surface";
 import type { Outline } from "$lib/ipc";
 
 hljs.registerLanguage("elixir", elixir);
@@ -17,6 +18,7 @@ const BLOCK_TAG = "lgtm:functions";
 const TREEMAP_TAG = "lgtm:treemap";
 const STATS_TAG = "lgtm:stats";
 const DEPS_TAG = "lgtm:deps";
+const SURFACE_TAG = "lgtm:surface";
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"]/g, (c) =>
@@ -63,6 +65,15 @@ export function createMarkdownIt(outline: Outline | null): MarkdownIt {
     if (info.startsWith(STATS_TAG)) {
       try {
         return renderStats(token.content);
+      } catch {
+        return defaultFence(tokens, idx, opts, env, self);
+      }
+    }
+
+    // ```lgtm:surface — the directory: public and private, sorted by name.
+    if (info.startsWith(SURFACE_TAG)) {
+      try {
+        return renderSurface(token.content, outline?.modules?.[0]?.name ?? "");
       } catch {
         return defaultFence(tokens, idx, opts, env, self);
       }

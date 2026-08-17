@@ -100,9 +100,15 @@
     },
     {
       title: "Your explanation",
-      note: "Plain markdown with four extra blocks. The values live in the text, so you can edit any of them.",
+      note: "Plain markdown with five extra blocks. The values live in the text, so you can edit any of them.",
       rows: [
         { action: "Preview / Edit", what: "Rendered blocks, or the raw markdown source" },
+        {
+          action: "the surface block",
+          what:
+            "Public left, private right, sorted by name and scrolling separately — the directory. " +
+            "Click a row to focus it in the code",
+        },
         { action: "click a table row", what: "Focuses that function in the code" },
         { action: "click a treemap tile", what: "The same — sized by lines of code, biggest three labelled" },
         {

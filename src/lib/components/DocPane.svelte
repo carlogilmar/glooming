@@ -30,7 +30,7 @@
     // Table rows, treemap tiles and the reach block's own functions are all the
     // same gesture — every one of them carries data-sig.
     const row = target.closest<HTMLElement>(
-      ".fnrow[data-line], .tm-tile[data-sig], .lgtm-deps .fn[data-sig]",
+      ".fnrow[data-line], .tm-tile[data-sig], .lgtm-deps .fn[data-sig], .lgtm-surface .row[data-sig]",
     );
     if (!row) return false;
     const sig = row.dataset.sig ?? "";
@@ -169,7 +169,9 @@
     html;
     if (!container) return;
 
-    for (const el of container.querySelectorAll(".fnrow, .tm-tile, .lgtm-deps .fn")) {
+    for (const el of container.querySelectorAll(
+      ".fnrow, .tm-tile, .lgtm-deps .fn, .lgtm-surface .row",
+    )) {
       el.classList.toggle("active", focus.active && (el as HTMLElement).dataset.sig === sig);
     }
     const host = reachHost();
@@ -865,5 +867,153 @@
   }
   :global(.lgtm-deps .readout .muted) {
     color: var(--fg-faint);
+  }
+
+  /* ---- the lgtm:surface block ----
+     The directory. Ported from mockup/surface.html. Public left, private right,
+     each sorted by name and scrolling on its own. */
+  :global(.lgtm-surface) {
+    border: 1px solid var(--doc-line);
+    border-radius: 8px;
+    background: var(--code-bg);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    margin: 0 0 22px;
+  }
+  :global(.lgtm-surface.empty) {
+    padding: 18px;
+    color: var(--fg-faint);
+    font-size: 12.5px;
+  }
+  :global(.lgtm-surface > header) {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--line-soft);
+    background: var(--bg-inset);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+  }
+  :global(.lgtm-surface > header .tag) {
+    font-family: var(--mono);
+    color: var(--mark);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  :global(.lgtm-surface > header .count) {
+    margin-left: auto;
+    font-family: var(--mono);
+  }
+
+  :global(.lgtm-surface .cols) {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  :global(.lgtm-surface .col) {
+    min-width: 0;
+  }
+  :global(.lgtm-surface .col + .col) {
+    border-left: 1px solid var(--line-soft);
+  }
+  /* Sticky, so scrolling one column never loses which side you are on. */
+  :global(.lgtm-surface .col > .label) {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 12px;
+    background: var(--code-bg);
+    border-bottom: 1px solid var(--line-soft);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  :global(.lgtm-surface .col.public > .label) {
+    color: var(--pub);
+  }
+  :global(.lgtm-surface .col.private > .label) {
+    color: var(--priv);
+  }
+  :global(.lgtm-surface .col > .label .bar) {
+    width: 3px;
+    height: 11px;
+    border-radius: 2px;
+    background: currentColor;
+  }
+  :global(.lgtm-surface .col > .label .n) {
+    margin-left: auto;
+    font-family: var(--mono);
+    color: var(--fg-faint);
+  }
+
+  :global(.lgtm-surface .list) {
+    height: 300px;
+    overflow-y: auto;
+    /* Don't hand the scroll to the doc pane when a column bottoms out. */
+    overscroll-behavior: contain;
+  }
+  :global(.lgtm-surface .row) {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 5px 12px;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+  }
+  :global(.lgtm-surface .row:hover) {
+    background: var(--bg-inset);
+    border-left-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  :global(.lgtm-surface .row.active) {
+    background: var(--sel);
+    border-left-color: var(--accent);
+  }
+  :global(.lgtm-surface .row .sig) {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  :global(.lgtm-surface .row.active .sig) {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  :global(.lgtm-surface .row .sig .ar) {
+    color: var(--fg-faint);
+  }
+  :global(.lgtm-surface .row .badge) {
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 0 5px;
+    white-space: nowrap;
+    flex: none;
+  }
+  :global(.lgtm-surface .row .spacer) {
+    flex: 1;
+  }
+  :global(.lgtm-surface .row .ln) {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-faint);
+    flex: none;
+    font-variant-numeric: tabular-nums;
+  }
+  :global(.lgtm-surface .list .none) {
+    padding: 14px 12px;
+    color: var(--fg-faint);
+    font-size: 12px;
+    font-style: italic;
+    margin: 0;
   }
 </style>

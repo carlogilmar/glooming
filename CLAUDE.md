@@ -76,6 +76,7 @@ Vite server survived a previous run: `lsof -ti:1420 | xargs kill -9`.
 ```
 mockup/index.html              standalone visual contract — no build, just open it
 mockup/deps.html               the reach block's visual contract
+mockup/surface.html            the surface block's visual contract
 app-icon.png                   icon source (1024², RGBA); also copied to static/
 IMPLEMENTATION_PLAN.md         the reasoning behind every decision here
 README.md                      user-facing: clone, install, run, build
@@ -99,6 +100,7 @@ src/
     treemap.ts                 parses + draws the treemap block
     stats.ts                   parses + draws the stats block
     deps.ts                    parses + draws the reach block (see mockup/deps.html)
+    surface.ts                 parses + draws the surface block (see mockup/surface.html)
     ipc.ts                     typed wrappers over invoke()
 
 src-tauri/
@@ -139,7 +141,7 @@ number a row or tile jumps to.
 A block whose body is empty renders as a short "re-seed this doc, or write
 `…` style rows here" hint, never as a blank box.
 
-### The four blocks
+### The five blocks
 
 ````markdown
 ```lgtm:stats
@@ -165,6 +167,14 @@ updated: 2026-08-10
     get/2    : get_user/1
 ```
 
+```lgtm:surface module=MyApp.Accounts
+public:
+  create_user/1 : 12
+  get_user!/1   : 24
+private:
+  normalize/1   : 30 2 clauses
+```
+
 ```lgtm:functions module=MyApp.Accounts
 public:
   - create_user/1 : Entry point. Validates, then inserts.
@@ -174,9 +184,22 @@ private:
 ```
 ````
 
-Seed order is **stats → treemap → deps → functions**: how big is this, what
-shape is it, what does it touch, and only then what's in it. `lgtm:deps` is
-omitted entirely when a module reaches nothing.
+Seed order is **stats → treemap → deps → surface → functions**, under the
+headings *(none)* → Shape → Reach → Surface → Explain: how big is this, what
+shape is it, what does it touch, what's in it, and only then the block you
+write in. `lgtm:deps` is omitted entirely when a module reaches nothing.
+
+**`lgtm:surface` and `lgtm:functions` are not redundant.** Surface is the
+*directory* — sorted by name, two scrolling columns, for getting somewhere.
+Functions is where *you write*; its rows carry your prose and its gaps are the
+nudge. Only `lgtm:functions` is reconciled, and only it should ever be.
+
+**Surface is sorted in exactly one place — `seed.rs`.** The renderer preserves
+the order the text gives it. An earlier version sorted in both, and they
+disagreed: Rust orders by `(name, arity)` giving `get_user/1, get_user!/1`,
+while JS `localeCompare` on the full signature reorders punctuation and gave
+`get_user_by_email/1, get_user!/1, get_user/1` — so the text and the picture
+showed different orders. One sorter also means a row you move by hand stays put.
 
 Everything after the **first** colon is prose, so explanations may contain
 colons and backticks freely. An empty explanation is legal and renders as a

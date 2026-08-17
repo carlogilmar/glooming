@@ -19,6 +19,9 @@ pub const STATS_TAG: &str = "lgtm:stats";
 /// What the module reaches outside itself. Same rule again: the block carries
 /// its own data, so the picture is drawn from the text.
 pub const DEPS_TAG: &str = "lgtm:deps";
+/// The module's surface as a directory: public and private, sorted by name.
+/// Distinct from `lgtm:functions`, which is where *you* write.
+pub const SURFACE_TAG: &str = "lgtm:surface";
 
 /// Build the whole starter doc.
 ///
@@ -57,6 +60,11 @@ pub fn seed_markdown(outline: &Outline, source: &str, history: &FileHistory) -> 
         out.push('\n');
     }
     out.push_str("## Surface\n\n");
+    out.push_str(&surface_block(module));
+
+    // The functions block comes last of the four: everything above it is
+    // generated, and this is the one you write in.
+    out.push_str("\n## Explain\n\n");
     out.push_str(&functions_block(module));
     out.push_str("\n## Notes\n\n");
     out
@@ -154,6 +162,47 @@ pub fn deps_block(module: &ModuleInfo) -> String {
         for f in &dep.functions {
             let name = &f.name;
             out.push_str(&format!("    {name:width$} : {}\n", f.callers.join(", ")));
+        }
+    }
+
+    out.push_str("```\n");
+    out
+}
+
+/// The ```lgtm:surface block: every function, sorted by name, split by
+/// visibility. A directory to look things up in — which is why it is sorted by
+/// name and not by position, and why it carries the line number as the only
+/// remaining hint of where you are going.
+pub fn surface_block(module: &ModuleInfo) -> String {
+    let mut out = format!("```{SURFACE_TAG} module={}\n", module.name);
+
+    for visibility in [Visibility::Public, Visibility::Private] {
+        let mut group: Vec<_> = module
+            .functions
+            .iter()
+            .filter(|f| f.visibility == visibility)
+            .collect();
+        group.sort_by(|a, b| a.name.cmp(&b.name).then(a.arity.cmp(&b.arity)));
+        if group.is_empty() {
+            continue;
+        }
+
+        out.push_str(match visibility {
+            Visibility::Public => "public:\n",
+            Visibility::Private => "private:\n",
+        });
+
+        let width = group.iter().map(|f| display_sig(f).len()).max().unwrap_or(0);
+        for f in &group {
+            let sig = display_sig(f);
+            let mut flags = String::new();
+            if f.min_arity < f.arity {
+                flags.push_str(" default args");
+            }
+            if f.clauses > 1 {
+                flags.push_str(&format!(" {} clauses", f.clauses));
+            }
+            out.push_str(&format!("  {sig:width$} : {}{flags}\n", f.line));
         }
     }
 
@@ -288,9 +337,9 @@ end
     fn is_a_well_formed_fence() {
         let md = seeded();
         assert!(md.contains("```lgtm:functions module=MyApp.Accounts"));
-        // stats, treemap, deps, function table — the sample reaches nothing
-        // outside itself, so deps is absent and three blocks remain.
-        assert_eq!(md.matches("```").count(), 6, "every block opened and closed");
+        // stats, treemap, surface, functions — the sample reaches nothing
+        // outside itself, so deps is absent and four blocks remain.
+        assert_eq!(md.matches("```").count(), 8, "every block opened and closed");
     }
 
     #[test]
@@ -299,9 +348,35 @@ end
         assert!(md.contains("```lgtm:treemap"));
         // Its body carries the sizes as text — the markdown IS the data.
         assert!(md.contains("```lgtm:treemap\n  "), "{md}");
-        // Facts, then shape, then the table.
+        // Facts, then shape, then the directory, then the place you write.
         assert!(md.find("lgtm:stats").unwrap() < md.find("lgtm:treemap").unwrap());
-        assert!(md.find("lgtm:treemap").unwrap() < md.find("lgtm:functions").unwrap());
+        assert!(md.find("lgtm:treemap").unwrap() < md.find("lgtm:surface").unwrap());
+        assert!(md.find("lgtm:surface").unwrap() < md.find("lgtm:functions").unwrap());
+    }
+
+    #[test]
+    fn the_surface_block_is_a_directory_sorted_by_name() {
+        let md = seeded();
+        let block = md
+            .split("```lgtm:surface")
+            .nth(1)
+            .and_then(|b| b.split("```").next())
+            .expect("surface block");
+
+        let names: Vec<String> = block
+            .lines()
+            .filter(|l| l.contains(" : "))
+            .map(|l| l.trim().split(" : ").next().unwrap().trim().to_string())
+            .collect();
+
+        // Both groups present, each alphabetical within itself.
+        assert!(block.contains("public:") && block.contains("private:"), "{block}");
+        assert!(names.contains(&"create_user/1".to_string()), "{names:?}");
+        // Line numbers ride along — sorting by name throws away source order,
+        // so the line is the only hint of where a row goes.
+        assert!(block.contains(" : 5"), "line numbers present:\n{block}");
+        // Flags earn a badge.
+        assert!(block.contains("default args"), "{block}");
     }
 
     #[test]
