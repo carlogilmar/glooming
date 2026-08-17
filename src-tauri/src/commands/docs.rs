@@ -11,11 +11,14 @@ use crate::{reconcile, seed};
 use std::path::Path;
 use tauri::State;
 
-/// Build the starter markdown for a parsed file without saving it — lets the UI
-/// show a preview before the doc exists.
+/// Build the starter markdown for a parsed file without saving it.
+///
+/// Git history is looked up here rather than passed in, so the frontend never
+/// has to sequence two calls just to seed a doc.
 #[tauri::command]
-pub fn seed_doc(outline: Outline) -> String {
-    seed::seed_markdown(&outline)
+pub fn seed_doc(path: String, outline: Outline, source: String) -> String {
+    let history = crate::git::history(Path::new(&path)).unwrap_or_default();
+    seed::seed_markdown(&outline, &source, &history)
 }
 
 #[allow(clippy::too_many_arguments)]

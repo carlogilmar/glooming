@@ -1,7 +1,9 @@
 mod commands;
-mod db;
 mod error;
 mod git;
+
+// `db` is public for its serde models, which the integration tests construct.
+pub mod db;
 
 // Public so the integration tests in tests/ can exercise the pipeline directly.
 pub mod parse;

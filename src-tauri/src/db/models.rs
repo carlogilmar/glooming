@@ -62,3 +62,16 @@ pub struct BlameLine {
     pub when: String,
     pub sha: String,
 }
+
+/// What git knows about a file's life: who has touched it, and when it started
+/// and last changed. Read-only, and empty outside a repo.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileHistory {
+    pub commits: u32,
+    /// Distinct authors, most commits first.
+    pub authors: Vec<String>,
+    /// ISO-8601 date of the first commit that touched this file.
+    pub first: Option<String>,
+    pub last: Option<String>,
+}

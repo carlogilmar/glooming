@@ -6,7 +6,7 @@
 //! Nothing here mutates a repository, and every function degrades to `None` /
 //! empty outside one.
 
-use crate::db::models::BlameLine;
+use crate::db::models::{BlameLine, FileHistory};
 use crate::error::AppResult;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -36,6 +36,60 @@ pub fn current_branch(file: &Path) -> Option<String> {
         // Detached HEAD.
         None if head.len() >= 7 => Some(head[..7].to_string()),
         None => None,
+    }
+}
+
+/// Who has committed this file, and when it started and last changed.
+///
+/// One `git log` over a single path — cheap, read-only, and follows renames.
+/// Outside a repo (or for an untracked file) this is an empty history rather
+/// than an error; the stats block simply omits the git columns.
+pub fn history(path: &Path) -> AppResult<FileHistory> {
+    let Some(root) = repo_root(path) else {
+        return Ok(FileHistory::default());
+    };
+
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .arg("log")
+        .arg("--follow")
+        .arg("--format=%an%x00%aI")
+        .arg("--")
+        .arg(path)
+        .output()?;
+
+    if !out.status.success() {
+        return Ok(FileHistory::default());
+    }
+    Ok(parse_log(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// `git log` output is newest-first, one `author\0date` per line.
+fn parse_log(text: &str) -> FileHistory {
+    let mut counts: Vec<(String, u32)> = Vec::new();
+    let mut dates: Vec<String> = Vec::new();
+
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let mut bits = line.split('\0');
+        let (Some(author), Some(date)) = (bits.next(), bits.next()) else {
+            continue;
+        };
+        match counts.iter_mut().find(|(a, _)| a == author) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((author.to_string(), 1)),
+        }
+        dates.push(date.to_string());
+    }
+
+    // Busiest author first — the person to ask about this file.
+    counts.sort_by(|a, b| b.1.cmp(&a.1));
+
+    FileHistory {
+        commits: dates.len() as u32,
+        authors: counts.into_iter().map(|(a, _)| a).collect(),
+        first: dates.last().cloned(),
+        last: dates.first().cloned(),
     }
 }
 
@@ -154,6 +208,29 @@ author-time 1700086400
         let lines = parse_porcelain(PORCELAIN);
         assert_eq!(lines[0].sha, "a1b2c3d4");
         assert_ne!(lines[0].sha, lines[2].sha);
+    }
+
+    #[test]
+    fn counts_commits_and_orders_authors_by_volume() {
+        let log = "Jane Rivera\u{0}2026-08-10T09:00:00+00:00\n\
+                   Carlo Padilla\u{0}2026-06-01T09:00:00+00:00\n\
+                   Carlo Padilla\u{0}2025-02-14T09:00:00+00:00\n";
+        let h = parse_log(log);
+
+        assert_eq!(h.commits, 3);
+        // Carlo has two commits, Jane one — busiest first.
+        assert_eq!(h.authors, vec!["Carlo Padilla", "Jane Rivera"]);
+        // git log is newest-first, so first/last come from opposite ends.
+        assert_eq!(h.last.as_deref(), Some("2026-08-10T09:00:00+00:00"));
+        assert_eq!(h.first.as_deref(), Some("2025-02-14T09:00:00+00:00"));
+    }
+
+    #[test]
+    fn an_empty_log_is_an_empty_history() {
+        let h = parse_log("");
+        assert_eq!(h.commits, 0);
+        assert!(h.authors.is_empty());
+        assert!(h.first.is_none() && h.last.is_none());
     }
 
     #[test]

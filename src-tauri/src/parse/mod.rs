@@ -13,9 +13,27 @@ pub enum Visibility {
     Private,
 }
 
+/// An inclusive 1-based line span.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Range {
+    pub start: u32,
+    pub end: u32,
+}
+
+impl Range {
+    pub fn of(node: tree_sitter::Node) -> Self {
+        Range {
+            start: node.start_position().row as u32 + 1,
+            end: node.end_position().row as u32 + 1,
+        }
+    }
+}
+
 /// One `name/arity` entry. Multiple clauses of the same function collapse into
 /// a single `FnInfo` whose `clauses` counts them — Elixir routinely spreads one
 /// function across several `def`s, and the reader wants one row, not four.
+/// Every clause's span is kept in `clause_ranges` so selecting the row can
+/// highlight all of them, not just the first.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FnInfo {
@@ -31,8 +49,15 @@ pub struct FnInfo {
     /// 1-based line of that clause's matching `end` (== `line` for one-liners).
     pub end_line: u32,
     pub clauses: u8,
+    /// Every clause of this function, in source order.
+    pub clause_ranges: Vec<Range>,
     /// `@doc` text attached to the first clause, if any.
     pub doc: Option<String>,
+    /// Where that `@doc` sits, so the code pane can style it.
+    pub doc_range: Option<Range>,
+    /// Where the `@spec` sits — highlighted alongside the function, in its own
+    /// color, because the signature is half of what you're reading.
+    pub spec_range: Option<Range>,
 }
 
 impl FnInfo {
@@ -49,6 +74,8 @@ pub struct ModuleInfo {
     pub name: String,
     pub line: u32,
     pub doc: Option<String>,
+    /// Where the `@moduledoc` sits, for styling in the code pane.
+    pub doc_range: Option<Range>,
     pub functions: Vec<FnInfo>,
 }
 

@@ -5,6 +5,12 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type Visibility = "public" | "private";
 
+/** Inclusive 1-based line span. */
+export interface Range {
+  start: number;
+  end: number;
+}
+
 export interface FnInfo {
   name: string;
   arity: number;
@@ -14,13 +20,18 @@ export interface FnInfo {
   line: number;
   endLine: number;
   clauses: number;
+  /** Every clause, in source order — selecting the row highlights all of them. */
+  clauseRanges: Range[];
   doc: string | null;
+  docRange: Range | null;
+  specRange: Range | null;
 }
 
 export interface ModuleInfo {
   name: string;
   line: number;
   doc: string | null;
+  docRange: Range | null;
   functions: FnInfo[];
 }
 
@@ -77,10 +88,11 @@ export const reparse = (path: string) =>
 export const blameFile = (path: string) =>
   invoke<BlameLine[]>("blame_file", { path });
 
+
 // ---- docs ----------------------------------------------------------------
 
-export const seedDoc = (outline: Outline) =>
-  invoke<string>("seed_doc", { outline });
+export const seedDoc = (path: string, outline: Outline, source: string) =>
+  invoke<string>("seed_doc", { path, outline, source });
 
 export const createDoc = (args: {
   path: string;

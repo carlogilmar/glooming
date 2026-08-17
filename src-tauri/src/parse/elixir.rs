@@ -14,7 +14,7 @@
 //! def foo(a, b \\ nil) do …   arity 2, min_arity 1
 //! ```
 
-use super::{FnInfo, ModuleInfo, Outline, Visibility};
+use super::{FnInfo, ModuleInfo, Outline, Range, Visibility};
 use crate::error::{AppError, AppResult};
 use tree_sitter::{Node, Parser};
 
@@ -69,6 +69,7 @@ fn module_from_call(node: Node, src: &str) -> Option<ModuleInfo> {
         name,
         line: line_of(node),
         doc: attribute_text(body, src, "moduledoc"),
+        doc_range: attribute_range(body, src, "moduledoc"),
         functions,
     })
 }
@@ -104,10 +105,16 @@ fn push_clause(out: &mut Vec<FnInfo>, f: FnInfo) {
         .find(|e| e.name == f.name && e.arity == f.arity && e.visibility == f.visibility)
     {
         existing.clauses = existing.clauses.saturating_add(1);
-        // Keep the first clause's position, but let a later clause supply the
-        // @doc if the first had none.
+        // Keep the first clause's position for jumping, but remember every
+        // clause so selecting the row can highlight all of them.
+        existing.clause_ranges.extend(f.clause_ranges);
+        // A later clause may carry the @doc / @spec the first one lacked.
         if existing.doc.is_none() {
             existing.doc = f.doc;
+            existing.doc_range = existing.doc_range.or(f.doc_range);
+        }
+        if existing.spec_range.is_none() {
+            existing.spec_range = f.spec_range;
         }
         return;
     }
@@ -147,15 +154,21 @@ fn fn_from_call(node: Node, src: &str) -> Option<FnInfo> {
         _ => return None,
     };
 
+    let attrs = preceding_attrs(node, src);
+    let range = Range::of(node);
+
     Some(FnInfo {
         name,
         arity,
         min_arity,
         visibility,
-        line: line_of(node),
-        end_line: node.end_position().row as u32 + 1,
+        line: range.start,
+        end_line: range.end,
         clauses: 1,
-        doc: preceding_doc(node, src),
+        clause_ranges: vec![range],
+        doc: attrs.doc,
+        doc_range: attrs.doc_range,
+        spec_range: attrs.spec_range,
     })
 }
 
@@ -196,22 +209,56 @@ fn attribute_text(body: Node, src: &str, attr: &str) -> Option<String> {
     None
 }
 
-/// `@doc "…"` immediately above a definition, skipping blank lines.
-fn preceding_doc(node: Node, src: &str) -> Option<String> {
+/// The attribute block sitting immediately above a definition.
+///
+/// Walks back through consecutive `@…` attributes — a definition is commonly
+/// preceded by `@doc`, `@spec`, `@impl` in any order — and picks out the two
+/// the UI cares about. Stops at the first non-attribute, since anything else
+/// means the attributes belong to something further up.
+#[derive(Default)]
+struct Attrs {
+    doc: Option<String>,
+    doc_range: Option<Range>,
+    spec_range: Option<Range>,
+}
+
+fn preceding_attrs(node: Node, src: &str) -> Attrs {
+    let mut attrs = Attrs::default();
     let mut prev = node.prev_named_sibling();
+
     while let Some(p) = prev {
-        if let Some(t) = attribute_value(p, src, "doc") {
-            return Some(t);
+        let Some(name) = attribute_name(p, src) else {
+            break;
+        };
+        match name.as_str() {
+            "doc" => {
+                if attrs.doc.is_none() {
+                    attrs.doc = attribute_value(p, src, "doc");
+                    attrs.doc_range = Some(Range::of(p));
+                }
+            }
+            "spec" => {
+                // Several @specs can stack for multi-clause functions; the one
+                // nearest the definition is the one to show.
+                if attrs.spec_range.is_none() {
+                    attrs.spec_range = Some(Range::of(p));
+                }
+            }
+            _ => {}
         }
-        // Only look through other attributes (@spec, @impl); anything else
-        // means the doc, if any, belongs to something else.
-        if attribute_name(p, src).is_some() {
-            prev = p.prev_named_sibling();
-            continue;
-        }
-        break;
+        prev = p.prev_named_sibling();
     }
-    None
+    attrs
+}
+
+/// Where a named attribute sits in a body, for styling.
+fn attribute_range(body: Node, src: &str, attr: &str) -> Option<Range> {
+    let mut cursor = body.walk();
+    let found = body
+        .named_children(&mut cursor)
+        .find(|c| attribute_name(*c, src).as_deref() == Some(attr))
+        .map(Range::of);
+    found
 }
 
 /// The attribute name of an `@foo …` node, if this node is one.
@@ -459,6 +506,71 @@ end
         let f = find(&o, "create_user/1");
         let line = SAMPLE.lines().nth(f.line as usize - 1).unwrap();
         assert!(line.contains("def create_user"), "got: {line}");
+    }
+
+#[test]
+    fn every_clause_range_is_recorded() {
+        let o = outline();
+        let n = o.modules[0]
+            .functions
+            .iter()
+            .find(|f| f.signature() == "normalize/1")
+            .unwrap();
+        // Two clauses: the guarded one, then the passthrough one-liner.
+        assert_eq!(n.clauses, 2);
+        assert_eq!(n.clause_ranges.len(), 2);
+        assert!(n.clause_ranges[0].start < n.clause_ranges[1].start);
+        // The jump target stays the first clause.
+        assert_eq!(n.line, n.clause_ranges[0].start);
+    }
+
+    const WITH_SPECS: &str = r#"defmodule MyApp.Accounts do
+  @doc "Creates a user."
+  @spec create_user(map()) :: {:ok, User.t()} | {:error, term()}
+  def create_user(attrs) do
+    attrs
+  end
+
+  @spec get_user(integer()) :: User.t() | nil
+  def get_user(id), do: id
+
+  def undocumented(x), do: x
+end
+"#;
+
+    #[test]
+    fn finds_the_spec_above_a_definition() {
+        let o = parse(WITH_SPECS).unwrap();
+        let f = |sig: &str| {
+            o.modules[0]
+                .functions
+                .iter()
+                .find(|f| f.signature() == sig)
+                .unwrap_or_else(|| panic!("missing {sig}"))
+        };
+
+        // @spec sits on line 3, the def on line 4 — the doc is above the spec,
+        // so both must be found by walking back through the attribute block.
+        let create = f("create_user/1");
+        assert_eq!(create.spec_range.map(|r| r.start), Some(3));
+        assert_eq!(create.doc_range.map(|r| r.start), Some(2));
+        assert_eq!(create.doc.as_deref(), Some("Creates a user."));
+
+        // A spec with no doc above it.
+        assert_eq!(f("get_user/1").spec_range.map(|r| r.start), Some(8));
+        assert!(f("get_user/1").doc_range.is_none());
+
+        // Neither.
+        assert!(f("undocumented/1").spec_range.is_none());
+        assert!(f("undocumented/1").doc_range.is_none());
+    }
+
+    #[test]
+    fn records_where_the_moduledoc_sits() {
+        let o = outline();
+        let r = o.modules[0].doc_range.expect("moduledoc range");
+        // The heredoc spans lines 2-4 of the fixture.
+        assert_eq!((r.start, r.end), (2, 4));
     }
 
     #[test]

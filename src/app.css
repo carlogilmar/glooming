@@ -40,6 +40,8 @@
   --syn-str:   #15803d;
   --syn-com:   #9aa3b0;
   --syn-atom:  #b45309;
+  --syn-mod:   #0f766e;   /* module aliases: Repo, MyApp.User */
+  --syn-doc:   #6b7280;   /* @doc / @moduledoc text — grey, like a comment */
 
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
@@ -76,6 +78,8 @@ html.dark {
   --syn-str:   #9ece6a;
   --syn-com:   #4f5666;
   --syn-atom:  #e0af68;
+  --syn-mod:   #73daca;
+  --syn-doc:   #7f8797;
 }
 
 * { box-sizing: border-box; }

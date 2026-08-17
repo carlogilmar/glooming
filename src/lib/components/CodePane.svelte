@@ -1,7 +1,7 @@
 <script lang="ts">
   import hljs from "highlight.js/lib/core";
   import elixir from "highlight.js/lib/languages/elixir";
-  import { blameFile, type BlameLine } from "$lib/ipc";
+  import { blameFile, type BlameLine, type Outline } from "$lib/ipc";
   import { focus } from "$lib/stores/focus.svelte";
 
   hljs.registerLanguage("elixir", elixir);
@@ -12,12 +12,14 @@
     filename = "",
     path = "",
     hasGit = false,
+    outline = null,
   }: {
     source: string;
     lang: string | null;
     filename: string;
     path: string;
     hasGit: boolean;
+    outline: Outline | null;
   } = $props();
 
   let body = $state<HTMLDivElement | null>(null);
@@ -26,8 +28,6 @@
   let blaming = $state(false);
 
   // ---- font size ----------------------------------------------------------
-  // Reading at someone else's font size is a small, constant tax. Persisted so
-  // it survives a restart.
   const FONT_KEY = "codeFontSize";
   const MIN = 10;
   const MAX = 22;
@@ -45,25 +45,92 @@
     localStorage.setItem(FONT_KEY, String(fontSize));
   }
 
+  // ---- soft wrap ----------------------------------------------------------
+  // On by default: reading a file shouldn't require scrolling sideways to
+  // finish a line. Off is there for the rare case where column alignment
+  // matters more than seeing the whole line.
+  const WRAP_KEY = "codeWrap";
+  let wrap = $state(true);
+
+  $effect(() => {
+    wrap = localStorage.getItem(WRAP_KEY) !== "0";
+  });
+
+  function toggleWrap() {
+    wrap = !wrap;
+    localStorage.setItem(WRAP_KEY, wrap ? "1" : "0");
+  }
+
   const lines = $derived(source.length ? source.split("\n") : []);
+
+  // ---- highlighting -------------------------------------------------------
+
+  /**
+   * Give module aliases their own color. highlight.js's Elixir grammar doesn't
+   * distinguish `Repo` from a local call, so this is a second pass over the
+   * highlighted HTML: split into tags and text, and only rewrite the text.
+   * Segments already inside a string or comment span are skipped — a module
+   * name mentioned in prose is not a module reference.
+   */
+  function colorModules(html: string): string {
+    const parts = html.split(/(<[^>]+>)/);
+    const open: string[] = [];
+    let out = "";
+
+    for (const part of parts) {
+      if (part.startsWith("<")) {
+        if (part.startsWith("</")) open.pop();
+        else if (!part.endsWith("/>")) open.push(part);
+        out += part;
+        continue;
+      }
+      const inProse = open.some((t) => /hljs-(string|comment|doctag|meta)/.test(t));
+      out += inProse
+        ? part
+        : part.replace(/\b[A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*\b/g, (m) => `<span class="mod">${m}</span>`);
+    }
+    return out;
+  }
 
   // Highlight the whole file once, then split — hljs needs full context to get
   // multi-line constructs (heredocs, block comments) right.
   const highlighted = $derived.by(() => {
     if (!source) return [];
+    let html: string;
     if (lang && hljs.getLanguage(lang)) {
       try {
-        return hljs.highlight(source, { language: lang, ignoreIllegals: true }).value.split("\n");
+        html = hljs.highlight(source, { language: lang, ignoreIllegals: true }).value;
       } catch {
-        /* fall through */
+        html = escapeAll(source);
       }
+    } else {
+      html = escapeAll(source);
     }
-    return lines.map((l) =>
-      l.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;")),
-    );
+    return colorModules(html).split("\n");
   });
 
-  /** Blame is lazy: nothing runs until you ask for it. */
+  function escapeAll(s: string): string {
+    return s.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
+  }
+
+  /**
+   * Lines occupied by `@moduledoc` / `@doc`, so documentation reads as prose
+   * rather than as code. Comes from the parser, so heredoc continuation lines
+   * are included correctly.
+   */
+  const docLines = $derived.by(() => {
+    const set = new Set<number>();
+    for (const m of outline?.modules ?? []) {
+      if (m.docRange) for (let i = m.docRange.start; i <= m.docRange.end; i++) set.add(i);
+      for (const f of m.functions) {
+        if (f.docRange) for (let i = f.docRange.start; i <= f.docRange.end; i++) set.add(i);
+      }
+    }
+    return set;
+  });
+
+  // ---- blame --------------------------------------------------------------
+
   async function toggleBlame() {
     if (showBlame) {
       showBlame = false;
@@ -82,7 +149,6 @@
     showBlame = true;
   }
 
-  // Author names print only when they change, the way real blame gutters do.
   const blameRows = $derived.by(() =>
     blame.map((b, i) => ({
       ...b,
@@ -90,7 +156,6 @@
     })),
   );
 
-  /** Stable per-author color so the gutter reads as bands, not noise. */
   function authorTone(author: string): string {
     let h = 0;
     for (const c of author) h = (h * 31 + c.charCodeAt(0)) >>> 0;
@@ -98,7 +163,7 @@
   }
 
   // Scroll the focused definition into view. scrollIntoView clamps at the end
-  // of the document, so this works without padding the file with dead space.
+  // of the document, so no padding is needed to make centering work.
   $effect(() => {
     const line = focus.line;
     if (!line || !body) return;
@@ -107,6 +172,8 @@
   });
 
   function clickBackground(e: MouseEvent) {
+    // A drag that selects text ends in a click; don't treat that as "clear".
+    if (window.getSelection()?.toString()) return;
     if (!(e.target as HTMLElement).closest(".row")) focus.clear();
   }
 </script>
@@ -126,6 +193,10 @@
       </button>
     </div>
 
+    <button class="btn icon" class:primary={wrap} onclick={toggleWrap} title="Soft wrap long lines">
+      ↵ Wrap
+    </button>
+
     {#if hasGit}
       <button class="btn icon" class:primary={showBlame} onclick={toggleBlame} disabled={blaming}>
         {blaming ? "…" : "◫ Blame"}
@@ -136,18 +207,17 @@
 
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="panebody" bind:this={body} onclick={clickBackground}>
-    <div
-      class="code"
-      class:focusing={focus.active}
-      style:font-size="{fontSize}px"
-    >
+    <div class="code" class:focusing={focus.active} class:wrap style:font-size="{fontSize}px">
       {#each highlighted as html, i}
         {@const n = i + 1}
         <div
           class="row"
           class:hit={focus.contains(n)}
-          class:head={focus.line === n}
-          class:tail={focus.endLine === n && focus.endLine !== focus.line}
+          class:head={focus.isHead(n)}
+          class:tail={focus.isTail(n)}
+          class:related={focus.isRelated(n)}
+          class:spec={focus.isSpec(n)}
+          class:docline={docLines.has(n)}
           data-line={n}
         >
           {#if showBlame}
@@ -170,7 +240,9 @@
   {#if focus.active}
     <button class="focushint" onclick={() => focus.clear()}>
       <span>Reading <b>{focus.sig}</b></span>
-      <span class="span">{focus.lineCount} lines</span>
+      <span class="span">
+        {focus.lineCount} lines{focus.clauseCount > 1 ? ` · ${focus.clauseCount} clauses` : ""}
+      </span>
       <kbd>esc</kbd>
       <span>to exit</span>
     </button>
@@ -195,7 +267,6 @@
     white-space: nowrap;
   }
 
-  /* Font size stepper */
   .fontsize {
     display: flex;
     align-items: stretch;
@@ -237,8 +308,6 @@
   .code {
     font-family: var(--mono);
     line-height: 1.65;
-    /* Just enough tail room to see the last line clear of the window edge —
-       not a screenful of emptiness. scrollIntoView handles focus scrolling. */
     padding: 10px 0 24px;
   }
   .row {
@@ -251,14 +320,37 @@
   .row .ln {
     width: 46px;
     flex: none;
+    align-self: flex-start; /* stay level with the FIRST visual line when wrapped */
     text-align: right;
     padding-right: 14px;
     color: var(--fg-faint);
     opacity: 0.6;
-    user-select: none;
+    user-select: none; /* keep line numbers out of a copied selection */
   }
   .row .src {
+    flex: 1 1 auto;
+    min-width: 0;
     white-space: pre;
+    user-select: text;
+    cursor: text;
+  }
+
+  /* Soft wrap. `anywhere` rather than `break-word` because a single long
+     string or URL would otherwise still force the pane sideways — and the
+     whole point is that there is nothing to scroll to. The hanging indent
+     makes a continuation visibly a continuation, not a new statement. */
+  .code.wrap .row .src {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    padding-left: 2ch;
+    text-indent: -2ch;
+  }
+
+  /* Mouse selection, made unmistakable. The webview's default selection tint
+     is nearly invisible against the code background. */
+  .code :global(::selection) {
+    background: color-mix(in srgb, var(--accent) 28%, transparent);
+    color: inherit;
   }
 
   /* ---- blame gutter ---- */
@@ -275,6 +367,7 @@
     font-size: 10.5px;
     white-space: nowrap;
     user-select: none;
+    align-self: flex-start;
   }
   .row .bl i {
     width: 3px;
@@ -302,7 +395,21 @@
     opacity: 1;
   }
 
-  /* ---- selection: the whole body highlights, everything else dims ---- */
+  /* ---- documentation reads as commentary ----
+     Colour only: @moduledoc / @doc go grey like a comment, so they recede
+     without a background band drawing attention to them. The override has to
+     reach the hljs spans inside, hence the descendant selector. */
+  .row.docline .src,
+  .row.docline .src :global(*) {
+    color: var(--syn-doc);
+  }
+
+  /* ---- module aliases ---- */
+  .row .src :global(.mod) {
+    color: var(--syn-mod);
+  }
+
+  /* ---- selection: whole body, all clauses, spec alongside ---- */
   .row.hit {
     background: var(--sel);
     box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 30%, transparent);
@@ -311,11 +418,23 @@
     opacity: 1;
     color: var(--accent);
   }
-  .code.focusing .row:not(.hit) {
+  /* Same function name at a different arity: present, but clearly secondary. */
+  .row.related {
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+    box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  /* The @spec gets its own color — it's the contract, not the body. */
+  .row.spec {
+    background: color-mix(in srgb, var(--mark) 12%, transparent);
+    box-shadow: inset 2px 0 0 var(--mark);
+  }
+  .row.spec .ln {
+    opacity: 1;
+    color: var(--mark);
+  }
+  .code.focusing .row:not(.hit):not(.related):not(.spec) {
     opacity: 0.32;
   }
-  /* The `def` line breathes; the closing `end` gets a quiet cap so the extent
-     of the selection is unmistakable. */
   .row.hit.head {
     animation: rowPulse 2.1s ease-in-out infinite;
   }

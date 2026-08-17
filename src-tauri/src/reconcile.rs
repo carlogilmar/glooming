@@ -139,10 +139,18 @@ fn merge(existing: &Block, outline: &Outline) -> Block {
         let mut merged = Vec::new();
         let mut matched = Vec::new();
 
-        // Current functions, in source order, keeping any prose already written
-        // for them — including prose that was under the *other* visibility, so
-        // flipping def↔defp doesn't lose the explanation.
-        for f in module.functions.iter().filter(|f| f.visibility == visibility) {
+        // Current functions, keeping any prose already written for them —
+        // including prose that was under the *other* visibility, so flipping
+        // def↔defp doesn't lose the explanation. Alphabetical, matching the
+        // seeder, so reconciling never silently reshuffles the table.
+        let mut current: Vec<_> = module
+            .functions
+            .iter()
+            .filter(|f| f.visibility == visibility)
+            .collect();
+        current.sort_by(|a, b| a.name.cmp(&b.name).then(a.arity.cmp(&b.arity)));
+
+        for f in current {
             let sig = if f.min_arity < f.arity {
                 format!("{}/{}..{}", f.name, f.min_arity, f.arity)
             } else {

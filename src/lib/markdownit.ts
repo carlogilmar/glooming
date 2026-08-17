@@ -6,11 +6,15 @@ import MarkdownIt from "markdown-it";
 import hljs from "highlight.js/lib/core";
 import elixir from "highlight.js/lib/languages/elixir";
 import { parseBlock, withOutline, type FnEntry } from "$lib/lgtmBlock";
+import { renderTreemap } from "$lib/treemap";
+import { renderStats } from "$lib/stats";
 import type { Outline } from "$lib/ipc";
 
 hljs.registerLanguage("elixir", elixir);
 
 const BLOCK_TAG = "lgtm:functions";
+const TREEMAP_TAG = "lgtm:treemap";
+const STATS_TAG = "lgtm:stats";
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"]/g, (c) =>
@@ -22,6 +26,10 @@ function escapeHtml(s: string): string {
  * `outline` is passed in so rendered rows carry the line numbers they jump to.
  * It changes whenever the file is re-parsed, so the instance is rebuilt rather
  * than mutated — markdown rendering is cheap and this keeps it stateless.
+ */
+/**
+ * `outline` is the ONLY live input: blocks carry their own data as text, and
+ * the outline supplies just the line numbers rows and tiles jump to.
  */
 export function createMarkdownIt(outline: Outline | null): MarkdownIt {
   const md = new MarkdownIt({
@@ -48,6 +56,25 @@ export function createMarkdownIt(outline: Outline | null): MarkdownIt {
   md.renderer.rules.fence = (tokens, idx, opts, env, self) => {
     const token = tokens[idx];
     const info = (token.info || "").trim();
+
+    // ```lgtm:stats — file-level facts, drawn from the outline plus git.
+    if (info.startsWith(STATS_TAG)) {
+      try {
+        return renderStats(token.content);
+      } catch {
+        return defaultFence(tokens, idx, opts, env, self);
+      }
+    }
+
+    // ```lgtm:treemap — function sizes, drawn from the live outline. The block
+    // body is ignored; the shape of the code is not something you hand-edit.
+    if (info.startsWith(TREEMAP_TAG)) {
+      try {
+        return renderTreemap(token.content, outline?.modules?.[0] ?? null);
+      } catch {
+        return defaultFence(tokens, idx, opts, env, self);
+      }
+    }
 
     if (!info.startsWith(BLOCK_TAG)) {
       return defaultFence(tokens, idx, opts, env, self);
@@ -96,6 +123,12 @@ function renderFunctionsBlock(module: string, entries: FnEntry[], md: MarkdownIt
   return html + `</div>`;
 }
 
+/**
+ * One row per function, stacked rather than columned: the signature on its own
+ * line, the explanation beneath it. A two-column layout squeezed long names
+ * into a narrow gutter and wrapped them badly — and real modules are full of
+ * long names.
+ */
 function renderRow(e: FnEntry, md: MarkdownIt): string {
   const clickable = e.line !== undefined && !e.removed;
   const attrs = [
@@ -107,8 +140,8 @@ function renderRow(e: FnEntry, md: MarkdownIt): string {
     .filter(Boolean)
     .join(" ");
 
-  const slash = e.sig.replace(/~~/g, "").indexOf("/");
   const bare = e.sig.replace(/~~/g, "");
+  const slash = bare.indexOf("/");
   const name = slash === -1 ? bare : bare.slice(0, slash);
   const arity = slash === -1 ? "" : bare.slice(slash);
 
@@ -116,12 +149,16 @@ function renderRow(e: FnEntry, md: MarkdownIt): string {
     ? `<s>${escapeHtml(name)}<span class="ar">${escapeHtml(arity)}</span></s>`
     : `${escapeHtml(name)}<span class="ar">${escapeHtml(arity)}</span>`;
 
-  // Multi-clause functions get a quiet badge — the row jumps to the first one.
-  const clauses = e.clauses && e.clauses > 1 ? `<span class="clauses">·${e.clauses}</span>` : "";
+  // Badges spell themselves out. `create_user/1 ·2` read as nonsense; the
+  // arity range gets a word too, since `/1..2` is not self-explanatory.
+  const badges: string[] = [];
+  if (arity.includes("..")) badges.push(`<span class="badge">default args</span>`);
+  if (e.clauses && e.clauses > 1) badges.push(`<span class="badge">${e.clauses} clauses</span>`);
+  if (e.removed) badges.push(`<span class="badge gone">removed</span>`);
 
   const why = e.prose
-    ? `<span class="why">${md.renderInline(e.prose)}</span>`
-    : `<span class="why empty"></span>`;
+    ? `<div class="why">${md.renderInline(e.prose)}</div>`
+    : `<div class="why empty"></div>`;
 
-  return `<div ${attrs}><span class="sig">${sig}${clauses}</span>${why}</div>`;
+  return `<div ${attrs}><div class="sigline"><span class="sig">${sig}</span>${badges.join("")}</div>${why}</div>`;
 }

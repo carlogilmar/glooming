@@ -4,12 +4,26 @@
 //! blank explanation so the gaps are visible. Those gaps are the nudge — an
 //! unexplained function renders as a ghost "explain…" placeholder.
 
+use crate::db::models::FileHistory;
 use crate::parse::{ModuleInfo, Outline, Visibility};
 
 /// The fence tag the frontend renderer looks for.
 pub const BLOCK_TAG: &str = "lgtm:functions";
+/// The function-size treemap. Its body is empty on purpose — the renderer
+/// draws from the live outline, since the shape of the code is not something
+/// you hand-edit.
+pub const TREEMAP_TAG: &str = "lgtm:treemap";
+/// File-level facts: size, surface, and what git knows. Body empty for the
+/// same reason as the treemap — none of it is hand-written.
+pub const STATS_TAG: &str = "lgtm:stats";
 
-pub fn seed_markdown(outline: &Outline) -> String {
+/// Build the whole starter doc.
+///
+/// Every block is written out with its **values already in it**. Nothing is
+/// computed at render time: the markdown file is the data, so it stays
+/// readable as plain text, survives being copied anywhere, and can be edited
+/// by hand when you disagree with it.
+pub fn seed_markdown(outline: &Outline, source: &str, history: &FileHistory) -> String {
     let Some(module) = outline.modules.first() else {
         return "# Untitled\n\n> _what is this file for?_\n".to_string();
     };
@@ -25,10 +39,89 @@ pub fn seed_markdown(outline: &Outline) -> String {
         _ => out.push_str("> _one-line summary…_\n\n"),
     }
 
+    // Facts, then shape, then names: how big is this, what does it look like,
+    // and only then what is in it.
+    out.push_str(&stats_block(module, source, history));
+    out.push('\n');
+    out.push_str("## Shape\n\n");
+    out.push_str(&treemap_block(module));
+    out.push('\n');
     out.push_str("## Surface\n\n");
     out.push_str(&functions_block(module));
     out.push_str("\n## Notes\n\n");
     out
+}
+
+/// The ```lgtm:stats block: file-level facts as `key: value` lines.
+pub fn stats_block(module: &ModuleInfo, source: &str, history: &FileHistory) -> String {
+    let lines = source.lines().count();
+    let code = source.lines().filter(|l| !l.trim().is_empty()).count();
+    let publics = module
+        .functions
+        .iter()
+        .filter(|f| f.visibility == Visibility::Public)
+        .count();
+    let privates = module.functions.len() - publics;
+
+    let mut out = format!("```{STATS_TAG}\n");
+    out.push_str(&format!("lines: {lines}\n"));
+    out.push_str(&format!("code: {code}\n"));
+    out.push_str(&format!("public: {publics}\n"));
+    out.push_str(&format!("private: {privates}\n"));
+
+    // Git columns only when there is git to speak of.
+    if history.commits > 0 {
+        out.push_str(&format!("commits: {}\n", history.commits));
+        if !history.authors.is_empty() {
+            out.push_str(&format!("authors: {}\n", history.authors.join(", ")));
+        }
+        if let Some(first) = &history.first {
+            out.push_str(&format!("created: {}\n", date_only(first)));
+        }
+        if let Some(last) = &history.last {
+            out.push_str(&format!("updated: {}\n", date_only(last)));
+        }
+    }
+    out.push_str("```\n");
+    out
+}
+
+/// ISO-8601 timestamp to a bare date — the time of day is noise here.
+fn date_only(iso: &str) -> &str {
+    iso.split('T').next().unwrap_or(iso)
+}
+
+/// The ```lgtm:treemap block: one `sig : lines visibility` row per function,
+/// mirroring Alexandria's `label: value flags` treemap syntax.
+pub fn treemap_block(module: &ModuleInfo) -> String {
+    let mut out = format!("```{TREEMAP_TAG}\n");
+
+    let mut fns: Vec<_> = module.functions.iter().collect();
+    // Biggest first: the rows read as a ranking even before they're a chart.
+    fns.sort_by(|a, b| lines_of(b).cmp(&lines_of(a)).then(a.name.cmp(&b.name)));
+
+    let width = fns.iter().map(|f| display_sig(f).len()).max().unwrap_or(0);
+    for f in fns {
+        let sig = display_sig(f);
+        let vis = match f.visibility {
+            Visibility::Public => "public",
+            Visibility::Private => "private",
+        };
+        out.push_str(&format!("  {sig:width$} : {} {vis}\n", lines_of(f)));
+    }
+    out.push_str("```\n");
+    out
+}
+
+/// Lines a function occupies, summed across every clause.
+fn lines_of(f: &crate::parse::FnInfo) -> u32 {
+    if f.clause_ranges.is_empty() {
+        return f.end_line.saturating_sub(f.line) + 1;
+    }
+    f.clause_ranges
+        .iter()
+        .map(|r| r.end.saturating_sub(r.start) + 1)
+        .sum()
 }
 
 /// The ```lgtm:functions block for one module.
@@ -36,11 +129,14 @@ pub fn functions_block(module: &ModuleInfo) -> String {
     let mut out = format!("```{BLOCK_TAG} module={}\n", module.name);
 
     for visibility in [Visibility::Public, Visibility::Private] {
-        let group: Vec<_> = module
+        // Alphabetical, not source order: the table is a directory you look
+        // things up in, and source order is already the treemap's job.
+        let mut group: Vec<_> = module
             .functions
             .iter()
             .filter(|f| f.visibility == visibility)
             .collect();
+        group.sort_by(|a, b| a.name.cmp(&b.name).then(a.arity.cmp(&b.arity)));
         if group.is_empty() {
             continue;
         }
@@ -52,7 +148,7 @@ pub fn functions_block(module: &ModuleInfo) -> String {
         // Pad signatures so the colons line up in the raw source — the doc is
         // read as text as often as it is rendered.
         let width = group.iter().map(|f| display_sig(f).len()).max().unwrap_or(0);
-        for f in group {
+        for f in &group {
             let sig = display_sig(f);
             // An existing @doc becomes the starting prose; otherwise blank.
             let prose = f.doc.as_deref().unwrap_or("").replace('\n', " ");
@@ -92,8 +188,27 @@ mod tests {
 end
 "#;
 
+    /// Just the ```lgtm:functions block, so assertions about the table aren't
+    /// confused by the treemap listing the same names.
+    fn functions_block_of(md: &str) -> String {
+        md.split("```lgtm:functions")
+            .nth(1)
+            .and_then(|b| b.split("```").next())
+            .expect("functions block")
+            .to_string()
+    }
+
     fn seeded() -> String {
-        seed_markdown(&elixir::parse(SAMPLE).unwrap())
+        seed_markdown(
+            &elixir::parse(SAMPLE).unwrap(),
+            SAMPLE,
+            &FileHistory {
+                commits: 3,
+                authors: vec!["Carlo Padilla".into(), "Jane Rivera".into()],
+                first: Some("2025-02-14T09:00:00+00:00".into()),
+                last: Some("2026-08-10T09:00:00+00:00".into()),
+            },
+        )
     }
 
     #[test]
@@ -118,7 +233,9 @@ end
         assert!(md.contains("create_user/1"));
         assert!(md.contains("Creates a user."));
         // get_user!/1 has no @doc, so its explanation is an empty slot.
-        let line = md
+        // Scope to the functions block — the treemap also lists every name.
+        let table = functions_block_of(&md);
+        let line = table
             .lines()
             .find(|l| l.contains("get_user!/1"))
             .expect("row present");
@@ -134,12 +251,82 @@ end
     fn is_a_well_formed_fence() {
         let md = seeded();
         assert!(md.contains("```lgtm:functions module=MyApp.Accounts"));
-        assert_eq!(md.matches("```").count(), 2, "opened and closed once");
+        // Three fences: stats, treemap, function table.
+        assert_eq!(md.matches("```").count(), 6, "every block opened and closed");
+    }
+
+    #[test]
+    fn seeds_the_treemap_alongside_the_table() {
+        let md = seeded();
+        assert!(md.contains("```lgtm:treemap"));
+        // Its body carries the sizes as text — the markdown IS the data.
+        assert!(md.contains("```lgtm:treemap\n  "), "{md}");
+        // Facts, then shape, then the table.
+        assert!(md.find("lgtm:stats").unwrap() < md.find("lgtm:treemap").unwrap());
+        assert!(md.find("lgtm:treemap").unwrap() < md.find("lgtm:functions").unwrap());
+    }
+
+    #[test]
+    fn the_table_is_alphabetical_within_each_group() {
+        let md = seeded();
+        let table = functions_block_of(&md);
+        let rows: Vec<&str> = table
+            .lines()
+            .filter(|l| l.trim_start().starts_with("- "))
+            .collect();
+        // Public group of the sample: create_user, get_user!, search.
+        let names: Vec<String> = rows
+            .iter()
+            .map(|l| l.trim_start().trim_start_matches("- ").split('/').next().unwrap().to_string())
+            .collect();
+        let publics = &names[..3];
+        let mut sorted = publics.to_vec();
+        sorted.sort();
+        assert_eq!(publics, &sorted[..], "public group sorted: {names:?}");
     }
 
     #[test]
     fn a_file_with_no_module_still_seeds_something() {
         let outline = elixir::parse("x = 1\n").unwrap();
-        assert!(seed_markdown(&outline).starts_with("# Untitled"));
+        assert!(seed_markdown(&outline, "x = 1\n", &FileHistory::default()).starts_with("# Untitled"));
+    }
+
+    #[test]
+    fn the_stats_block_carries_its_numbers_as_text() {
+        let md = seeded();
+        assert!(md.contains("lines: 12"), "{md}");
+        assert!(md.contains("code: 8"));
+        assert!(md.contains("public: 3"));
+        assert!(md.contains("private: 1"));
+        // Git facts, dates trimmed to the day.
+        assert!(md.contains("commits: 3"));
+        assert!(md.contains("authors: Carlo Padilla, Jane Rivera"));
+        assert!(md.contains("created: 2025-02-14"));
+        assert!(md.contains("updated: 2026-08-10"));
+        assert!(!md.contains("T09:00:00"), "timestamps trimmed");
+    }
+
+    #[test]
+    fn the_treemap_block_carries_its_sizes_as_text() {
+        let md = seeded();
+        let block = md
+            .split("```lgtm:treemap\n")
+            .nth(1)
+            .and_then(|b| b.split("```").next())
+            .expect("treemap block");
+
+        // Every function, with its line count and visibility.
+        assert!(block.contains("create_user/1"), "{block}");
+        assert!(block.contains("public"));
+        assert!(block.contains("private"));
+        assert_eq!(block.lines().filter(|l| l.contains(" : ")).count(), 4);
+    }
+
+    #[test]
+    fn a_repo_less_file_omits_the_git_facts() {
+        let md = seed_markdown(&elixir::parse(SAMPLE).unwrap(), SAMPLE, &FileHistory::default());
+        assert!(md.contains("lines: "), "size still reported");
+        assert!(!md.contains("commits:"), "no git, no git columns");
+        assert!(!md.contains("authors:"));
     }
 }

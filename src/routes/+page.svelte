@@ -57,7 +57,7 @@
 
   async function startFreshDoc(opened: OpenedFile) {
     const seeded = opened.outline
-      ? await ipc.seedDoc(opened.outline)
+      ? await ipc.seedDoc(opened.path, opened.outline, opened.source)
       : `# ${opened.filename}\n\n> _what is this file for?_\n`;
 
     doc = await ipc.createDoc({
@@ -244,6 +244,7 @@
           filename={file.filename}
           path={file.path}
           hasGit={file.hasGit}
+          {outline}
         />
       </div>
 

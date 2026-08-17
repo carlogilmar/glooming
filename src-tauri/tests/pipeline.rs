@@ -2,6 +2,7 @@
 //! against the exact file the UI mockup shows. If the app ever stops matching
 //! `mockup/index.html`, this is where it shows up first.
 
+use lgtm_lib::db::models::FileHistory;
 use lgtm_lib::{parse, seed};
 
 const FIXTURE: &str = include_str!("fixtures/accounts.ex");
@@ -70,7 +71,7 @@ fn normalize_reports_both_clauses() {
 
 #[test]
 fn the_seeded_doc_is_ready_to_write_into() {
-    let md = seed::seed_markdown(&outline());
+    let md = seed::seed_markdown(&outline(), FIXTURE, &FileHistory::default());
 
     assert!(md.starts_with("# MyApp.Accounts\n"));
     assert!(md.contains("Reads and writes for the `users` table."));
@@ -80,7 +81,12 @@ fn the_seeded_doc_is_ready_to_write_into() {
     // @doc text becomes starting prose…
     assert!(md.contains("Creates a user from raw attrs."));
     // …and everything undocumented is an empty slot waiting for you.
-    let empty = md
+    let table = md
+        .split("```lgtm:functions")
+        .nth(1)
+        .and_then(|b| b.split("```").next())
+        .expect("functions block");
+    let empty = table
         .lines()
         .filter(|l| l.trim_start().starts_with("- ") && l.trim_end().ends_with(':'))
         .count();
@@ -105,7 +111,7 @@ fn a_later_edit_to_the_file_never_costs_you_prose() {
     }
 
     let written = explain(
-        &seed::seed_markdown(&outline()),
+        &seed::seed_markdown(&outline(), FIXTURE, &FileHistory::default()),
         "create_user/1",
         " Entry point. Validates, then inserts.",
     );
@@ -164,3 +170,4 @@ fn end_lines_span_the_whole_function_body() {
     assert_eq!((f("get_user!/1").line, f("get_user!/1").end_line), (24, 26));
     assert_eq!((f("changeset/2").line, f("changeset/2").end_line), (36, 41));
 }
+
