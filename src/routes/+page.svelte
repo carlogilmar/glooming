@@ -30,6 +30,34 @@
   let showHelp = $state(false);
   /** The last few readings, offered on the welcome screen for a one-click reopen. */
   let recents = $state<DocSummary[]>([]);
+
+  // ---- opening takes a moment, and the moment should be honest -------------
+  let loading = $state(false);
+  let loadingFile = $state("");
+  let loadingStep = $state("");
+  let loadTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Announce a load, but not immediately.
+   *
+   * Parsing a small file is instant; showing a loader for 40ms is a flash of
+   * nothing, which reads worse than no loader at all. So it only surfaces once
+   * the work has actually taken long enough to be worth explaining — which in
+   * practice means a big file, or `git log` on a long history.
+   */
+  function beginLoad(path: string) {
+    loadingFile = path.split("/").pop() ?? path;
+    loadingStep = "Reading the file";
+    if (loadTimer) clearTimeout(loadTimer);
+    loadTimer = setTimeout(() => (loading = true), 150);
+  }
+
+  function endLoad() {
+    if (loadTimer) clearTimeout(loadTimer);
+    loadTimer = null;
+    loading = false;
+    loadingStep = "";
+  }
   /** Existing docs for a just-opened path, awaiting your choice. */
   let chooser = $state<DocSummary[] | null>(null);
 
@@ -71,6 +99,7 @@
   async function load(path: string) {
     error = null;
     focus.clear();
+    beginLoad(path);
     try {
       const opened = await ipc.openFile(path);
       file = opened;
@@ -85,14 +114,33 @@
       }
     } catch (e) {
       error = String(e);
+    } finally {
+      endLoad();
+    }
+  }
+
+  /** Chooser button: seeding and saving take the same beat as a fresh open. */
+  async function startFreshFrom(opened: OpenedFile) {
+    beginLoad(opened.path);
+    try {
+      await startFreshDoc(opened);
+    } catch (e) {
+      error = String(e);
+    } finally {
+      endLoad();
     }
   }
 
   async function startFreshDoc(opened: OpenedFile) {
+    // Named per IPC call, so the message is what is actually happening rather
+    // than a spinner pretending. Seeding is the slow one: it shells out to
+    // `git log --follow`, which on a long history is the whole wait.
+    loadingStep = "Reading history and seeding the doc";
     const seeded = opened.outline
       ? await ipc.seedDoc(opened.path, opened.outline, opened.source)
       : `# ${opened.filename}\n\n> _what is this file for?_\n`;
 
+    loadingStep = "Saving";
     doc = await ipc.createDoc({
       path: opened.path,
       lang: opened.lang ?? "text",
@@ -107,6 +155,15 @@
   }
 
   async function openExisting(summary: DocSummary) {
+    beginLoad(summary.path);
+    try {
+      await openExistingInner(summary);
+    } finally {
+      endLoad();
+    }
+  }
+
+  async function openExistingInner(summary: DocSummary) {
     const loaded = await ipc.loadDoc(summary.id);
     doc = loaded;
     markdown = loaded.markdown;
@@ -115,6 +172,7 @@
 
     // Opening from the library may mean no file is loaded yet.
     if (!file || file.path !== loaded.path) {
+      loadingStep = "Re-reading the file";
       try {
         file = await ipc.reparse(loaded.path);
       } catch {
@@ -134,6 +192,27 @@
         error = "File not found on disk — showing the snapshot saved with this doc.";
       }
     }
+  }
+
+  /**
+   * Back to the welcome screen.
+   *
+   * Flushes first: autosave is on an 800ms debounce, so leaving mid-sentence
+   * would otherwise fire the timer into a doc that is no longer open and lose
+   * the last thing you typed. `doc` is cleared before `markdown` so the
+   * autosave effect sees no doc rather than an empty one.
+   */
+  async function goHome() {
+    if (timer) clearTimeout(timer);
+    await save();
+
+    focus.clear();
+    file = null;
+    doc = null;
+    markdown = "";
+    chooser = null;
+    dirty = false;
+    error = null;
   }
 
   async function reparseNow() {
@@ -281,9 +360,14 @@
   </div>
 
   <!-- Row 2: the app's own header. Everything about the file being read lives
-       here, where there is room for it. -->
-  {#if file}
+       here, where there is room for it — and during a load it would still be
+       describing the file you just left, so it steps aside. -->
+  {#if file && !loading}
     <div class="apphead">
+      <button class="btn home" onclick={goHome} title="Back to your recent readings">
+        ← Home
+      </button>
+
       <!-- The file's identity lives in the code pane's own header, where the
            filename doubles as a copy-the-path button. This row is for the
            reading's context and the actions. -->
@@ -310,7 +394,13 @@
     </div>
   {/if}
 
-  {#if !file}
+  {#if loading}
+    <div class="loading">
+      <div class="orb"></div>
+      <b>{loadingFile}</b>
+      <span>{loadingStep}…</span>
+    </div>
+  {:else if !file}
     <div class="welcome">
       <img src="/app-icon.png" alt="" class="hero" />
       <h1>lgtm</h1>
@@ -385,7 +475,7 @@
                 </li>
               {/each}
             </ul>
-            <button class="btn" onclick={() => file && startFreshDoc(file)}>Start a fresh doc</button>
+            <button class="btn" onclick={() => file && startFreshFrom(file)}>Start a fresh doc</button>
           </div>
         {:else}
           <DocPane
@@ -519,6 +609,9 @@
     background: var(--bg);
     border-bottom: 1px solid var(--line);
   }
+  .home {
+    flex: none;
+  }
   .branch {
     font-family: var(--mono);
     font-size: 10.5px;
@@ -606,6 +699,52 @@
     padding: 0 3px;
     margin-right: 2px;
     color: var(--fg-dim);
+  }
+
+  .loading {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .loading b {
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .loading span {
+    font-size: 12px;
+    color: var(--fg-faint);
+  }
+  /* The same 2.1s breath the focus bar uses, so waiting feels like part of the
+     app rather than a borrowed spinner. */
+  .orb {
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    margin-bottom: 10px;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    border: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+    animation: breathe 2.1s ease-in-out infinite;
+  }
+  @keyframes breathe {
+    0%,
+    100% {
+      transform: scale(0.88);
+      opacity: 0.55;
+    }
+    50% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .orb {
+      animation: none;
+    }
   }
 
   .welcome {

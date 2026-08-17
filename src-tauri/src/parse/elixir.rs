@@ -14,7 +14,8 @@
 //! def foo(a, b \\ nil) do …   arity 2, min_arity 1
 //! ```
 
-use super::{FnInfo, ModuleInfo, Outline, Range, Visibility};
+use super::{Dep, DepKind, FnInfo, ModuleInfo, Outline, Range, RemoteFn, Visibility};
+use std::collections::HashMap;
 use crate::error::{AppError, AppResult};
 use tree_sitter::{Node, Parser};
 
@@ -63,7 +64,10 @@ fn module_from_call(node: Node, src: &str) -> Option<ModuleInfo> {
 
     let body = do_block(node)?;
     let mut functions = Vec::new();
-    collect_functions(body, src, &mut functions);
+    let mut refs = Vec::new();
+    collect_functions(body, src, &mut functions, &mut refs);
+
+    let deps = resolve_deps(&alias_table(body, src), &refs, &name);
 
     Some(ModuleInfo {
         name,
@@ -71,7 +75,207 @@ fn module_from_call(node: Node, src: &str) -> Option<ModuleInfo> {
         doc: attribute_text(body, src, "moduledoc"),
         doc_range: attribute_range(body, src, "moduledoc"),
         functions,
+        deps,
     })
+}
+
+// ------------------------------------------------------------------ deps ---
+
+/// A use of something outside this module, before the alias table is applied.
+struct Ref {
+    /// The local `name/arity` doing the calling.
+    caller: String,
+    /// The name as written — `Repo`, `String`, or an `as:` shorthand.
+    prefix: String,
+    /// `insert/1`, or `%User{}` for a struct literal.
+    call: String,
+}
+
+/// Local name → full module, from the module's `alias` directives.
+///
+/// Three forms, all confirmed against the grammar rather than guessed:
+///   alias MyApp.Repo                  args[ alias ]
+///   alias MyApp.{User, Profile}       args[ dot[ alias, tuple[alias, …] ] ]
+///   alias MyApp.Settings, as: S       args[ alias, keywords[ pair[…] ] ]
+fn alias_table(body: Node, src: &str) -> HashMap<String, String> {
+    let mut table = HashMap::new();
+    let mut cursor = body.walk();
+
+    for child in body.named_children(&mut cursor) {
+        if child.kind() != "call" || call_target(child, src).as_deref() != Some("alias") {
+            continue;
+        }
+        let Some(args) = arguments_of(child) else { continue };
+        let Some(first) = args.named_child(0) else { continue };
+
+        match first.kind() {
+            // `alias MyApp.{User, Profile}` — one directive, several modules.
+            "dot" => {
+                let Some(base) = first.named_child(0) else { continue };
+                let Some(tuple) = child_of_kind(first, "tuple") else { continue };
+                let base = text(base, src);
+                let mut tc = tuple.walk();
+                for leaf in tuple.named_children(&mut tc) {
+                    let leaf = text(leaf, src);
+                    table.insert(last_segment(leaf).to_string(), format!("{base}.{leaf}"));
+                }
+            }
+            "alias" => {
+                let full = text(first, src).to_string();
+                // `, as: S` renames it; otherwise the last segment is the name.
+                let local = alias_as(args, src).unwrap_or_else(|| last_segment(&full).to_string());
+                table.insert(local, full);
+            }
+            _ => {}
+        }
+    }
+    table
+}
+
+/// The `as: S` half of an alias directive.
+fn alias_as(args: Node, src: &str) -> Option<String> {
+    let keywords = child_of_kind(args, "keywords")?;
+    let pair = child_of_kind(keywords, "pair")?;
+    let key = pair.named_child(0)?;
+    if !text(key, src).starts_with("as") {
+        return None;
+    }
+    Some(text(pair.named_child(1)?, src).to_string())
+}
+
+fn last_segment(module: &str) -> &str {
+    module.rsplit('.').next().unwrap_or(module)
+}
+
+/// Elixir's own standard library — the part nobody needs pointed out.
+const STDLIB: [&str; 46] = [
+    "Kernel", "String", "Enum", "Map", "List", "Keyword", "Tuple", "Atom", "Integer", "Float",
+    "Range", "Stream", "Task", "Agent", "GenServer", "Supervisor", "DynamicSupervisor", "Registry",
+    "Process", "Node", "Port", "Agent", "File", "IO", "Path", "System", "Code", "Module", "Macro",
+    "Regex", "Date", "Time", "DateTime", "NaiveDateTime", "Calendar", "URI", "Base", "Bitwise",
+    "Access", "Application", "Config", "Exception", "Logger", "Protocol", "Record", "Version",
+];
+
+fn classify(module: &str, current: &str) -> DepKind {
+    let root = |m: &str| m.split('.').next().unwrap_or(m).to_string();
+    if root(module) == root(current) {
+        DepKind::App
+    } else if STDLIB.contains(&root(module).as_str()) {
+        DepKind::Std
+    } else {
+        DepKind::Lib
+    }
+}
+
+/// Turn raw references into the dependency list, resolving each prefix through
+/// the alias table.
+///
+/// **Only aliased modules count.** A bare `String.trim/1` or `Enum.map/2` is a
+/// call, not a declared dependency — the `alias` list at the top of the file is
+/// what the author chose to depend on, and drowning that in stdlib noise buries
+/// the one thing worth seeing.
+fn resolve_deps(table: &HashMap<String, String>, refs: &[Ref], current: &str) -> Vec<Dep> {
+    let mut deps: Vec<Dep> = Vec::new();
+
+    for r in refs {
+        let Some(module) = table.get(&r.prefix).cloned() else {
+            continue;
+        };
+
+        // The module itself is not a dependency of itself.
+        if module == current {
+            continue;
+        }
+
+        let dep = match deps.iter_mut().find(|d| d.module == module) {
+            Some(d) => d,
+            None => {
+                deps.push(Dep {
+                    kind: classify(&module, current),
+                    module,
+                    functions: Vec::new(),
+                });
+                deps.last_mut().expect("just pushed")
+            }
+        };
+
+        match dep.functions.iter_mut().find(|f| f.name == r.call) {
+            Some(f) => {
+                if !f.callers.contains(&r.caller) {
+                    f.callers.push(r.caller.clone());
+                }
+            }
+            None => dep.functions.push(RemoteFn {
+                name: r.call.clone(),
+                callers: vec![r.caller.clone()],
+            }),
+        }
+    }
+    deps
+}
+
+/// Collect every reference to something outside the module from one function's
+/// body: qualified calls (`Repo.insert(cs)`) and struct literals (`%User{}`).
+fn collect_refs(node: Node, src: &str, caller: &str, out: &mut Vec<Ref>) {
+    match node.kind() {
+        // `Repo.insert(changeset)` — a call whose target is a dot.
+        "call" => {
+            if let Some(dot) = child_of_kind(node, "dot") {
+                if let (Some(left), Some(right)) = (dot.named_child(0), dot.named_child(1)) {
+                    if left.kind() == "alias" && right.kind() == "identifier" {
+                        out.push(Ref {
+                            caller: caller.to_string(),
+                            prefix: text(left, src).to_string(),
+                            call: format!("{}/{}", text(right, src), call_arity(node, src)),
+                        });
+                    }
+                }
+            }
+        }
+        // `%User{}` — a struct literal is a dependency on the struct's module.
+        "struct" => {
+            if let Some(name) = node.named_child(0) {
+                if name.kind() == "alias" {
+                    out.push(Ref {
+                        caller: caller.to_string(),
+                        prefix: text(name, src).to_string(),
+                        call: format!("%{}{{}}", text(name, src)),
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_refs(child, src, caller, out);
+    }
+}
+
+/// Arity of a remote call, **accounting for the pipe**.
+///
+/// `attrs |> Repo.insert()` is written with no arguments but calls `insert/1`:
+/// the pipe passes the left-hand side as the first argument. Reporting
+/// `insert/0` would name a function that does not exist.
+fn call_arity(node: Node, src: &str) -> usize {
+    let written = arguments_of(node)
+        .map(|a| {
+            let mut c = a.walk();
+            a.named_children(&mut c).count()
+        })
+        .unwrap_or(0);
+
+    let piped = node
+        .parent()
+        .filter(|p| p.kind() == "binary_operator")
+        .filter(|p| operator_text(*p, src).as_deref() == Some("|>"))
+        // Only the right-hand side of a pipe receives the piped value.
+        .and_then(|p| p.named_child(1))
+        .map(|right| right.id() == node.id())
+        .unwrap_or(false);
+
+    written + usize::from(piped)
 }
 
 // -------------------------------------------------------------- functions ---
@@ -81,19 +285,21 @@ const DEF_KEYWORDS: [&str; 4] = ["def", "defp", "defmacro", "defmacrop"];
 /// Collect definitions from a module body. Clauses of the same `name/arity`
 /// collapse into one entry, counted — one row per function is what a reader
 /// wants, not one per clause.
-fn collect_functions(body: Node, src: &str, out: &mut Vec<FnInfo>) {
+fn collect_functions(body: Node, src: &str, out: &mut Vec<FnInfo>, refs: &mut Vec<Ref>) {
     let mut cursor = body.walk();
     for child in body.named_children(&mut cursor) {
         // A def can be wrapped in a block, or sit directly in the do_block.
         if child.kind() == "call" {
             if let Some(f) = fn_from_call(child, src) {
+                // Walk this clause for what it reaches while we know whose it is.
+                collect_refs(child, src, &f.signature(), refs);
                 push_clause(out, f);
                 continue;
             }
         }
         // Anything else that might contain defs (a `block`, an `if`, …).
         if child.kind() == "block" {
-            collect_functions(child, src, out);
+            collect_functions(child, src, out, refs);
         }
     }
 }
@@ -573,10 +779,124 @@ end
         assert_eq!((r.start, r.end), (2, 4));
     }
 
+    const DEPS_SAMPLE: &str = r#"defmodule MyApp.Accounts do
+  alias MyApp.Repo
+  alias MyApp.{User, Profile}
+  alias MyApp.Accounts.Settings, as: S
+  alias MyApp.Unused
+  alias Ecto.Changeset
+
+  def create_user(attrs) do
+    %User{}
+    |> Repo.insert()
+  end
+
+  def get_user(id), do: Repo.get(User, id)
+
+  def touch, do: S.touch(1, 2)
+
+  defp normalize(a), do: Changeset.cast(a, %{}, [])
+
+  defp pure(a), do: a
+end
+"#;
+
+    fn deps() -> Vec<crate::parse::Dep> {
+        parse(DEPS_SAMPLE).unwrap().modules[0].deps.clone()
+    }
+
+    fn dep<'a>(all: &'a [crate::parse::Dep], module: &str) -> &'a crate::parse::Dep {
+        all.iter()
+            .find(|d| d.module == module)
+            .unwrap_or_else(|| panic!("no {module} in {:?}", all.iter().map(|d| &d.module).collect::<Vec<_>>()))
+    }
+
+    #[test]
+    fn resolves_every_alias_form() {
+        let all = deps();
+        // Plain, multi-alias braces, and an `as:` rename all resolve to full names.
+        assert_eq!(dep(&all, "MyApp.Repo").module, "MyApp.Repo");
+        assert_eq!(dep(&all, "MyApp.User").module, "MyApp.User");
+        assert_eq!(dep(&all, "MyApp.Accounts.Settings").module, "MyApp.Accounts.Settings");
+        // An alias that is never used is not a dependency.
+        assert!(all.iter().all(|d| d.module != "MyApp.Unused"));
+    }
+
+    #[test]
+    fn a_pipe_adds_one_to_the_arity() {
+        let all = deps();
+        let repo = dep(&all, "MyApp.Repo");
+        let names: Vec<&str> = repo.functions.iter().map(|f| f.name.as_str()).collect();
+        // `attrs |> Repo.insert()` is written with no arguments but calls insert/1.
+        assert!(names.contains(&"insert/1"), "pipe arity: {names:?}");
+        assert!(!names.contains(&"insert/0"), "insert/0 does not exist: {names:?}");
+        // An unpiped call is counted as written.
+        assert!(names.contains(&"get/2"), "{names:?}");
+    }
+
+    #[test]
+    fn attributes_each_call_to_its_function() {
+        let all = deps();
+        let insert = dep(&all, "MyApp.Repo")
+            .functions
+            .iter()
+            .find(|f| f.name == "insert/1")
+            .unwrap();
+        assert_eq!(insert.callers, vec!["create_user/1"]);
+
+        let cast = dep(&all, "Ecto.Changeset")
+            .functions
+            .iter()
+            .find(|f| f.name == "cast/3")
+            .unwrap();
+        assert_eq!(cast.callers, vec!["normalize/1"]);
+    }
+
+    #[test]
+    fn struct_literals_count_as_dependencies() {
+        let all = deps();
+        let user = dep(&all, "MyApp.User");
+        let names: Vec<&str> = user.functions.iter().map(|f| f.name.as_str()).collect();
+        assert!(names.contains(&"%User{}"), "{names:?}");
+        // …and Repo.get(User, id) passes the module itself, which is not a call
+        // on it, so User has exactly the struct plus nothing invented.
+        assert_eq!(user.functions.len(), 1, "{names:?}");
+    }
+
+    #[test]
+    fn classifies_by_distance_from_this_module() {
+        let all = deps();
+        assert_eq!(dep(&all, "MyApp.Repo").kind, crate::parse::DepKind::App);
+        assert_eq!(dep(&all, "Ecto.Changeset").kind, crate::parse::DepKind::Lib);
+    }
+
+    #[test]
+    fn only_aliased_modules_are_dependencies() {
+        // String and Enum are called but never aliased: they are calls, not the
+        // module's declared surface, and listing them buries the real ones.
+        let o = parse(
+            "defmodule MyApp.A do\n  alias MyApp.Repo\n\
+               def f(a), do: a |> String.trim() |> Enum.count() |> Repo.insert()\nend",
+        )
+        .unwrap();
+        let names: Vec<&str> = o.modules[0].deps.iter().map(|d| d.module.as_str()).collect();
+        assert_eq!(names, vec!["MyApp.Repo"], "{names:?}");
+    }
+
+    #[test]
+    fn a_module_is_not_its_own_dependency() {
+        let o = parse(
+            "defmodule MyApp.A do\n  def f, do: MyApp.A.g()\n  def g, do: 1\nend",
+        )
+        .unwrap();
+        assert!(o.modules[0].deps.is_empty(), "{:?}", o.modules[0].deps);
+    }
+
     #[test]
     fn empty_and_moduleless_files_do_not_panic() {
         assert_eq!(parse("").unwrap().modules.len(), 0);
         assert_eq!(parse("x = 1\n").unwrap().modules.len(), 0);
     }
 }
+
 

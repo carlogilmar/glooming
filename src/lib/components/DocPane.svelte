@@ -27,8 +27,11 @@
   const html = $derived(md.render(markdown));
 
   function select(target: HTMLElement) {
-    // Table rows and treemap tiles are the same gesture — both carry data-sig.
-    const row = target.closest<HTMLElement>(".fnrow[data-line], .tm-tile[data-sig]");
+    // Table rows, treemap tiles and the reach block's own functions are all the
+    // same gesture — every one of them carries data-sig.
+    const row = target.closest<HTMLElement>(
+      ".fnrow[data-line], .tm-tile[data-sig], .lgtm-deps .fn[data-sig]",
+    );
     if (!row) return false;
     const sig = row.dataset.sig ?? "";
     const at = locate(sig, outline?.modules?.[0] ?? null);
@@ -47,12 +50,103 @@
     if (select(e.target as HTMLElement)) e.preventDefault();
   }
 
+  // ---- the reach block ----------------------------------------------------
+  // Hovering previews any function's connections; selecting one *pins* them, so
+  // the picture still answers "what does this reach" while you are over in the
+  // code reading it. Without pinning, the view you clicked for disappears the
+  // moment the pointer moves away.
+
+  function reachHost(): HTMLElement | null {
+    return container?.querySelector<HTMLElement>(".lgtm-deps") ?? null;
+  }
+
+  function clearReach(host: HTMLElement) {
+    for (const el of host.querySelectorAll(".lit, .on")) el.classList.remove("lit", "on");
+  }
+
+  function neutralReach(host: HTMLElement) {
+    host.querySelector("svg")?.classList.remove("focusing");
+    const readout = host.querySelector(".readout");
+    if (readout) readout.innerHTML = `<span class="muted">${host.dataset.rest ?? ""}</span>`;
+  }
+
+  function paintFunction(host: HTMLElement, sig: string): boolean {
+    const fn = host.querySelector<HTMLElement>(`.fn[data-fn="${CSS.escape(sig)}"]`);
+    if (!fn) return false;
+
+    host.querySelector("svg")?.classList.add("focusing");
+    fn.classList.add("on");
+
+    const edges = [...host.querySelectorAll<HTMLElement>(`.edge[data-from="${CSS.escape(sig)}"]`)];
+    const targets = edges.map((e) => e.dataset.to ?? "");
+    edges.forEach((e) => e.classList.add("lit"));
+    for (const to of targets) {
+      host.querySelector(`.rfn[data-to="${CSS.escape(to)}"]`)?.classList.add("lit");
+    }
+
+    const readout = host.querySelector(".readout");
+    if (readout) {
+      readout.innerHTML = targets.length
+        ? `<b>${sig}</b> reaches ${targets.length} · ` +
+          targets.map((t) => `<span class="muted">${t}</span>`).join(" &nbsp;")
+        : `<b>${sig}</b> <span class="muted">reaches nothing — pure within this module</span>`;
+    }
+    return true;
+  }
+
+  function paintRemote(host: HTMLElement, rfn: HTMLElement) {
+    const to = rfn.dataset.to ?? "";
+    const callers = (rfn.dataset.callers ?? "").split("|").filter(Boolean);
+
+    host.querySelector("svg")?.classList.add("focusing");
+    rfn.classList.add("on", "lit");
+    for (const c of callers) {
+      host.querySelector(`.fn[data-fn="${CSS.escape(c)}"]`)?.classList.add("on");
+      host
+        .querySelector(`.edge[data-from="${CSS.escape(c)}"][data-to="${CSS.escape(to)}"]`)
+        ?.classList.add("lit");
+    }
+
+    const readout = host.querySelector(".readout");
+    if (readout) {
+      readout.innerHTML =
+        `<b>${to}</b> <span class="muted">called from</span> ` +
+        callers.map((c) => `<b>${c}</b>`).join(" &nbsp;");
+    }
+  }
+
+  /**
+   * Repaint the block. `hovered` wins when the pointer is over something;
+   * otherwise it falls back to the pinned selection, and only then to neutral.
+   */
+  function litReach(host: HTMLElement, hovered: HTMLElement | null) {
+    clearReach(host);
+
+    const fn = hovered?.closest<HTMLElement>(".fn");
+    if (fn) {
+      paintFunction(host, fn.dataset.fn ?? "");
+      return;
+    }
+    const rfn = hovered?.closest<HTMLElement>(".rfn");
+    if (rfn) {
+      paintRemote(host, rfn);
+      return;
+    }
+    // Nothing hovered: hold the selected function's connections, if it has any
+    // here, so clicking through to the code doesn't discard the view.
+    if (focus.active && paintFunction(host, focus.sig)) return;
+    neutralReach(host);
+  }
+
   // ---- treemap tooltip ----------------------------------------------------
   // Native <title> is slow to appear and unstyleable, and the tiles need a
   // label the moment the pointer lands on them.
   let tip = $state<{ text: string; sub: string; x: number; y: number } | null>(null);
 
   function onMove(e: MouseEvent) {
+    const reach = reachHost();
+    if (reach) litReach(reach, e.target as HTMLElement);
+
     const tile = (e.target as HTMLElement).closest<HTMLElement>(".tm-tile[data-tip]");
     if (!tile) {
       tip = null;
@@ -67,13 +161,19 @@
     };
   }
 
-  // Mark the focused row, so both panes show the same selection.
+  // Mark the focused row, so both panes show the same selection — and repaint
+  // the reach block, so a selection pins its connections. Depends on `html` too:
+  // re-rendering the doc wipes these classes, and they have to be put back.
   $effect(() => {
     const sig = focus.sig;
+    html;
     if (!container) return;
-    for (const el of container.querySelectorAll(".fnrow, .tm-tile")) {
+
+    for (const el of container.querySelectorAll(".fnrow, .tm-tile, .lgtm-deps .fn")) {
       el.classList.toggle("active", focus.active && (el as HTMLElement).dataset.sig === sig);
     }
+    const host = reachHost();
+    if (host) litReach(host, null);
   });
 </script>
 
@@ -102,7 +202,11 @@
         onclick={onClick}
         onkeydown={onKey}
         onmousemove={onMove}
-        onmouseleave={() => (tip = null)}
+        onmouseleave={() => {
+          tip = null;
+          const reach = reachHost();
+          if (reach) litReach(reach, null);
+        }}
       >
         {@html html}
         {#if tip}
@@ -186,8 +290,18 @@
   .doc {
     /* Enough tail room to clear the window edge, not a screenful of nothing. */
     padding: 26px 30px 40px;
-    max-width: 760px;
     position: relative;
+  }
+  /* Prose keeps a readable measure; the visual blocks take the whole pane, so
+     widening the window actually buys you a bigger picture. Capping the doc
+     itself left dead space to the right of every diagram. */
+  :global(.doc > p),
+  :global(.doc > h1),
+  :global(.doc > h2),
+  :global(.doc > blockquote),
+  :global(.doc > ul),
+  :global(.doc > ol) {
+    max-width: 760px;
   }
 
   /* Treemap tooltip: follows the pointer, names the function, and gets out of
@@ -572,5 +686,184 @@
     font-size: 11px;
     color: var(--fg-dim);
     background: var(--bg-inset);
+  }
+
+  /* ---- the lgtm:deps block ----
+     The boundary. Ported from mockup/deps.html — if these drift, that file is
+     the contract. Colours come from the app's tokens, one per reach. */
+  :global(.lgtm-deps) {
+    border: 1px solid var(--doc-line);
+    border-radius: 8px;
+    background: var(--code-bg);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    margin: 0 0 22px;
+  }
+  :global(.lgtm-deps.empty) {
+    padding: 18px;
+    color: var(--fg-faint);
+    font-size: 12.5px;
+  }
+  :global(.lgtm-deps svg) {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  :global(.lgtm-deps .bound) {
+    fill: none;
+    stroke: var(--line);
+    stroke-width: 1.5;
+  }
+  :global(.lgtm-deps .bound-label) {
+    font-family: var(--mono);
+    font-size: 11px;
+    fill: var(--fg-faint);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  :global(.lgtm-deps .fn) {
+    cursor: pointer;
+  }
+  :global(.lgtm-deps .fn-name) {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    fill: var(--fg);
+  }
+  /* Reaching nothing is information too: pure functions stay quiet. */
+  :global(.lgtm-deps .fn.pure .fn-name) {
+    fill: var(--fg-faint);
+  }
+  :global(.lgtm-deps .fn-line) {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    fill: var(--fg-faint);
+  }
+  :global(.lgtm-deps .fn-hit) {
+    fill: var(--bg-inset);
+    opacity: 0;
+  }
+  :global(.lgtm-deps .fn:hover .fn-hit),
+  :global(.lgtm-deps .fn.on .fn-hit) {
+    opacity: 1;
+  }
+  /* `.on` is hover, `.active` is the selection shared with the code pane —
+     they coexist, so they must not look the same. */
+  :global(.lgtm-deps .fn.active .fn-hit) {
+    opacity: 1;
+    fill: var(--sel);
+  }
+  :global(.lgtm-deps .fn.active .fn-name) {
+    fill: var(--accent);
+    font-weight: 600;
+  }
+
+  /* The puncture — where a call leaves the module. */
+  :global(.lgtm-deps .pierce) {
+    fill: var(--code-bg);
+    stroke: var(--fg-faint);
+    stroke-width: 1.5;
+  }
+
+  :global(.lgtm-deps .edge) {
+    fill: none;
+    stroke-linecap: round;
+    opacity: 0.5;
+    transition: opacity 0.12s ease;
+  }
+  :global(.lgtm-deps .edge.app) {
+    stroke: var(--accent);
+  }
+  :global(.lgtm-deps .edge.lib) {
+    stroke: var(--mark);
+  }
+  :global(.lgtm-deps .edge.std) {
+    stroke: var(--fg-faint);
+  }
+  :global(.lgtm-deps svg.focusing .edge) {
+    opacity: 0.07;
+  }
+  :global(.lgtm-deps svg.focusing .edge.lit) {
+    opacity: 0.95;
+  }
+
+  :global(.lgtm-deps .mod-name) {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  :global(.lgtm-deps .mod-name.app) {
+    fill: var(--accent);
+  }
+  :global(.lgtm-deps .mod-name.lib) {
+    fill: var(--mark);
+  }
+  :global(.lgtm-deps .mod-name.std) {
+    fill: var(--fg-faint);
+  }
+  :global(.lgtm-deps .mod-kind) {
+    font-size: 9px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    fill: var(--fg-faint);
+  }
+  :global(.lgtm-deps .rfn) {
+    cursor: pointer;
+  }
+  :global(.lgtm-deps .rfn-name) {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    fill: var(--fg-dim);
+  }
+  :global(.lgtm-deps .rfn-hit) {
+    fill: var(--bg-inset);
+    opacity: 0;
+  }
+  :global(.lgtm-deps .rfn:hover .rfn-hit),
+  :global(.lgtm-deps .rfn.on .rfn-hit) {
+    opacity: 1;
+  }
+  :global(.lgtm-deps svg.focusing .rfn-name) {
+    opacity: 0.3;
+  }
+  :global(.lgtm-deps svg.focusing .rfn.lit .rfn-name) {
+    opacity: 1;
+    fill: var(--fg);
+  }
+  :global(.lgtm-deps .dot.app) {
+    fill: var(--accent);
+  }
+  :global(.lgtm-deps .dot.lib) {
+    fill: var(--mark);
+  }
+  :global(.lgtm-deps .dot.std) {
+    fill: var(--fg-faint);
+  }
+  :global(.lgtm-deps svg.focusing .dot) {
+    opacity: 0.18;
+  }
+  :global(.lgtm-deps svg.focusing .rfn.lit .dot) {
+    opacity: 1;
+  }
+
+  :global(.lgtm-deps .readout) {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 12px;
+    border-top: 1px solid var(--line-soft);
+    background: var(--bg-inset);
+    font-size: 11.5px;
+    color: var(--fg-dim);
+    min-height: 32px;
+  }
+  :global(.lgtm-deps .readout b) {
+    font-family: var(--mono);
+    color: var(--fg);
+    font-weight: 600;
+  }
+  :global(.lgtm-deps .readout .muted) {
+    color: var(--fg-faint);
   }
 </style>

@@ -100,11 +100,24 @@
     },
     {
       title: "Your explanation",
-      note: "Plain markdown with three extra blocks. The values live in the text, so you can edit any of them.",
+      note: "Plain markdown with four extra blocks. The values live in the text, so you can edit any of them.",
       rows: [
         { action: "Preview / Edit", what: "Rendered blocks, or the raw markdown source" },
         { action: "click a table row", what: "Focuses that function in the code" },
         { action: "click a treemap tile", what: "The same — sized by lines of code, biggest three labelled" },
+        {
+          action: "hover the reach block",
+          what:
+            "The module drawn as a closed shape, with lines only where a call leaves it. Hover a " +
+            "function to see what it reaches, or something outside to see who reaches it. Functions " +
+            "that reach nothing stay quiet — that silence is the point",
+        },
+        {
+          action: "click a function there",
+          what:
+            "Focuses it in the code and pins its connections, so the picture still answers " +
+            "“what does this reach” while you read",
+        },
         { keys: ["⌘S"], what: "Force a save. Autosave already runs 800ms after you stop typing" },
         {
           action: "Code changed — reconcile",
@@ -115,6 +128,7 @@
     {
       title: "Files and docs",
       rows: [
+        { action: "← Home", what: "Back to your recent readings. Saves anything pending first" },
         { keys: ["⌘O"], what: "Open a file with the picker" },
         {
           keys: ["⌘L"],

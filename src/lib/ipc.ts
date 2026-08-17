@@ -27,12 +27,26 @@ export interface FnInfo {
   specRange: Range | null;
 }
 
+export type DepKind = "app" | "lib" | "std";
+
+export interface RemoteFn {
+  name: string;
+  callers: string[];
+}
+
+export interface Dep {
+  module: string;
+  kind: DepKind;
+  functions: RemoteFn[];
+}
+
 export interface ModuleInfo {
   name: string;
   line: number;
   doc: string | null;
   docRange: Range | null;
   functions: FnInfo[];
+  deps: Dep[];
 }
 
 export interface Outline {

@@ -440,6 +440,14 @@
     });
   }
 
+  // Resizing rewraps every line, so row heights change and the sticky header's
+  // answer goes stale until the next scroll. Recompute it directly.
+  $effect(() => {
+    const onResize = () => onScroll();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  });
+
   /**
    * The function enclosing the top visible line — but only once its own `def`
    * line has scrolled out of sight. While the definition is on screen the

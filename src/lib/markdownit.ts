@@ -8,6 +8,7 @@ import elixir from "highlight.js/lib/languages/elixir";
 import { parseBlock, withOutline, type FnEntry } from "$lib/lgtmBlock";
 import { renderTreemap } from "$lib/treemap";
 import { renderStats } from "$lib/stats";
+import { renderDeps } from "$lib/deps";
 import type { Outline } from "$lib/ipc";
 
 hljs.registerLanguage("elixir", elixir);
@@ -15,6 +16,7 @@ hljs.registerLanguage("elixir", elixir);
 const BLOCK_TAG = "lgtm:functions";
 const TREEMAP_TAG = "lgtm:treemap";
 const STATS_TAG = "lgtm:stats";
+const DEPS_TAG = "lgtm:deps";
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"]/g, (c) =>
@@ -61,6 +63,15 @@ export function createMarkdownIt(outline: Outline | null): MarkdownIt {
     if (info.startsWith(STATS_TAG)) {
       try {
         return renderStats(token.content);
+      } catch {
+        return defaultFence(tokens, idx, opts, env, self);
+      }
+    }
+
+    // ```lgtm:deps — what the module reaches, drawn from the edges in the text.
+    if (info.startsWith(DEPS_TAG)) {
+      try {
+        return renderDeps(token.content, outline?.modules?.[0] ?? null);
       } catch {
         return defaultFence(tokens, idx, opts, env, self);
       }

@@ -68,6 +68,50 @@ impl FnInfo {
     }
 }
 
+/// How far outside the module a dependency lives. The split that matters is
+/// `App`: nobody cares that you call `Enum.map/2`, but that `Accounts` reaches
+/// into `Billing` is an architectural fact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DepKind {
+    /// Shares the current module's root namespace.
+    App,
+    /// A dependency — Ecto, Phoenix, anything third-party.
+    Lib,
+    /// Elixir's own standard library.
+    Std,
+}
+
+impl DepKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DepKind::App => "app",
+            DepKind::Lib => "lib",
+            DepKind::Std => "std",
+        }
+    }
+}
+
+/// One function of an external module that this file actually calls, and the
+/// local functions doing the calling.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteFn {
+    /// `insert/1`, or `%User{}` for a struct literal.
+    pub name: String,
+    /// Local `name/arity` signatures, in source order, deduplicated.
+    pub callers: Vec<String>,
+}
+
+/// An external module this file reaches, and the surface of it being used.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Dep {
+    pub module: String,
+    pub kind: DepKind,
+    pub functions: Vec<RemoteFn>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModuleInfo {
@@ -77,6 +121,8 @@ pub struct ModuleInfo {
     /// Where the `@moduledoc` sits, for styling in the code pane.
     pub doc_range: Option<Range>,
     pub functions: Vec<FnInfo>,
+    /// What this module reaches outside itself.
+    pub deps: Vec<Dep>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -75,6 +75,7 @@ Vite server survived a previous run: `lsof -ti:1420 | xargs kill -9`.
 
 ```
 mockup/index.html              standalone visual contract — no build, just open it
+mockup/deps.html               the reach block's visual contract
 app-icon.png                   icon source (1024², RGBA); also copied to static/
 IMPLEMENTATION_PLAN.md         the reasoning behind every decision here
 README.md                      user-facing: clone, install, run, build
@@ -97,6 +98,7 @@ src/
     lgtmBlock.ts               parses the functions block (mirrors reconcile.rs)
     treemap.ts                 parses + draws the treemap block
     stats.ts                   parses + draws the stats block
+    deps.ts                    parses + draws the reach block (see mockup/deps.html)
     ipc.ts                     typed wrappers over invoke()
 
 src-tauri/
@@ -137,7 +139,7 @@ number a row or tile jumps to.
 A block whose body is empty renders as a short "re-seed this doc, or write
 `…` style rows here" hint, never as a blank box.
 
-### The three blocks
+### The four blocks
 
 ````markdown
 ```lgtm:stats
@@ -157,6 +159,12 @@ updated: 2026-08-10
   normalize/1   : 4 private
 ```
 
+```lgtm:deps module=MyApp.Accounts
+  MyApp.Repo : app
+    insert/1 : create_user/1
+    get/2    : get_user/1
+```
+
 ```lgtm:functions module=MyApp.Accounts
 public:
   - create_user/1 : Entry point. Validates, then inserts.
@@ -166,8 +174,9 @@ private:
 ```
 ````
 
-Seed order is **stats → treemap → functions**: how big is this, what shape is
-it, and only then what's in it.
+Seed order is **stats → treemap → deps → functions**: how big is this, what
+shape is it, what does it touch, and only then what's in it. `lgtm:deps` is
+omitted entirely when a module reaches nothing.
 
 Everything after the **first** colon is prose, so explanations may contain
 colons and backticks freely. An empty explanation is legal and renders as a
@@ -203,6 +212,51 @@ Deliberate choices, each of which replaced something that read worse:
   follows the pointer.
 - Public is green, private is amber — the same colours the functions table uses.
 
+### The reach block
+
+`mockup/deps.html` is the contract; `deps.ts` is the port. The concept is a
+**boundary, not a graph** — a node-link diagram of one file's dependencies is
+always a star (one hub, N leaves, identical topology every time), so it carries
+no information. Instead the module is a closed shape with its functions inside
+in source order, and the only lines drawn are the ones that **pierce it**.
+
+Functions that reach nothing are drawn grey with no line. That silence is the
+finding, not an empty state.
+
+Layout is deterministic: outside anchors are ordered by the **barycentre** of
+their callers, which is the standard crossing-reduction heuristic and gives zero
+crossings on typical modules. No force simulation — the same doc must always
+render the same picture.
+
+The left column comes from the **outline**, not the block. The block records
+edges; listing every local function a fourth time would be noise. So a doc whose
+file has moved renders the outside column and a note rather than the boundary.
+
+Parser notes, all confirmed by dumping the tree rather than guessing:
+
+| Written | Grammar |
+|---|---|
+| `alias MyApp.Repo` | `args[ alias ]` |
+| `alias MyApp.{User, Profile}` | `args[ dot[ alias, tuple[alias, …] ] ]` |
+| `alias X.Y, as: S` | `args[ alias, keywords[ pair ] ]` |
+| `Repo.insert(cs)` | `call[ dot[ alias, identifier ], arguments ]` |
+| `%User{}` | `map[ struct[ alias ] ]` |
+
+**The pipe shifts arity.** `attrs |> Repo.insert()` is written with no arguments
+but calls `insert/1`. `call_arity` adds one when the call is the *right* operand
+of a `|>`; reporting `insert/0` would name a function that does not exist.
+`a_pipe_adds_one_to_the_arity` pins it.
+
+**Only aliased modules count.** A bare `String.trim/1` or `Enum.map/2` is a
+call, not a declared dependency — the `alias` list at the top of the file is
+what the author chose to depend on, and drowning it in stdlib noise buries the
+one thing worth seeing. `only_aliased_modules_are_dependencies` pins it.
+
+`import` is deliberately **not** covered either: it puts functions in scope
+unqualified, so a bare `cast(...)` is indistinguishable from a local call
+without a symbol table for the imported module. Showing it with zero call sites
+would read as a bug.
+
 ### Reconciliation: prose is never discarded
 
 When the file changes, `reconcile.rs` merges the doc with a fresh parse:
@@ -212,8 +266,8 @@ follows a function across a `def`↔`defp` change. A rename reads as a delete
 plus an add — the old prose survives struck through rather than silently
 re-attaching to a function it wasn't written about.
 
-Only `lgtm:functions` is reconciled. The stats and treemap blocks are left
-alone; re-seed the doc if you want them refreshed.
+Only `lgtm:functions` is reconciled. The stats, treemap and deps blocks are
+left alone; re-seed the doc if you want them refreshed.
 
 If you touch this file, the tests in it are the specification.
 
@@ -351,6 +405,9 @@ the same d3 call and prints cell sizes is worth more than eyeballing it.
 - Rust owns parsing; the frontend never sees a syntax tree, only an `Outline`.
 - Commands in `commands/` stay thin; logic lives in `db/`, `parse/`, `seed.rs`,
   `reconcile.rs`, `git.rs`.
+- **Prose is capped, pictures are not.** `.doc` fills its pane; only the text
+  elements carry a `max-width` for a readable measure. Capping the whole doc
+  left dead space beside every diagram, so widening the window bought nothing.
 - Design tokens live in `app.css`. Never hard-code a color in a component —
   both themes come from one place, and the two panes are deliberately different
   surfaces (`--code-bg` cool screen, `--doc-bg` warm paper).

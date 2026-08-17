@@ -16,6 +16,9 @@ pub const TREEMAP_TAG: &str = "lgtm:treemap";
 /// File-level facts: size, surface, and what git knows. Body empty for the
 /// same reason as the treemap — none of it is hand-written.
 pub const STATS_TAG: &str = "lgtm:stats";
+/// What the module reaches outside itself. Same rule again: the block carries
+/// its own data, so the picture is drawn from the text.
+pub const DEPS_TAG: &str = "lgtm:deps";
 
 /// Build the whole starter doc.
 ///
@@ -46,6 +49,13 @@ pub fn seed_markdown(outline: &Outline, source: &str, history: &FileHistory) -> 
     out.push_str("## Shape\n\n");
     out.push_str(&treemap_block(module));
     out.push('\n');
+
+    // Reach comes after shape: how big and what shape, then what it touches.
+    if !module.deps.is_empty() {
+        out.push_str("## Reach\n\n");
+        out.push_str(&deps_block(module));
+        out.push('\n');
+    }
     out.push_str("## Surface\n\n");
     out.push_str(&functions_block(module));
     out.push_str("\n## Notes\n\n");
@@ -122,6 +132,33 @@ fn lines_of(f: &crate::parse::FnInfo) -> u32 {
         .iter()
         .map(|r| r.end.saturating_sub(r.start) + 1)
         .sum()
+}
+
+/// The ```lgtm:deps block.
+///
+/// Two levels, by indent: a module line, then the functions of it this file
+/// actually calls, each followed by the local functions doing the calling.
+/// Everything after the first colon is the value, as in every other block.
+pub fn deps_block(module: &ModuleInfo) -> String {
+    let mut out = format!("```{DEPS_TAG} module={}\n", module.name);
+
+    for dep in &module.deps {
+        out.push_str(&format!("  {} : {}\n", dep.module, dep.kind.as_str()));
+
+        let width = dep
+            .functions
+            .iter()
+            .map(|f| f.name.len())
+            .max()
+            .unwrap_or(0);
+        for f in &dep.functions {
+            let name = &f.name;
+            out.push_str(&format!("    {name:width$} : {}\n", f.callers.join(", ")));
+        }
+    }
+
+    out.push_str("```\n");
+    out
 }
 
 /// The ```lgtm:functions block for one module.
@@ -251,7 +288,8 @@ end
     fn is_a_well_formed_fence() {
         let md = seeded();
         assert!(md.contains("```lgtm:functions module=MyApp.Accounts"));
-        // Three fences: stats, treemap, function table.
+        // stats, treemap, deps, function table — the sample reaches nothing
+        // outside itself, so deps is absent and three blocks remain.
         assert_eq!(md.matches("```").count(), 6, "every block opened and closed");
     }
 
@@ -283,6 +321,46 @@ end
         let mut sorted = publics.to_vec();
         sorted.sort();
         assert_eq!(publics, &sorted[..], "public group sorted: {names:?}");
+    }
+
+    #[test]
+    fn the_deps_block_carries_the_edges_as_text() {
+        let src = r#"defmodule MyApp.Accounts do
+  alias MyApp.Repo
+  alias MyApp.User
+  alias Ecto.Changeset
+
+  def create_user(attrs) do
+    %User{}
+    |> Repo.insert()
+  end
+
+  defp normalize(a), do: Changeset.cast(a, %{}, [])
+end
+"#;
+        let md = seed_markdown(&elixir::parse(src).unwrap(), src, &FileHistory::default());
+        let block = md
+            .split("```lgtm:deps")
+            .nth(1)
+            .and_then(|b| b.split("```").next())
+            .expect("deps block");
+
+        // A module line, then the functions of it that are actually called,
+        // each naming who calls it.
+        assert!(block.contains("MyApp.Repo : app"), "{block}");
+        assert!(block.contains("Ecto.Changeset : lib"), "{block}");
+        assert!(block.contains("insert/1"), "{block}");
+        assert!(block.contains("create_user/1"), "{block}");
+        assert!(block.contains("cast/3"), "{block}");
+        assert!(block.contains("normalize/1"), "{block}");
+    }
+
+    #[test]
+    fn a_module_that_reaches_nothing_gets_no_reach_section() {
+        let src = "defmodule MyApp.Pure do\n  def add(a, b), do: a + b\nend\n";
+        let md = seed_markdown(&elixir::parse(src).unwrap(), src, &FileHistory::default());
+        assert!(!md.contains("lgtm:deps"), "nothing to show, so no block:\n{md}");
+        assert!(!md.contains("## Reach"));
     }
 
     #[test]
