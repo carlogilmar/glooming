@@ -10,6 +10,8 @@
 //
 //   `create_user/1`   a function in this module (also `search/1..2`)
 //   `L30-34`          a plain line range, for the bits that aren't definitions
+//                     — case-insensitive, and `L30..34` works too, since `..` is
+//                     already the range separator in `search/1..2`
 //
 // A name that *looks* like a signature but isn't in the file is a **dangling**
 // reference. It renders struck through rather than silently falling back to
@@ -26,8 +28,14 @@ export interface Ref {
 
 /** `create_user/1`, `search/1..2`, `valid?/1` — shaped like a signature. */
 const SIG = /^[a-z_][A-Za-z0-9_]*[!?]?\/\d+(?:\.\.\d+)?$/;
-/** `L30` or `L30-34`. */
-const LINES = /^L(\d+)(?:-(\d+))?$/;
+/**
+ * `L30`, `L30-34`, `l30..34`.
+ *
+ * Case-insensitive because nobody reaches for the shift key mid-sentence, and
+ * `..` is accepted alongside `-` because it is already how an arity range is
+ * written in this same grammar.
+ */
+const LINES = /^[Ll](\d+)(?:\s*(?:-|\.\.)\s*(\d+))?$/;
 
 /** Does this inline code even claim to be a reference? */
 export function looksLikeRef(text: string): boolean {
@@ -39,12 +47,24 @@ export function looksLikeRef(text: string): boolean {
  * reference at all; a `Ref` when it resolves; and `"dangling"` when it looks
  * like one but names nothing in the file.
  */
-export function resolveRef(text: string, module: ModuleInfo | null): Ref | "dangling" | null {
+export function resolveRef(
+  text: string,
+  module: ModuleInfo | null,
+  lineCount = 0,
+): Ref | "dangling" | null {
   const lines = LINES.exec(text);
   if (lines) {
-    const start = parseInt(lines[1], 10);
-    const end = lines[2] ? parseInt(lines[2], 10) : start;
-    return start > 0 ? { sig: text, start, end: Math.max(end, start) } : "dangling";
+    const a = parseInt(lines[1], 10);
+    const b = lines[2] ? parseInt(lines[2], 10) : a;
+    // `L15-9` is obvious enough to just honour rather than reject.
+    const start = Math.min(a, b);
+    const end = Math.max(a, b);
+    // Past the end of the file is the same failure as naming a deleted
+    // function: the code moved under the explanation. Say so, rather than
+    // resolving to lines that don't exist and silently doing nothing.
+    if (start < 1) return "dangling";
+    if (lineCount > 0 && start > lineCount) return "dangling";
+    return { sig: text, start, end: lineCount > 0 ? Math.min(end, lineCount) : end };
   }
 
   if (!SIG.test(text)) return null;

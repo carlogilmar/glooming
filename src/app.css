@@ -22,6 +22,12 @@
   --pub:       #15803d;
   --priv:      #b45309;
   --mark:      #7c3aed;
+  /* Read mode's own colour: gold, so the button never reads as "selected".
+     `--read-ink` is the label on the filled state — it has to flip per theme,
+     because the light gold is dark enough to need white and the dark gold is
+     bright enough to need ink. 5.1:1 and 9.4:1 respectively. */
+  --read:      #8a6a14;
+  --read-ink:  #ffffff;
   --sel:       #eaf1fd;
   --shadow:    0 1px 2px rgba(16, 24, 40, .04);
 
@@ -52,7 +58,10 @@
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
 }
 
-html.dark {
+/* Scoped to a CLASS, not to `html`, so a subtree can opt into the dark palette
+   on its own — custom properties inherit, so one class turns a whole pane dark.
+   `<html class="dark">` still matches, so the app-wide theme is unchanged. */
+.dark {
   --bg:        #14161a;
   --bg-raised: #1a1d23;
   --bg-inset:  #101216;
@@ -65,6 +74,8 @@ html.dark {
   --pub:       #9ece6a;
   --priv:      #e0af68;
   --mark:      #bb9af7;
+  --read:      #d9b45a;
+  --read-ink:  #17130c;
   --sel:       #232d45;
   --shadow:    none;
 
@@ -87,6 +98,50 @@ html.dark {
   --syn-atom:  #e0af68;
   --syn-mod:   #73daca;
   --syn-doc:   #7f8797;
+}
+
+/* ============================================================
+   Read mode's surface: a WARM dark, layered over `.dark`.
+
+   Deliberately a third surface rather than reusing dark mode: the doc pane is
+   warm paper in light mode, so its lights-out counterpart should still be warm,
+   and it has to be distinguishable from the app's own cool dark at a glance.
+
+   Only the neutrals are overridden. `--accent`, `--pub`, `--priv`, `--mark`
+   inherit their dark values from `.dark`, so "current", "public" and "private"
+   mean the same thing in both panes.
+   ============================================================ */
+.reading-surface {
+  --bg:        #1b1714;
+  --bg-raised: #231e19;
+  --bg-inset:  #13100d;
+  --line:      #362f26;
+  --line-soft: #2a241d;
+  --fg:        #ece6da;
+  --fg-dim:    #aba18f;
+  --fg-faint:  #7f7568;
+  --code-bg:   #16120f;
+  --doc-bg:    #1b1714;
+  --doc-fg:    #ece6da;
+  --doc-line:  #362f26;
+  --sel:       #2c2620;
+  --shadow:    none;
+}
+
+/* Read mode's button: gold, filled, so an active mode never looks like a
+   selected thing. */
+.btn.read {
+  color: var(--read);
+  border-color: color-mix(in srgb, var(--read) 45%, transparent);
+  background: color-mix(in srgb, var(--read) 12%, transparent);
+}
+.btn.read.on {
+  color: var(--read-ink);
+  background: var(--read);
+  border-color: var(--read);
+}
+.btn.read.on:hover {
+  filter: brightness(1.08);
 }
 
 * { box-sizing: border-box; }

@@ -85,6 +85,8 @@ const W = 1000;
 const BOX = { x: 40, y: 44, w: 360 };
 const OUT_X = 620;
 const DOT_X = OUT_X - 18;
+/** Vertical pitch of one local function row. */
+const ROW = 62;
 
 export function renderDeps(body: string, module: ModuleInfo | null): string {
   const deps = parseDeps(body);
@@ -104,14 +106,7 @@ export function renderDeps(body: string, module: ModuleInfo | null): string {
     return `<div class="lgtm-deps empty">No outline for this file, so there is nothing to draw the reach against.</div>`;
   }
 
-  const H = Math.max(320, 88 + locals.length * 62);
-  const boxH = H - 88;
   const index = new Map(locals.map((f, i) => [f.sig, i]));
-
-  const rowH = (boxH - 52) / Math.max(locals.length - 1, 1);
-  locals.forEach((f, i) => {
-    f.y = BOX.y + 34 + i * rowH;
-  });
 
   // Order the outside by the average position of its callers, so lines stay
   // roughly parallel instead of crossing.
@@ -121,9 +116,23 @@ export function renderDeps(body: string, module: ModuleInfo | null): string {
   }
   deps.sort((a, b) => (a.bary ?? 0) - (b.bary ?? 0));
 
-  // Centred against the boundary so the two columns balance; a stack pinned to
-  // the top would leave every line sloping the same way.
+  // **Both** columns decide the height. Sizing from the local functions alone
+  // meant a small file with many aliases produced a stack taller than the
+  // viewBox, and centring it then pushed the top and the bottom outside — where
+  // SVG simply clips them, with nothing to say it had happened.
+  const localsH = ROW * Math.max(locals.length - 1, 1) + 68;
   const stackH = deps.reduce((h, d) => h + 22 + d.functions.length * 19 + 16, 0) - 16;
+  const H = Math.max(320, 88 + Math.max(localsH, stackH));
+  const boxH = H - 88;
+
+  // Each column keeps its natural spacing and is centred in whatever height the
+  // other one forced — so a short list never gets stretched thin across a tall
+  // diagram just because the opposite column is long.
+  const localsTop = BOX.y + (boxH - (localsH - 68)) / 2;
+  locals.forEach((f, i) => {
+    f.y = localsTop + i * ROW;
+  });
+
   let y = BOX.y + (boxH - stackH) / 2 + 8;
   for (const d of deps) {
     d.y = y;

@@ -40,7 +40,11 @@ function escapeHtml(s: string): string {
  * `outline` is the ONLY live input: blocks carry their own data as text, and
  * the outline supplies just the line numbers rows and tiles jump to.
  */
-export function createMarkdownIt(outline: Outline | null, filename = ""): MarkdownIt {
+export function createMarkdownIt(
+  outline: Outline | null,
+  filename = "",
+  lineCount = 0,
+): MarkdownIt {
   const md = new MarkdownIt({
     html: false,
     linkify: true,
@@ -152,7 +156,7 @@ export function createMarkdownIt(outline: Outline | null, filename = ""): Markdo
       const text = tokens[idx].content.trim();
       if (!looksLikeRef(text)) return defaultInline(tokens, idx, opts, env, self);
 
-      const hit = resolveRef(text, module);
+      const hit = resolveRef(text, module, lineCount);
       if (hit === "dangling") {
         return (
           `<code class="ref broken" title="not in this file any more">${escapeHtml(text)}</code>`

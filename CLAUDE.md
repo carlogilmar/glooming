@@ -113,6 +113,7 @@ src/
       CodePane.svelte          source, line numbers, blame, focus, search, vim motions, font size
       DocPane.svelte           preview/edit/read, block styling, row wiring, treemap tooltip
       FnPalette.svelte         ⌘P — jump to a function by name
+      RefMenu.svelte           / — insert a reference while editing
       HelpModal.svelte         ? — what everything does
       Divider.svelte           draggable split, double-click reset
       Library.svelte           saved docs: search, sort, folder grouping, keyboard nav, delete
@@ -373,6 +374,15 @@ their callers, which is the standard crossing-reduction heuristic and gives zero
 crossings on typical modules. No force simulation — the same doc must always
 render the same picture.
 
+**Both columns size the diagram.** The viewBox height is
+`max(localsH, stackH)`, and each column keeps its natural spacing while being
+centred in whatever height the other one forced. Sizing from the local functions
+alone meant a small file with many aliases produced a taller right-hand stack
+than the viewBox, and centring it then pushed the top *and* the bottom outside —
+where SVG silently clips, with nothing on screen to say it had happened. Centring
+each column separately also stops five functions being stretched thin across a
+diagram made tall by a long alias list.
+
 The left column comes from the **outline**, not the block. The block records
 edges; listing every local function a fourth time would be noise. So a doc whose
 file has moved renders the outside column and a note rather than the boundary.
@@ -484,10 +494,41 @@ Four rules, each of which replaced something that read worse:
   that marks table rows and treemap tiles, not by the scroll handler. Two
   mechanisms meant clicking a reference selected the code but left the chip
   unmarked, and scrolling could disagree with clicking about which was current.
+- **The room goes dark, in its own colours.** Read mode puts *two* classes on
+  the doc pane: `.dark` for the semantic colours, and `.reading-surface` for a
+  set of **warm** neutrals. That is a third surface on purpose — the doc pane is
+  warm paper in light mode, so its lights-out form should still be warm, and it
+  has to be tellable from the app's own cool dark at a glance (`#1b1714` warm vs
+  `#191b21` cool). Only the neutrals are overridden, so `--accent`, `--pub`,
+  `--priv` and `--mark` keep their dark values and "current"/"public"/"private"
+  mean the same thing in both panes. Body text lands at 14.3:1.
+
+  (An earlier version reused dark mode outright, which is why the dark tokens in
+  `app.css` are scoped to `.dark` and not `html.dark` — worth keeping regardless,
+  since it means any subtree can be themed.)
+- **Read mode has its own colour, not the accent.** `--read` is gold, and the
+  button is filled while active, so a mode never looks like a *selected thing*.
+  `--read-ink` is the label on the fill and has to flip per theme: the light gold
+  is dark enough to need white, the dark gold bright enough to need ink. All four
+  states clear 4.5:1 — the first pairing I tried was 3.7:1 at 11px.
 - **A click moves the reading, not just the code.** Selecting anything the prose
   mentions scrolls its paragraph up to the trigger. Without that, a click leaves
   the doc where it was — you are reading paragraph two while the code shows step
   four — and the next scroll event snaps back to two. `alignReading()`.
+- **A chip's identity is its element, not its name.** The same function can be
+  referenced from five paragraphs, so `code.ref` carries a per-render
+  `data-ref` index and the current one is tracked by that. Keying on the
+  signature lit every duplicate at once, and clicking the third mention scrolled
+  back to the *first* — `alignReading` now prefers the paragraph the click was
+  actually in. Table rows and tiles are still matched by name, because there is
+  only ever one row per signature.
+- **`/` inserts a reference while editing** (`RefMenu.svelte`). It only opens at
+  a word boundary, so `lib/my_app` and `2026/08` stay prose, and a space or a
+  backtick closes it. Locating the caret in a textarea needs a hidden mirror div
+  matching **every** metric that affects glyph position — font, size, line
+  height, padding, width, wrap — since any drift puts the menu somewhere
+  unrelated to what you are typing. Those declarations are shared between
+  `.mirror` and `.raw` in one rule for exactly that reason.
 - **The crossfade.** The outgoing ranges linger 620ms (`focus.leaving`) while
   the incoming ones arrive. That overlap is what makes a jump read as a
   connection instead of a cut, and it is the whole reason the feature feels like
@@ -653,6 +694,9 @@ habits load-bearing rather than optional:
 - Design tokens live in `app.css`. Never hard-code a color in a component —
   both themes come from one place, and the two panes are deliberately different
   surfaces (`--code-bg` cool screen, `--doc-bg` warm paper).
-- Theme is class-based (`.dark` on `<html>`), preference stored under `theme`
+- Theme is class-based and **scoped to `.dark`, not `html.dark`** — so any
+  subtree can opt into the dark palette, which is how read mode works. Adding a
+  `html.dark X` descendant rule breaks that and also outranks selection states
+  (see the blame-tint quirk). Preference stored under `theme`
   as `light | dark | system`, cycled in that order. lgtm defaults to **light**;
   Alexandria defaults to system. That is the only intentional difference.

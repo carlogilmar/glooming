@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createMarkdownIt } from "$lib/markdownit";
   import { locate } from "$lib/select";
+  import RefMenu from "$lib/components/RefMenu.svelte";
   import { focus } from "$lib/stores/focus.svelte";
   import type { Outline } from "$lib/ipc";
 
@@ -8,6 +9,7 @@
     markdown = $bindable(""),
     outline = null,
     filename = "",
+    lineCount = 0,
     dirty = false,
     stale = false,
     onreconcile,
@@ -15,6 +17,8 @@
     markdown: string;
     outline: Outline | null;
     filename: string;
+    /** Lines in the file, so an out-of-range `L…` reference can be flagged. */
+    lineCount: number;
     dirty: boolean;
     stale: boolean;
     onreconcile?: () => void;
@@ -34,10 +38,112 @@
   /** Paragraphs carrying a reference, in prose order — the steps. */
   let steps = $state<HTMLElement[]>([]);
   let activeStep = $state(-1);
+  /**
+   * Index of the chip that is current, not its signature.
+   *
+   * A name is not an identity: the same function can be referenced from three
+   * paragraphs. Keying on the signature meant every duplicate lit up at once,
+   * and clicking the third one scrolled back to the first.
+   */
+  let activeRef = $state<number | null>(null);
 
   const canRead = $derived(outline?.kind === "module");
 
-  const md = $derived(createMarkdownIt(outline, filename));
+  // ---- `/` to insert a reference --------------------------------------------
+  // The function list costs nothing: the outline is already parsed. What this
+  // buys is not having to remember an exact `name/arity` while writing prose.
+  let editor = $state<HTMLTextAreaElement | null>(null);
+  let mirror = $state<HTMLDivElement | null>(null);
+  let menu = $state<RefMenu | null>(null);
+  /** Caret offset of the `/` that opened the menu, or null when closed. */
+  let slashAt = $state<number | null>(null);
+  let slashQuery = $state("");
+  let menuX = $state(0);
+  let menuY = $state(0);
+
+  /**
+   * Where the caret is, in pixels within the textarea.
+   *
+   * There is no API for this, so a hidden div mirrors the textarea's own
+   * metrics, holds the text up to the caret, and a marker span at the end
+   * reports its position. Fiddly, but the alternative is a menu that appears
+   * somewhere unrelated to what you are typing.
+   */
+  function caretXY(): { x: number; y: number } {
+    if (!editor || !mirror) return { x: 0, y: 0 };
+    const before = editor.value.slice(0, editor.selectionStart);
+    mirror.textContent = before;
+    const marker = document.createElement("span");
+    marker.textContent = "\u200b";
+    mirror.appendChild(marker);
+    const m = marker.getBoundingClientRect();
+    const box = editor.getBoundingClientRect();
+    mirror.textContent = "";
+    return {
+      x: m.left - box.left - editor.scrollLeft,
+      // below the caret's own line, not on top of it
+      y: m.top - box.top - editor.scrollTop + 22,
+    };
+  }
+
+  function closeMenu() {
+    slashAt = null;
+    slashQuery = "";
+  }
+
+  /** Re-read the query from the text, and close if the `/` context is gone. */
+  function syncMenu() {
+    if (slashAt === null || !editor) return;
+    const caret = editor.selectionStart;
+    if (caret <= slashAt) return closeMenu();
+    const typed = editor.value.slice(slashAt + 1, caret);
+    // A space or a newline ends it — `/` in ordinary prose must stay prose.
+    if (/[\s`]/.test(typed)) return closeMenu();
+    slashQuery = typed;
+  }
+
+  function onEditorInput() {
+    syncMenu();
+  }
+
+  function onEditorKey(e: KeyboardEvent) {
+    if (slashAt !== null && menu?.handleKey(e)) {
+      e.preventDefault();
+      return;
+    }
+    // Only at a word boundary, so a path or a date in prose doesn't open it.
+    if (e.key === "/" && editor) {
+      const before = editor.value.slice(0, editor.selectionStart);
+      if (before === "" || /[\s(\[]$/.test(before)) {
+        const at = editor.selectionStart;
+        queueMicrotask(() => {
+          const p = caretXY();
+          menuX = p.x;
+          menuY = p.y;
+          slashAt = at;
+          slashQuery = "";
+        });
+      }
+    }
+  }
+
+  /** Replace `/query` with the reference and put the caret after it. */
+  function insertRef(text: string) {
+    if (!editor || slashAt === null) return;
+    const caret = editor.selectionStart;
+    const next = editor.value.slice(0, slashAt) + text + editor.value.slice(caret);
+    markdown = next;
+    closeMenu();
+    const to = slashAt + text.length;
+    queueMicrotask(() => {
+      editor?.focus();
+      editor?.setSelectionRange(to, to);
+    });
+  }
+
+  // The line count is only needed so an `L900` reference on a 42-line file reads
+  // as dangling rather than resolving to nothing.
+  const md = $derived(createMarkdownIt(outline, filename, lineCount));
   const html = $derived(md.render(markdown));
 
   /**
@@ -59,6 +165,8 @@
     if (start <= 0) return true;
     const end = parseInt(row.dataset.end ?? String(start), 10) || start;
 
+    // The chip you clicked, not the first one that shares its name.
+    activeRef = row.dataset.ref !== undefined ? Number(row.dataset.ref) : null;
     focus.set(row.dataset.sig ?? `line ${start}`, [{ start, end }]);
     return true;
   }
@@ -73,7 +181,15 @@
     if (!row) return false;
     const sig = row.dataset.sig ?? "";
     const at = locate(sig, outline?.modules?.[0] ?? null);
-    if (at) focus.set(sig, at.ranges, at.related, at.spec, at.doc);
+    if (at) {
+      // Clicked a table row or a tile, so there is no particular chip in mind —
+      // the first mention of that name is the reasonable one to light.
+      const chip = container?.querySelector<HTMLElement>(
+        `.doc code.ref[data-sig="${CSS.escape(sig)}"]`,
+      );
+      activeRef = chip?.dataset.ref !== undefined ? Number(chip.dataset.ref) : null;
+      focus.set(sig, at.ranges, at.related, at.spec, at.doc);
+    }
     return true;
   }
 
@@ -81,7 +197,7 @@
   // per-row handlers.
   function onClick(e: MouseEvent) {
     const target = e.target as HTMLElement;
-    if (selectBlock(target) || select(target)) alignReading();
+    if (selectBlock(target) || select(target)) alignReading(target);
   }
 
   function onKey(e: KeyboardEvent) {
@@ -89,7 +205,7 @@
     const target = e.target as HTMLElement;
     if (selectBlock(target) || select(target)) {
       e.preventDefault();
-      alignReading();
+      alignReading(target);
     }
   }
 
@@ -262,6 +378,7 @@
       // begun: the file sits at rest rather than pre-armed on step one.
       if (i < 0) {
         focus.rest();
+        activeRef = null;
         for (const p of steps) p.classList.remove("now");
         return;
       }
@@ -269,7 +386,10 @@
       if (!ref) return;
       const start = parseInt(ref.dataset.line ?? "0", 10);
       const end = parseInt(ref.dataset.end ?? "0", 10) || start;
-      if (start > 0) focus.step(ref.dataset.sig ?? `line ${start}`, [{ start, end }]);
+      if (start > 0) {
+        activeRef = Number(ref.dataset.ref ?? -1);
+        focus.step(ref.dataset.sig ?? `line ${start}`, [{ start, end }]);
+      }
 
       // Only the paragraph is marked here. The chip is marked by the selection
       // effect, keyed on focus.sig — one mechanism, so scrolling and clicking
@@ -286,12 +406,16 @@
    * scroll event snaps back. Scrolling the matching paragraph up to the trigger
    * makes the click a move within the reading rather than a detour out of it.
    */
-  function alignReading() {
+  function alignReading(clicked?: HTMLElement | null) {
     if (!reading || !body || !focus.active) return;
 
-    const i = steps.findIndex((p) =>
-      p.querySelector(`code.ref[data-sig="${CSS.escape(focus.sig)}"]`),
-    );
+    // Prefer the paragraph the click was actually in. Falling back to a search
+    // by name would land on the *first* mention of it, which is why clicking a
+    // repeated reference used to scroll backwards.
+    const own = clicked?.closest<HTMLElement>(".step");
+    const i = own
+      ? steps.indexOf(own)
+      : steps.findIndex((p) => p.querySelector(`code.ref[data-sig="${CSS.escape(focus.sig)}"]`));
     if (i < 0) return; // selected something the prose never mentions
 
     const delta = steps[i].getBoundingClientRect().top - triggerY();
@@ -377,14 +501,20 @@
       return;
     }
     const found: HTMLElement[] = [];
+    let n = 0;
     for (const block of container.querySelectorAll<HTMLElement>("p, li, blockquote")) {
       const refs = block.querySelectorAll<HTMLElement>("code.ref[data-line]");
       if (!refs.length) continue;
       block.classList.add("step");
-      refs.forEach((r, i) => r.classList.toggle("mention", i > 0));
+      refs.forEach((r, i) => {
+        r.classList.toggle("mention", i > 0);
+        // A stable per-render index, so duplicates of one name stay distinct.
+        r.dataset.ref = String(n++);
+      });
       found.push(block);
     }
     steps = found;
+    activeRef = null;
   });
 
   // Mark the focused row, so both panes show the same selection — and repaint
@@ -393,20 +523,33 @@
   $effect(() => {
     const sig = focus.sig;
     html;
+    activeRef;
     if (!container) return;
 
+    // Blocks are one row per signature, so matching by name is right there.
     for (const el of container.querySelectorAll(
       ".fnrow, .tm-tile, .lgtm-deps .fn, .lgtm-surface .row, " +
-        ".lgtm-tests [data-sig], .lgtm-settings [data-sig], .doc code.ref[data-sig]",
+        ".lgtm-tests [data-sig], .lgtm-settings [data-sig]",
     )) {
       el.classList.toggle("active", focus.active && (el as HTMLElement).dataset.sig === sig);
+    }
+    // Chips are not: the same name can appear in five paragraphs, and only the
+    // one being read is current.
+    for (const el of container.querySelectorAll<HTMLElement>(".doc code.ref[data-ref]")) {
+      el.classList.toggle("active", focus.active && el.dataset.ref === String(activeRef));
     }
     const host = reachHost();
     if (host) litReach(host, null);
   });
 </script>
 
-<div class="pane" bind:this={pane}>
+<div
+  class="pane"
+  class:reading
+  class:dark={reading}
+  class:reading-surface={reading}
+  bind:this={pane}
+>
   {#if reading}
     <!-- Where one paragraph hands over to the next. Quiet on purpose: it makes
          the mechanic legible without becoming a debug overlay. -->
@@ -421,8 +564,8 @@
     {/if}
     {#if canRead && !editing && steps.length}
       <button
-        class="btn icon"
-        class:primary={reading}
+        class="btn icon read"
+        class:on={reading}
         onclick={toggleReading}
         title="Scroll the doc and the code follows your reading"
       >
@@ -449,7 +592,31 @@
 
   <div class="panebody" bind:this={body} onscroll={onDocScroll}>
     {#if editing}
-      <textarea class="raw" bind:value={markdown} spellcheck="false"></textarea>
+      <div class="editwrap">
+        <textarea
+          class="raw"
+          bind:this={editor}
+          bind:value={markdown}
+          spellcheck="false"
+          oninput={onEditorInput}
+          onkeydown={onEditorKey}
+          onblur={closeMenu}
+          onscroll={closeMenu}
+        ></textarea>
+        <!-- metrics twin for locating the caret; never visible -->
+        <div class="mirror" bind:this={mirror} aria-hidden="true"></div>
+        {#if slashAt !== null && canRead}
+          <RefMenu
+            bind:this={menu}
+            module={outline?.modules?.[0] ?? null}
+            query={slashQuery}
+            x={menuX}
+            y={menuY}
+            onpick={insertRef}
+            onclose={closeMenu}
+          />
+        {/if}
+      </div>
     {:else}
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
       <div
@@ -495,15 +662,28 @@
     pointer-events: none;
     border-top: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
   }
+  /* Read mode's surface is `.dark` for the semantic colours plus
+     `.reading-surface` for a warm set of neutrals — both live in app.css, and
+     nothing about it is declared here beyond the transition, so the surface
+     fades rather than snapping.
+     It is a third surface on purpose: the doc pane is warm paper in light mode,
+     so its lights-out form should still be warm, and it has to be tellable from
+     the app's own cool dark at a glance. Because only the neutrals are
+     overridden, "current"/"public"/"private" keep meaning the same thing in both
+     panes. */
   .panehead {
     background: var(--doc-bg);
     border-bottom-color: var(--doc-line);
+    transition: background 0.3s ease;
   }
   .panebody {
     flex: 1;
     overflow: auto;
     background: var(--doc-bg);
     color: var(--doc-fg);
+    transition:
+      background 0.3s ease,
+      color 0.3s ease;
   }
   .dot {
     width: 6px;
@@ -539,6 +719,30 @@
     color: var(--fg);
   }
 
+  .editwrap {
+    position: relative;
+    height: 100%;
+  }
+  /* The mirror must match the textarea in every metric that affects where a
+     glyph lands — font, size, line height, padding, width, wrapping. Any drift
+     and the caret measurement is silently wrong. */
+  .mirror,
+  .raw {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.7;
+    padding: 26px 30px;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    box-sizing: border-box;
+  }
+  .mirror {
+    position: absolute;
+    inset: 0;
+    visibility: hidden;
+    pointer-events: none;
+    overflow: hidden;
+  }
   .raw {
     display: block;
     width: 100%;
@@ -548,10 +752,6 @@
     outline: none;
     background: var(--doc-bg);
     color: var(--doc-fg);
-    font-family: var(--mono);
-    font-size: 12.5px;
-    line-height: 1.7;
-    padding: 26px 30px;
   }
 
   .doc {

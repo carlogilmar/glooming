@@ -486,6 +486,7 @@
             bind:markdown
             {outline}
             filename={file.filename}
+            lineCount={file.source.split("\n").length}
             {dirty}
             {stale}
             onreconcile={reconcile}

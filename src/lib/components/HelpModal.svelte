@@ -110,6 +110,12 @@
       rows: [
         { action: "Preview / Edit", what: "Rendered blocks, or the raw markdown source" },
         {
+          keys: ["/"],
+          what:
+            "While editing, insert a reference without remembering its arity. Filters as you type " +
+            "— ↑↓ then ↵. Only fires at a word boundary, so a path or a date stays prose",
+        },
+        {
           action: "the surface block",
           what:
             "Public left, private right, sorted by name and scrolling separately — the directory. " +
