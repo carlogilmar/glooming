@@ -184,10 +184,14 @@ private:
 ```
 ````
 
-Seed order is **stats → treemap → deps → surface → functions**, under the
-headings *(none)* → Shape → Reach → Surface → Explain: how big is this, what
-shape is it, what does it touch, what's in it, and only then the block you
-write in. `lgtm:deps` is omitted entirely when a module reaches nothing.
+Seed order is **stats → surface → treemap → deps → functions**, under the
+headings *(none)* → Surface → Shape → Reach → Explain: how big is this, what's
+in it, what shape is it, what does it touch, and only then the block you write
+in. `lgtm:deps` is omitted entirely when a module reaches nothing.
+
+The directory comes **before** the pictures on purpose: names are what you
+orient by, and both the treemap and the reach diagram read better once you
+already know what the names are.
 
 **`lgtm:surface` and `lgtm:functions` are not redundant.** Surface is the
 *directory* — sorted by name, two scrolling columns, for getting somewhere.

@@ -102,21 +102,28 @@ pnpm tauri icon       # no arguments — app-icon.png is the default input
 | Key | Does |
 |---|---|
 | `⌘O` | open a file |
+| `⌘L` | open a path you copied (quotes, `file://`, `~` all handled) |
 | `⌘K` | library — everything you've written |
+| `⌘P` | jump to a function by name |
 | `⌘S` | force a save (autosave already runs 800ms after you stop typing) |
+| `[` `]` | previous / next function |
+| `/` | search, marking every occurrence |
+| `?` | what everything does |
 | `Esc` | clear the focused function |
 
 Clicking a function focuses it. There are **four ways out** and they all work:
 `Esc`, clicking the row again, clicking empty space in the code pane, or
 clicking the hint pill at the bottom.
 
-The code pane also has a **blame gutter** (only inside a git repo, and it only
-shells out when you press the button), **font size** steppers, and a **soft
-wrap** toggle.
+The code pane also has **vim motions** (`j`/`k`, `gg`/`G`, `42G`, `H`/`M`/`L`,
+`{`/`}`, `⌃d`/`⌃u`, `zz`, `yy`), **`/` search** that marks every occurrence in
+the file, **font size** steppers, and a **blame gutter** that tints each line
+with its author's colour — only inside a git repo, and it only shells out when
+you press the button. Long lines always soft-wrap.
 
 ### The doc is plain markdown
 
-Your explanation is a normal markdown file with three extra fenced blocks. The
+Your explanation is a normal markdown file with five extra fenced blocks. The
 values live **in the text** — the file is the data, not a cache of one — so it
 stays readable anywhere and you can edit anything you disagree with.
 
@@ -132,10 +139,24 @@ created: 2025-02-14
 updated: 2026-08-10
 ```
 
+```lgtm:surface module=MyApp.Accounts
+public:
+  create_user/1 : 12
+  get_user!/1   : 24
+private:
+  normalize/1   : 30 2 clauses
+```
+
 ```lgtm:treemap
   changeset/2   : 6 private
   create_user/1 : 6 public
   normalize/1   : 4 private
+```
+
+```lgtm:deps module=MyApp.Accounts
+  MyApp.Repo : app
+    insert/1 : create_user/1
+    get/2    : get_user/1
 ```
 
 ```lgtm:functions module=MyApp.Accounts
@@ -146,6 +167,12 @@ private:
   - normalize/1   : Trims and downcases the email.
 ```
 ````
+
+They're seeded in that order — **how big is this, what's in it, what shape is
+it, what does it touch**, and only then the block you write in. The first four
+are generated and clicking anything in them focuses that function in the code;
+`lgtm:functions` is yours, and it's the only one that gets reconciled when the
+file changes.
 
 Everything after the **first** colon is prose, so explanations may contain
 colons and backticks freely. An empty explanation renders as a ghost `explain…`
@@ -168,14 +195,15 @@ and never touches your source file.
 ## Project layout
 
 ```
-mockup/index.html          standalone visual contract — no build, just open it
+mockup/*.html              standalone visual contracts — no build, just open them
 IMPLEMENTATION_PLAN.md     the reasoning behind every decision
 CLAUDE.md                  the map, for humans and Claude sessions alike
 
 src/                       SvelteKit frontend
-  lib/components/          CodePane, DocPane, Divider, Library
+  lib/components/          CodePane, DocPane, Divider, Library, FnPalette, HelpModal
   lib/stores/              theme, focus (shared by both panes)
   lib/markdownit.ts        the lgtm:* fence renderers
+  lib/{stats,surface,treemap,deps}.ts   one block each
 src-tauri/                 Rust + Tauri backend
   src/parse/elixir.rs      tree-sitter → Outline   ← the load-bearing file
   src/seed.rs              Outline → starter markdown

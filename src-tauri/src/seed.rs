@@ -45,26 +45,30 @@ pub fn seed_markdown(outline: &Outline, source: &str, history: &FileHistory) -> 
         _ => out.push_str("> _one-line summary…_\n\n"),
     }
 
-    // Facts, then shape, then names: how big is this, what does it look like,
-    // and only then what is in it.
+    // How big is this, what is in it, what shape is it, what does it touch —
+    // and only then the block you write in. The directory comes before the
+    // pictures: names are what you orient by, and the treemap and reach diagram
+    // both read better once you already know what the names are.
     out.push_str(&stats_block(module, source, history));
     out.push('\n');
+
+    out.push_str("## Surface\n\n");
+    out.push_str(&surface_block(module));
+    out.push('\n');
+
     out.push_str("## Shape\n\n");
     out.push_str(&treemap_block(module));
     out.push('\n');
 
-    // Reach comes after shape: how big and what shape, then what it touches.
     if !module.deps.is_empty() {
         out.push_str("## Reach\n\n");
         out.push_str(&deps_block(module));
         out.push('\n');
     }
-    out.push_str("## Surface\n\n");
-    out.push_str(&surface_block(module));
 
-    // The functions block comes last of the four: everything above it is
-    // generated, and this is the one you write in.
-    out.push_str("\n## Explain\n\n");
+    // The functions block comes last: everything above it is generated, and
+    // this is the one you write in.
+    out.push_str("## Explain\n\n");
     out.push_str(&functions_block(module));
     out.push_str("\n## Notes\n\n");
     out
@@ -348,10 +352,10 @@ end
         assert!(md.contains("```lgtm:treemap"));
         // Its body carries the sizes as text — the markdown IS the data.
         assert!(md.contains("```lgtm:treemap\n  "), "{md}");
-        // Facts, then shape, then the directory, then the place you write.
-        assert!(md.find("lgtm:stats").unwrap() < md.find("lgtm:treemap").unwrap());
-        assert!(md.find("lgtm:treemap").unwrap() < md.find("lgtm:surface").unwrap());
-        assert!(md.find("lgtm:surface").unwrap() < md.find("lgtm:functions").unwrap());
+        // Facts, then the directory, then the pictures, then where you write.
+        assert!(md.find("lgtm:stats").unwrap() < md.find("lgtm:surface").unwrap());
+        assert!(md.find("lgtm:surface").unwrap() < md.find("lgtm:treemap").unwrap());
+        assert!(md.find("lgtm:treemap").unwrap() < md.find("lgtm:functions").unwrap());
     }
 
     #[test]
