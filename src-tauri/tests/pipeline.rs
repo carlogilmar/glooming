@@ -80,6 +80,7 @@ fn the_seeded_doc_is_ready_to_write_into() {
 
     // @doc text becomes starting prose…
     assert!(md.contains("Creates a user from raw attrs."));
+
     // …and everything undocumented is an empty slot waiting for you.
     let table = md
         .split("```lgtm:functions")
@@ -90,7 +91,47 @@ fn the_seeded_doc_is_ready_to_write_into() {
         .lines()
         .filter(|l| l.trim_start().starts_with("- ") && l.trim_end().ends_with(':'))
         .count();
-    assert_eq!(empty, 3, "get_user!/1, normalize/1, changeset/2:\n{md}");
+    assert_eq!(empty, 1, "only get_user!/1 lacks a @doc:\n{table}");
+
+    // The block is the PUBLIC surface; private helpers live in prose.
+    assert!(!table.contains("normalize/1"), "private stays out:\n{table}");
+    assert!(!table.contains("private:"), "no private group:\n{table}");
+}
+
+/// A freshly seeded doc already has something to read: the private helpers are
+/// a prose list of inline references, so `▷ Read` does something on a file you
+/// have not written a word about yet.
+#[test]
+fn the_seed_ships_a_reading_to_scroll() {
+    let md = seed::seed_markdown(&outline(), FIXTURE, &FileHistory::default(), "accounts.ex");
+    let notes = md.split("## Notes").nth(1).expect("notes section");
+
+    assert!(notes.contains("Private helpers, in source order:"), "{notes}");
+    // Inline references — the same backticks that drive a reading.
+    assert!(notes.contains("- `normalize/1` —"), "{notes}");
+    assert!(notes.contains("- `changeset/2` —"), "{notes}");
+    // Source order, since that is the order the implementation reads.
+    assert!(
+        notes.find("normalize/1").unwrap() < notes.find("changeset/2").unwrap(),
+        "{notes}"
+    );
+    // Public functions are not repeated here.
+    assert!(!notes.contains("create_user/1"), "{notes}");
+}
+
+/// A module with nothing private has no list to write, and must not leave an
+/// orphan heading behind.
+#[test]
+fn a_module_with_no_private_helpers_gets_no_list() {
+    let src = "defmodule MyApp.Pure do\n  def add(a, b), do: a + b\nend\n";
+    let md = seed::seed_markdown(
+        &parse::parse(src, "elixir").unwrap(),
+        src,
+        &FileHistory::default(),
+        "pure.ex",
+    );
+    assert!(!md.contains("Private helpers"), "{md}");
+    assert!(md.trim_end().ends_with("## Notes"), "clean tail:\n{md}");
 }
 
 #[test]
@@ -115,8 +156,9 @@ fn a_later_edit_to_the_file_never_costs_you_prose() {
         "create_user/1",
         " Entry point. Validates, then inserts.",
     );
-    let written = explain(&written, "changeset/2", " The one place field rules live.");
-    assert!(written.contains("The one place field rules live."), "setup:\n{written}");
+    // Both public — the block is the public surface now.
+    let written = explain(&written, "get_user/1", " The bang-free half of the pair.");
+    assert!(written.contains("The bang-free half of the pair."), "setup:\n{written}");
 
     // …then the file changes: get_user!/1 is deleted, delete_user/1 appears.
     let edited = FIXTURE
@@ -130,7 +172,7 @@ fn a_later_edit_to_the_file_never_costs_you_prose() {
 
     // Your writing survives, whatever happened to the code.
     assert!(merged.contains("Entry point. Validates, then inserts."));
-    assert!(merged.contains("The one place field rules live."));
+    assert!(merged.contains("The bang-free half of the pair."));
     // The new function shows up with an empty slot.
     assert!(merged.contains("delete_user/1"));
     // The deleted one is struck through, not erased.
@@ -192,3 +234,4 @@ fn reconciling_a_config_doc_changes_nothing() {
         "a doc with no functions block is passed through verbatim"
     );
 }
+

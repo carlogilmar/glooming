@@ -12,6 +12,7 @@ import { renderDeps } from "$lib/deps";
 import { renderSurface } from "$lib/surface";
 import { renderSettings } from "$lib/settings";
 import { renderTests } from "$lib/tests";
+import { looksLikeRef, resolveRef } from "$lib/refs";
 import type { Outline } from "$lib/ipc";
 
 hljs.registerLanguage("elixir", elixir);
@@ -136,6 +137,36 @@ export function createMarkdownIt(outline: Outline | null, filename = ""): Markdo
       return defaultFence(tokens, idx, opts, env, self);
     }
   };
+
+  // Inline code that names something in this module becomes a reference: a
+  // click target, and the anchor a scroll-driven reading steps through. Only
+  // for modules — a config or a test suite is a directory, not a narrative, so
+  // there is nothing to walk.
+  if (outline?.kind === "module") {
+    const module = outline.modules?.[0] ?? null;
+    const defaultInline =
+      md.renderer.rules.code_inline ??
+      ((tokens, idx, opts, _env, self) => self.renderToken(tokens, idx, opts));
+
+    md.renderer.rules.code_inline = (tokens, idx, opts, env, self) => {
+      const text = tokens[idx].content.trim();
+      if (!looksLikeRef(text)) return defaultInline(tokens, idx, opts, env, self);
+
+      const hit = resolveRef(text, module);
+      if (hit === "dangling") {
+        return (
+          `<code class="ref broken" title="not in this file any more">${escapeHtml(text)}</code>`
+        );
+      }
+      if (!hit) return defaultInline(tokens, idx, opts, env, self);
+
+      return (
+        `<code class="ref" data-sig="${escapeHtml(hit.sig)}"` +
+        ` data-line="${hit.start}" data-end="${hit.end}" role="button" tabindex="0">` +
+        `${escapeHtml(text)}</code>`
+      );
+    };
+  }
 
   return md;
 }

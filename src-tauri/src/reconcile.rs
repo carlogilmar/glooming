@@ -131,7 +131,16 @@ fn merge(existing: &Block, outline: &Outline) -> Block {
         ..Default::default()
     };
 
+    // Newer docs keep only the public surface here, with the private helpers as
+    // prose under Notes. Older docs still carry a private group, and dropping it
+    // would take their prose with it — so the rule is: never *add* a group the
+    // block doesn't have, and never *drop* one it does.
+    let keep_private = !existing.private.is_empty();
+
     for visibility in [Visibility::Public, Visibility::Private] {
+        if visibility == Visibility::Private && !keep_private {
+            continue;
+        }
         let old = match visibility {
             Visibility::Public => &existing.public,
             Visibility::Private => &existing.private,
@@ -355,5 +364,37 @@ end",
             prose: "p".into(),
         };
         assert_eq!(e.key(), "search/2");
+    }
+}
+
+#[cfg(test)]
+mod group_tests {
+    use super::*;
+    use crate::parse::elixir;
+
+    const SRC: &str = "defmodule MyApp.A do\n  def pub(a), do: a\n  defp priv(a), do: a\nend\n";
+
+    /// New docs keep only the public surface in the block. Reconciling one must
+    /// not invent a private group and pull the helpers back in.
+    #[test]
+    fn a_public_only_block_stays_public_only() {
+        let doc = "```lgtm:functions module=MyApp.A\npublic:\n  - pub/1 : the entry point\n```\n";
+        let merged = reconcile_markdown(doc, &elixir::parse(SRC).unwrap());
+
+        assert!(merged.contains("pub/1"), "{merged}");
+        assert!(merged.contains("the entry point"), "prose kept:\n{merged}");
+        assert!(!merged.contains("private:"), "no group invented:\n{merged}");
+        assert!(!merged.contains("priv/1"), "{merged}");
+    }
+
+    /// An older doc still carries a private group. Dropping it would take its
+    /// prose with it, so it is kept and maintained as before.
+    #[test]
+    fn an_older_block_keeps_the_private_group_it_already_has() {
+        let doc = "```lgtm:functions module=MyApp.A\npublic:\n  - pub/1 : the entry point\nprivate:\n  - priv/1 : trims the input\n```\n";
+        let merged = reconcile_markdown(doc, &elixir::parse(SRC).unwrap());
+
+        assert!(merged.contains("private:"), "group kept:\n{merged}");
+        assert!(merged.contains("trims the input"), "prose kept:\n{merged}");
     }
 }

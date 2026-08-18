@@ -88,7 +88,9 @@ pub fn seed_markdown(
     // this is the one you write in.
     out.push_str("## Explain\n\n");
     out.push_str(&functions_block(module));
+
     out.push_str("\n## Notes\n\n");
+    out.push_str(&private_notes(module));
     out
 }
 
@@ -469,11 +471,16 @@ pub fn surface_block(module: &ModuleInfo) -> String {
     out
 }
 
-/// The ```lgtm:functions block for one module.
+/// The ```lgtm:functions block: **the public surface only**.
+///
+/// Private helpers moved out to a prose list under Notes, where each one is an
+/// inline reference — which means a freshly seeded doc already has a reading to
+/// scroll through, instead of you having to write one before the feature does
+/// anything.
 pub fn functions_block(module: &ModuleInfo) -> String {
     let mut out = format!("```{BLOCK_TAG} module={}\n", module.name);
 
-    for visibility in [Visibility::Public, Visibility::Private] {
+    for visibility in [Visibility::Public] {
         // Alphabetical, not source order: the table is a directory you look
         // things up in, and source order is already the treemap's job.
         let mut group: Vec<_> = module
@@ -502,6 +509,33 @@ pub fn functions_block(module: &ModuleInfo) -> String {
     }
 
     out.push_str("```\n");
+    out
+}
+
+/// The private helpers as a prose list.
+///
+/// Written as ordinary markdown with inline references, so it is a **reading**:
+/// each item is a step, and the em dash is the gap you write into. In source
+/// order, because that is the order the implementation reads.
+pub fn private_notes(module: &ModuleInfo) -> String {
+    let mut privates: Vec<_> = module
+        .functions
+        .iter()
+        .filter(|f| f.visibility == Visibility::Private)
+        .collect();
+    if privates.is_empty() {
+        return String::new();
+    }
+    privates.sort_by_key(|f| f.line);
+
+    let mut out = String::from("Private helpers, in source order:\n\n");
+    for f in privates {
+        let sig = display_sig(f);
+        // An existing @doc becomes the starting prose; otherwise an open gap.
+        let prose = f.doc.as_deref().unwrap_or("").replace('\n', " ");
+        out.push_str(&format!("- `{sig}` — {prose}\n"));
+    }
+    out.push('\n');
     out
 }
 

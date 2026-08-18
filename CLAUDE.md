@@ -2,10 +2,15 @@
 
 A desktop tool for **reading code deeply**. You open one source file; the window
 splits with the source on the left and your explanation on the right. lgtm
-parses the file, seeds the explanation with the module's stats, a treemap of
-function sizes, and its public and private functions, and you fill in the prose.
-Clicking a function in the explanation focuses it in the code. The explanation
-is saved and comes back next time.
+parses the file and seeds the explanation with what it found — its size and
+history, its surface, a treemap of function sizes, what it reaches outside
+itself — and you fill in the prose. Clicking anything in the explanation focuses
+it in the code, and with `▷ Read` on, **scrolling the explanation walks the
+code in the order your prose takes it**. The explanation is saved and comes back
+next time.
+
+Not every file is a module: a config script and a test suite get blocks of their
+own, and anything unrecognised gets a blank page rather than empty ones.
 
 Elixir is the only language so far. The architecture assumes more will follow.
 
@@ -15,8 +20,10 @@ Elixir is the only language so far. The architecture assumes more will follow.
 > If you are a Claude session being onboarded: read this file end to end, then
 > `IMPLEMENTATION_PLAN.md` for the *why* behind each decision. This file is the
 > map; the plan is the reasoning. `README.md` is the user-facing version.
-> `mockup/index.html` is the visual contract — a standalone, dependency-free
-> HTML mockup that the real UI was built from.
+>
+> **The `mockup/*.html` files are the visual contracts** — standalone,
+> dependency-free pages the real UI was built from. If a component and its
+> mockup disagree, the mockup is right. Open them; they are interactive.
 
 ## What this is not
 
@@ -28,6 +35,18 @@ These are deliberate, and pushing back on them needs a real argument:
 | Git diffs, PR fetching, branch checkout | Cut during design. You read committed files; lgtm just opens a path. |
 | Multi-file projects, call graphs, cross-module navigation | One file at a time. v2 at the earliest. |
 | Any AI/LLM involvement | The explanation is *yours*. Writing it is the point — generating it would defeat the tool. |
+| `import` in the reach block | It puts functions in scope unqualified, so a bare `cast(...)` can't be told from a local call. Showing it with zero call sites would read as a bug. |
+
+A few things were **built and then cut**, which is worth knowing so they don't
+get rebuilt:
+
+- **An arc diagram of the reading path**, drawn in a widened divider. It needed
+  explaining, which meant it wasn't working. The same data as a plain two-axis
+  chart is legible — parked as a possible `lgtm:path` block, not built.
+- **A soft-wrap toggle.** Wrapping is now unconditional; there is no case where
+  scrolling sideways to finish a line is the better trade.
+- **A blame legend in the footer.** The gutter already names each author where
+  the author changes, which is the same information where you are looking.
 
 Git is touched in exactly three read-only places (see `src-tauri/src/git.rs`):
 the branch label is a plain read of `.git/HEAD`; `git log --follow` runs once at
@@ -78,6 +97,8 @@ mockup/index.html              standalone visual contract — no build, just ope
 mockup/deps.html               the reach block's visual contract
 mockup/surface.html            the surface block's visual contract
 mockup/kinds.html              config / test / fallback — the non-module kinds
+mockup/reading.html            scroll-driven reading, first cut
+mockup/authoring.html          read mode as shipped, plus the edge cases
 app-icon.png                   icon source (1024², RGBA); also copied to static/
 IMPLEMENTATION_PLAN.md         the reasoning behind every decision here
 README.md                      user-facing: clone, install, run, build
@@ -90,7 +111,9 @@ src/
   lib/
     components/
       CodePane.svelte          source, line numbers, blame, focus, search, vim motions, font size
-      DocPane.svelte           edit/preview toggle, block styling, row wiring, treemap tooltip
+      DocPane.svelte           preview/edit/read, block styling, row wiring, treemap tooltip
+      FnPalette.svelte         ⌘P — jump to a function by name
+      HelpModal.svelte         ? — what everything does
       Divider.svelte           draggable split, double-click reset
       Library.svelte           saved docs: search, sort, folder grouping, keyboard nav, delete
     stores/
@@ -98,6 +121,9 @@ src/
       focus.svelte.ts          which function is selected — shared by BOTH panes
     markdownit.ts              markdown-it + the lgtm:* fence renderers
     lgtmBlock.ts               parses the functions block (mirrors reconcile.rs)
+    refs.ts                    recognises `create_user/1` / `L30-34` in prose
+    select.ts                  one signature → every span worth highlighting
+    when.ts                    relative dates, shared so two views can't disagree
     treemap.ts                 parses + draws the treemap block
     stats.ts                   parses + draws the stats block
     deps.ts                    parses + draws the reach block (see mockup/deps.html)
@@ -196,6 +222,21 @@ destructure. `provides` is a best-effort read of the block's *last expression*
 lives elsewhere in the file, so its keys are `None` — **unknown, which is not
 the same as "provides nothing"** — and the UI shows `+?` rather than guessing.
 
+### Every block at a glance
+
+| Tag | File kind | Renderer | Reconciled? |
+|---|---|---|---|
+| `lgtm:stats` | all | `stats.ts` — key-agnostic, formats whatever keys it finds | no |
+| `lgtm:surface` | module | `surface.ts` — two scrolling columns, sorted by name | no |
+| `lgtm:treemap` | module | `treemap.ts` — squarified, top 3 labelled | no |
+| `lgtm:deps` | module | `deps.ts` — the boundary, omitted when nothing is reached | no |
+| `lgtm:functions` | module | `markdownit.ts` — the public surface, **where you write** | **yes** |
+| `lgtm:settings` | config | `settings.ts` — grouped by app, env vs literal | no |
+| `lgtm:tests` | test | `tests.ts` — describes, setups, assertion strips | no |
+
+`lgtm:stats` serving four file kinds is why it renders whatever keys the text
+carries instead of expecting a fixed set — one renderer, no per-kind variants.
+
 ### The five module blocks
 
 ````markdown
@@ -234,10 +275,17 @@ private:
 public:
   - create_user/1 : Entry point. Validates, then inserts.
   - get_user!/1   :
-private:
-  - normalize/1   : Trims and downcases the email.
 ```
 ````
+
+…and under `## Notes`, the private helpers as **prose**:
+
+```markdown
+Private helpers, in source order:
+
+- `normalize/1` —
+- `changeset/2` —
+```
 
 Seed order is **stats → surface → treemap → deps → functions**, under the
 headings *(none)* → Surface → Shape → Reach → Explain: how big is this, what's
@@ -247,6 +295,21 @@ in. `lgtm:deps` is omitted entirely when a module reaches nothing.
 The directory comes **before** the pictures on purpose: names are what you
 orient by, and both the treemap and the reach diagram read better once you
 already know what the names are.
+
+**`lgtm:functions` is the public surface; private helpers are prose.** The block
+carries what the module *offers*; the helpers go under Notes as a list of inline
+references. That is not just tidiness — it means a freshly seeded doc **already
+has a reading**, so `▷ Read` does something on a file you haven't written a word
+about. The em dash after each name is the gap you write into.
+
+The trade: prose isn't reconciled, so a new private helper won't appear in that
+list on its own (re-seed for that), and a deleted one renders struck through
+rather than being removed. Nothing is lost silently either way.
+
+Reconcile's rule is **never add a group the block doesn't have, never drop one
+it does** — older docs still carrying a `private:` section keep it and keep it
+maintained, because dropping it would take their prose with it. Pinned by
+`group_tests`.
 
 **`lgtm:surface` and `lgtm:functions` are not redundant.** Surface is the
 *directory* — sorted by name, two scrolling columns, for getting somewhere.
@@ -383,6 +446,63 @@ where you are; it just stops hiding the author colours or the matches you asked
 for. Without this, turning on blame with a function selected leaves 68% of the
 authors invisible.
 
+### Reading: the doc drives the code
+
+`▷ Read` in the doc pane header, **modules only** — a config or a test suite is
+a directory, not a narrative, so there is nothing to walk.
+
+The geometry scrollytelling wants was already here: the doc is the text, the
+code pane is the sticky graphic, and `focus` is the graphic's state. So this is
+one wire — doc scroll position → focus — not a rewrite.
+
+**There is no new syntax.** Inline code naming a function in this file becomes a
+reference (`refs.ts`), and `L30-34` points at plain lines. That keeps the
+markdown portable: paste a reading into a PR comment and it still reads
+correctly, which inventing `{{create_user/1}}` would have destroyed. Anything
+that doesn't look like a signature — `` `nil` ``, `` `{:ok, user}` `` — stays
+ordinary inline code.
+
+Four rules, each of which replaced something that read worse:
+
+- **One step per paragraph.** The first reference in a block is its step; later
+  mentions stay clickable but don't re-trigger. Without this a paragraph naming
+  three functions fires three code scrolls inside ~60px of scrolling.
+- **A lead-in *and* a tail, both measured in JS.** The trigger sits 38% down the
+  pane, which on a tall window is *below* the first paragraph or two at rest —
+  so the reading would open at step 2, and how far in depended on the monitor.
+  The tail is the same bug at the other end: the last step can only fire if at
+  least `(1 - TRIGGER)` of a pane sits below its top at maximum scroll, so a
+  fixed fraction silently fails above ~500px of pane. Both are computed from
+  the measured pane height in `sizeLead()`; neither is a constant.
+- **At rest the reading has not begun.** Before the first paragraph crosses, the
+  file sits undimmed with nothing selected, rather than pre-armed on step one.
+- **The overlap belongs in the code, not the prose.** The reference chips
+  originally transitioned their fill, so the outgoing one was still blue while
+  the incoming one lit and two references looked current at once — a glitch,
+  not a crossfade. Chips hand over instantly; only the code pane overlaps.
+- **One marking mechanism.** A chip is marked by the same `focus.sig` effect
+  that marks table rows and treemap tiles, not by the scroll handler. Two
+  mechanisms meant clicking a reference selected the code but left the chip
+  unmarked, and scrolling could disagree with clicking about which was current.
+- **A click moves the reading, not just the code.** Selecting anything the prose
+  mentions scrolls its paragraph up to the trigger. Without that, a click leaves
+  the doc where it was — you are reading paragraph two while the code shows step
+  four — and the next scroll event snaps back to two. `alignReading()`.
+- **The crossfade.** The outgoing ranges linger 620ms (`focus.leaving`) while
+  the incoming ones arrive. That overlap is what makes a jump read as a
+  connection instead of a cut, and it is the whole reason the feature feels like
+  anything.
+
+A dangling reference — the function has since been deleted — renders struck
+through and unclickable. Same principle as the functions block keeping
+struck-through prose: never quietly lose the fact that the code moved.
+
+`mockup/reading.html` and `mockup/authoring.html` are the contracts. An earlier
+version put a "reading path" arc diagram in the divider; it was cut because it
+needed explaining, which meant it wasn't working. The same data as a plain
+two-axis chart (step across, file position down) is legible, and is parked as a
+possible `lgtm:path` block rather than built.
+
 ### The library
 
 `⌘K`. Built for a few hundred docs, not a few: search over title/filename/path/
@@ -419,14 +539,17 @@ as is the reverse. `preceding_attrs` walks back through *consecutive* attribute
 siblings and stops at the first non-attribute — checking only the immediate
 previous sibling misses half of them.
 
-**Table order is alphabetical, in two places.** `seed.rs` and `reconcile.rs`
-must sort identically, or reconciling a doc silently reshuffles the table back
-into source order.
+**Two blocks sort, and they follow opposite rules.** `lgtm:functions` is sorted
+in *both* `seed.rs` and `reconcile.rs`, which must agree or reconciling a doc
+reshuffles it. `lgtm:surface` is sorted in `seed.rs` *only*, and the renderer
+preserves the text's order — because two sorters did disagree there (Rust orders
+by `(name, arity)`, JS `localeCompare` reorders punctuation). If you add a
+sorted block, pick one of these two shapes deliberately.
 
-**Tests must scope assertions to one block.** Three blocks now list every
-function name, so `md.lines().find(|l| l.contains("get_user!/1"))` finds the
-treemap row, not the table row. Split on the fence first — see
-`functions_block_of` in `seed.rs`'s tests.
+**Tests must scope assertions to one block.** Four blocks list every function
+name, so `md.lines().find(|l| l.contains("get_user!/1"))` finds the treemap row,
+not the table row. Split on the fence first — see `functions_block_of` in
+`seed.rs`'s tests and `block_of` in `kind_tests`.
 
 **`data-tauri-drag-region` needs an explicit permission.** `core:default`
 includes `core:window:default`, which is a *read-only query* set —
@@ -465,25 +588,62 @@ Default arguments produce an arity *range* (`search/1..2`) whose identity is the
 top arity. Badges spell this out (`default args`, `3 clauses`) — the earlier
 `search/1..2 ·3` was unreadable.
 
+**Count assertions over the whole `test` call, not its do-block.** A one-liner
+written `test "x", do: assert(y)` has no `do_block` at all, so walking only the
+block reported zero assertions — which quietly made every one-line test look
+untested in the strip shading.
+
+**Word matching needs the negative lookahead.** `markWord` in `CodePane` wraps
+`test` / `describe` / `setup` / `config` and function names, and `(?![\w!?])` is
+what stops `setup` matching inside `setup_all`, `get_user` inside `get_user!`,
+and a test named `"the config test"` having the word in its *name* wrapped
+instead of its keyword.
+
+**Read mode needs a lead-in *and* a tail, both measured.** The trigger sits at a
+fraction of the pane, so on a tall window the first paragraphs are already past
+it at rest, and at the other end the last step can only fire if `(1 - TRIGGER)`
+of a pane sits below its top. Fixed fractions fail silently at both ends and the
+failure looks like nothing at all. One `TRIGGER` constant drives the lead-in,
+the tail, the band position and the step test.
+
 **`db` is `pub`** solely so `tests/pipeline.rs` can construct `FileHistory`.
 
 ## Testing
 
-`cargo test` covers the parser, seeder, reconciler and DB layer.
-`tests/pipeline.rs` runs the whole chain against `tests/fixtures/accounts.ex`,
-which is the exact file `mockup/index.html` draws — including asserting the
-click-target line numbers `12, 20, 24, 30, 36` and the full body spans
-`12–17, 20–22, 24–26, 36–41`. **If the parser drifts from the mockup, that test
-fails first.**
+~90 Rust tests cover the parser (modules, configs, test suites), the seeder, the
+reconciler, git parsing and the DB layer. `tests/pipeline.rs` runs the whole
+chain against `tests/fixtures/accounts.ex`, which is the exact file
+`mockup/index.html` draws — asserting the click-target line numbers
+`12, 20, 24, 30, 36`, the full body spans `12–17, 20–22, 24–26, 36–41`, and the
+camelCase wire format. **If the parser drifts from the mockup, that test fails
+first.**
 
-There are no frontend tests. `pnpm check` must be clean. For anything with
-layout maths (the treemap especially), a throwaway `node -e` script that runs
-the same d3 call and prints cell sizes is worth more than eyeballing it.
+There are no frontend tests, and `pnpm check` must be clean. That makes two
+habits load-bearing rather than optional:
+
+- **Dump the tree before writing a parser.** Every Elixir extraction in this
+  repo was written against a printed syntax tree, and every one of them would
+  have been wrong from intuition. `child_by_field_name` in particular returns
+  `None` for children the grammar leaves unnamed.
+- **Check layout maths with a throwaway `node -e`.** The treemap's cell sizes,
+  the reach block's crossing count, the read mode lead-in and tail — all of them
+  had arithmetic bugs that a script caught in seconds and eyeballing would not
+  have. The read-mode tail was silently short on any pane above ~500px; nothing
+  looked broken, the last step just never fired.
 
 ## Conventions
 
 - Match the surrounding code. Comments explain *why*, not *what* — the existing
-  comments are the tone to aim for.
+  comments are the tone to aim for, and several of them record a bug that was
+  actually shipped. Keep those.
+- **Mock it before building it.** Every visual block here started as a
+  standalone `mockup/*.html`, and the two that were argued about in prose first
+  (the reach diagram, the reading spine) both changed shape once drawn. A mockup
+  settles in an afternoon what a discussion cannot.
+- **Say "unknown" rather than guessing.** A named setup callback's context keys,
+  a dangling reference, an `import`'s call sites — where the parser cannot know,
+  the UI shows `+?` or strikes the row through. A confident wrong answer is
+  worse than a visible gap, and the gaps are the tool's whole method.
 - Rust owns parsing; the frontend never sees a syntax tree, only an `Outline`.
 - Commands in `commands/` stay thin; logic lives in `db/`, `parse/`, `seed.rs`,
   `reconcile.rs`, `git.rs`.

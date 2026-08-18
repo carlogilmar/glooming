@@ -735,6 +735,8 @@
    * everything else.
    */
   const dimming = $derived(focus.active && !showBlame && !query);
+  /** In a guided reading the file should recede further — you are being led. */
+  const guided = $derived(focus.reading && dimming);
 
   function onCodeClick(e: MouseEvent) {
     // A drag that selects text ends in a click; don't treat that as a click.
@@ -848,7 +850,7 @@
 
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div class="panebody" bind:this={body} onclick={onCodeClick} onkeydown={onCodeKey} onscroll={onScroll}>
-      <div class="code" class:focusing={dimming} style:font-size="{fontSize}px">
+      <div class="code" class:focusing={dimming} class:guided style:font-size="{fontSize}px">
         {#each highlighted as html, i}
           {@const n = i + 1}
           <div
@@ -859,6 +861,7 @@
             class:related={focus.isRelated(n)}
             class:spec={focus.isSpec(n)}
             class:docsel={focus.isDoc(n)}
+          class:leaving={focus.isLeaving(n)}
             class:docline={docLines.has(n)}
             class:cursor={focus.cursorLine === n}
             class:authored={showBlame && !!blameRows[i]}
@@ -1174,7 +1177,14 @@
     padding-right: 12px;
     transition:
       opacity 0.18s ease,
-      background 0.18s ease;
+      background 0.18s ease,
+      box-shadow 0.18s ease;
+  }
+  .code.guided .row {
+    transition:
+      opacity 0.35s ease,
+      background 0.35s ease,
+      box-shadow 0.35s ease;
   }
   .row .ln {
     width: 46px;
@@ -1335,8 +1345,25 @@
     opacity: 1;
     color: var(--mark);
   }
-  .code.focusing .row:not(.hit):not(.related):not(.spec):not(.docsel) {
+  .code.focusing .row:not(.hit):not(.related):not(.spec):not(.docsel):not(.leaving) {
     opacity: 0.32;
+  }
+  /* Deeper while a reading is driving: 32% is right for "show me this one
+     function", but a guided reading should push the rest further back. */
+  .code.guided .row:not(.hit):not(.related):not(.spec):not(.docsel):not(.leaving) {
+    opacity: 0.16;
+  }
+  /* The crossfade: the range you are leaving lingers at a lower weight while
+     the new one arrives, so for a beat you can see both. That overlap is what
+     makes a jump legible instead of a cut. */
+  .code .row.leaving {
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+    box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 30%, transparent);
+    opacity: 1;
+  }
+  .code .row.leaving .ln {
+    opacity: 0.8;
+    color: var(--accent);
   }
 
   .code .row.hit.head {

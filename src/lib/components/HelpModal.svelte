@@ -138,6 +138,35 @@
       ],
     },
     {
+      title: "Reading a file",
+      note:
+        "Write about the code and lgtm walks it for you. Any inline code naming a function in " +
+        "this file — `create_user/1` — becomes a reference, and `L30-34` points at plain lines. " +
+        "No new syntax, so the markdown still reads correctly pasted into a PR comment. " +
+        "Modules only: a config or a test suite is a directory, not a narrative.",
+      rows: [
+        {
+          action: "▷ Read",
+          what:
+            "Scroll the doc and the code follows your prose order — not the file's. The rest of " +
+            "the file recedes further than usual, and what you are leaving lingers for a beat so " +
+            "the jump reads as a connection rather than a cut",
+        },
+        {
+          action: "one step per paragraph",
+          what:
+            "The first reference in a paragraph is its step; later mentions stay clickable but " +
+            "don't re-trigger, so a paragraph naming three functions doesn't fire three jumps",
+        },
+        {
+          action: "a struck-through reference",
+          what:
+            "The function it names is gone from the file. It stays visible rather than quietly " +
+            "becoming plain text — you should see when code moves out from under your explanation",
+        },
+      ],
+    },
+    {
       title: "Other kinds of file",
       note:
         "A module is not the only shape a file comes in, and the blocks that suit one say nothing " +

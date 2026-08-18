@@ -32,6 +32,17 @@ class FocusStore {
   // ---- line cursor ----
   cursorLine = $state<number | null>(null);
 
+  // ---- scroll-driven reading ----
+  /** True while the doc's scroll position is driving the selection. */
+  reading = $state(false);
+  /**
+   * The ranges being left behind, held for a beat so the outgoing highlight
+   * overlaps the incoming one. Seeing both for a moment is what makes a jump
+   * legible instead of a cut.
+   */
+  leaving = $state<Span[]>([]);
+  private leaveTimer: ReturnType<typeof setTimeout> | null = null;
+
   get active(): boolean {
     return this.ranges.length > 0;
   }
@@ -77,6 +88,31 @@ class FocusStore {
 
   isDoc(n: number): boolean {
     return !!this.doc && n >= this.doc.start && n <= this.doc.end;
+  }
+
+  isLeaving(n: number): boolean {
+    return !this.contains(n) && inside(this.leaving, n);
+  }
+
+  /**
+   * Move to a step of a reading. Unlike `set` it never toggles — scrolling back
+   * onto a step you have already seen must show it again — and it stashes the
+   * outgoing ranges for the crossfade.
+   */
+  step(sig: string, ranges: Span[], spec: Span | null = null, doc: Span | null = null) {
+    if (this.ranges.length && sig !== this.sig) {
+      this.leaving = this.ranges;
+      if (this.leaveTimer) clearTimeout(this.leaveTimer);
+      this.leaveTimer = setTimeout(() => (this.leaving = []), 620);
+    }
+    this.select(sig, ranges, [], spec, doc);
+  }
+
+  /** Back to the resting state: the reading has not begun. */
+  rest() {
+    if (this.leaveTimer) clearTimeout(this.leaveTimer);
+    this.leaving = [];
+    this.clearFunction();
   }
 
   /** First line of any clause — the lines that get the breathing bar. */
@@ -150,6 +186,8 @@ class FocusStore {
 
   /** Esc: drop everything, so one keypress always gets you back to plain code. */
   clear() {
+    if (this.leaveTimer) clearTimeout(this.leaveTimer);
+    this.leaving = [];
     this.clearFunction();
     this.cursorLine = null;
   }

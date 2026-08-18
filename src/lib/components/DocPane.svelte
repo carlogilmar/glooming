@@ -22,6 +22,20 @@
 
   let editing = $state(false);
   let container = $state<HTMLDivElement | null>(null);
+  let body = $state<HTMLDivElement | null>(null);
+  let pane = $state<HTMLDivElement | null>(null);
+  let bandTop = $state(0);
+
+  // ---- scroll-driven reading ----------------------------------------------
+  // The doc is the text and the code pane is the sticky graphic, which is the
+  // exact geometry scrollytelling wants — so this is one wire, not a rewrite.
+  // Only for modules: a config or a test suite is a directory, not a narrative.
+  let reading = $state(false);
+  /** Paragraphs carrying a reference, in prose order — the steps. */
+  let steps = $state<HTMLElement[]>([]);
+  let activeStep = $state(-1);
+
+  const canRead = $derived(outline?.kind === "module");
 
   const md = $derived(createMarkdownIt(outline, filename));
   const html = $derived(md.render(markdown));
@@ -33,8 +47,11 @@
    * dropping a cursor on the line it happens to start at.
    */
   function selectBlock(target: HTMLElement): boolean {
+    // Inline references are here too: their span was already computed when the
+    // reference was resolved (clauses, plus the @spec and @doc above), and an
+    // `L30-34` reference has no function name to look up at all.
     const row = target.closest<HTMLElement>(
-      ".lgtm-settings [data-line], .lgtm-tests [data-line]",
+      ".lgtm-settings [data-line], .lgtm-tests [data-line], .doc code.ref[data-line]",
     );
     if (!row) return false;
 
@@ -50,7 +67,8 @@
     // Table rows, treemap tiles and the reach block's own functions are all the
     // same gesture — every one of them carries data-sig.
     const row = target.closest<HTMLElement>(
-      ".fnrow[data-line], .tm-tile[data-sig], .lgtm-deps .fn[data-sig], .lgtm-surface .row[data-sig]",
+      ".fnrow[data-line], .tm-tile[data-sig], .lgtm-deps .fn[data-sig], " +
+        ".lgtm-surface .row[data-sig]",
     );
     if (!row) return false;
     const sig = row.dataset.sig ?? "";
@@ -62,13 +80,17 @@
   // The rendered block is raw HTML, so rows are wired by delegation rather than
   // per-row handlers.
   function onClick(e: MouseEvent) {
-    if (selectBlock(e.target as HTMLElement)) return;
-    select(e.target as HTMLElement);
+    const target = e.target as HTMLElement;
+    if (selectBlock(target) || select(target)) alignReading();
   }
 
   function onKey(e: KeyboardEvent) {
     if (e.key !== "Enter" && e.key !== " ") return;
-    if (select(e.target as HTMLElement)) e.preventDefault();
+    const target = e.target as HTMLElement;
+    if (selectBlock(target) || select(target)) {
+      e.preventDefault();
+      alignReading();
+    }
   }
 
   // ---- the reach block ----------------------------------------------------
@@ -159,6 +181,164 @@
     neutralReach(host);
   }
 
+  /** The hand-over line, as a fraction of the pane — the scrollytelling convention. */
+  const TRIGGER = 0.38;
+
+  function triggerY(): number {
+    if (!body) return 0;
+    const box = body.getBoundingClientRect();
+    return box.top + box.height * TRIGGER;
+  }
+
+  /**
+   * Push the first step down so it starts just *below* the trigger.
+   *
+   * Measured rather than guessed: on a tall window the trigger line sits below
+   * the first paragraph or two at rest, and without this the reading opens
+   * already at step 2 — how far in depending on the monitor.
+   */
+  function sizeLead() {
+    if (!container || !body || !steps.length) return;
+
+    let lead = container.querySelector<HTMLElement>(".reading-lead");
+    let tail = container.querySelector<HTMLElement>(".reading-tail");
+    if (!lead) {
+      lead = document.createElement("div");
+      lead.className = "reading-lead";
+      steps[0].parentNode?.insertBefore(lead, steps[0]);
+    }
+    if (!tail) {
+      tail = document.createElement("div");
+      tail.className = "reading-tail";
+      container.appendChild(tail);
+    }
+
+    if (!reading) {
+      lead.style.height = "0px";
+      tail.style.height = "0px";
+      return;
+    }
+
+    const H = body.clientHeight;
+    const paneTop = body.getBoundingClientRect().top;
+
+    // Offset of the first step within the scrollable content — measured with
+    // the lead collapsed, and independent of where the reader currently is.
+    lead.style.height = "0px";
+    const firstOffset =
+      steps[0].getBoundingClientRect().top - paneTop + body.scrollTop;
+    lead.style.height = Math.max(0, H * TRIGGER + 16 - firstOffset) + "px";
+
+    // The last step has to be able to reach the trigger too. At the bottom of
+    // the scroll there must be at least (1 - TRIGGER) of a pane below its top,
+    // otherwise it simply never fires — and how badly depends on the window
+    // height, so a fixed fraction is not good enough.
+    const lastH = steps[steps.length - 1].getBoundingClientRect().height;
+    tail.style.height = Math.max(0, H * (1 - TRIGGER) - lastH) + "px";
+
+    bandTop = H * TRIGGER + (paneTop - (pane?.getBoundingClientRect().top ?? paneTop));
+  }
+
+  function stepAt(): number {
+    const line = triggerY();
+    let hit = -1;
+    steps.forEach((p, i) => {
+      if (p.getBoundingClientRect().top <= line) hit = i;
+    });
+    return hit;
+  }
+
+  let ticking = false;
+  function onDocScroll() {
+    if (!reading || ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => {
+      ticking = false;
+      const i = stepAt();
+      if (i === activeStep) return;
+      activeStep = i;
+
+      // Before the first paragraph reaches the trigger the reading has not
+      // begun: the file sits at rest rather than pre-armed on step one.
+      if (i < 0) {
+        focus.rest();
+        for (const p of steps) p.classList.remove("now");
+        return;
+      }
+      const ref = steps[i].querySelector<HTMLElement>("code.ref[data-line]");
+      if (!ref) return;
+      const start = parseInt(ref.dataset.line ?? "0", 10);
+      const end = parseInt(ref.dataset.end ?? "0", 10) || start;
+      if (start > 0) focus.step(ref.dataset.sig ?? `line ${start}`, [{ start, end }]);
+
+      // Only the paragraph is marked here. The chip is marked by the selection
+      // effect, keyed on focus.sig — one mechanism, so scrolling and clicking
+      // can never disagree about which reference is current.
+      steps.forEach((p, n) => p.classList.toggle("now", n === i));
+    });
+  }
+
+  /**
+   * Keep the reading in step with a click.
+   *
+   * Selecting something jumps the code, but leaves the doc wherever it was — so
+   * you are reading paragraph two while the code shows step four, and the next
+   * scroll event snaps back. Scrolling the matching paragraph up to the trigger
+   * makes the click a move within the reading rather than a detour out of it.
+   */
+  function alignReading() {
+    if (!reading || !body || !focus.active) return;
+
+    const i = steps.findIndex((p) =>
+      p.querySelector(`code.ref[data-sig="${CSS.escape(focus.sig)}"]`),
+    );
+    if (i < 0) return; // selected something the prose never mentions
+
+    const delta = steps[i].getBoundingClientRect().top - triggerY();
+    // +2 so the paragraph lands just *past* the line and the step registers.
+    body.scrollTo({ top: body.scrollTop + delta + 2, behavior: "smooth" });
+
+    activeStep = i;
+    steps.forEach((p, n) => p.classList.toggle("now", n === i));
+  }
+
+  function toggleReading() {
+    reading = !reading;
+    focus.reading = reading;
+    if (!reading) {
+      activeStep = -1;
+      focus.rest();
+    }
+    // Wait for the class change to land before measuring.
+    queueMicrotask(() => {
+      sizeLead();
+      activeStep = -2;
+      onDocScroll();
+    });
+  }
+
+  // Re-measure whenever the content, the mode or the window changes.
+  $effect(() => {
+    steps;
+    reading;
+    queueMicrotask(sizeLead);
+  });
+
+  $effect(() => {
+    const onResize = () => {
+      sizeLead();
+      activeStep = -2;
+      onDocScroll();
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  });
+
+  // Leaving the doc pane must not leave the app stuck in reading state.
+  $effect(() => () => {
+    focus.reading = false;
+  });
+
   // ---- treemap tooltip ----------------------------------------------------
   // Native <title> is slow to appear and unstyleable, and the tiles need a
   // label the moment the pointer lands on them.
@@ -182,6 +362,31 @@
     };
   }
 
+  /**
+   * After every render, find the paragraphs that carry a reference.
+   *
+   * **The first reference in a block is that block's step**; later ones in the
+   * same paragraph stay clickable but do not re-trigger. Without that rule a
+   * paragraph naming three functions fires three code scrolls inside about
+   * 60px of scrolling, and they step on each other.
+   */
+  $effect(() => {
+    html;
+    if (!container) {
+      steps = [];
+      return;
+    }
+    const found: HTMLElement[] = [];
+    for (const block of container.querySelectorAll<HTMLElement>("p, li, blockquote")) {
+      const refs = block.querySelectorAll<HTMLElement>("code.ref[data-line]");
+      if (!refs.length) continue;
+      block.classList.add("step");
+      refs.forEach((r, i) => r.classList.toggle("mention", i > 0));
+      found.push(block);
+    }
+    steps = found;
+  });
+
   // Mark the focused row, so both panes show the same selection — and repaint
   // the reach block, so a selection pins its connections. Depends on `html` too:
   // re-rendering the doc wipes these classes, and they have to be put back.
@@ -191,7 +396,8 @@
     if (!container) return;
 
     for (const el of container.querySelectorAll(
-      ".fnrow, .tm-tile, .lgtm-deps .fn, .lgtm-surface .row, .lgtm-tests [data-sig], .lgtm-settings [data-sig]",
+      ".fnrow, .tm-tile, .lgtm-deps .fn, .lgtm-surface .row, " +
+        ".lgtm-tests [data-sig], .lgtm-settings [data-sig], .doc code.ref[data-sig]",
     )) {
       el.classList.toggle("active", focus.active && (el as HTMLElement).dataset.sig === sig);
     }
@@ -200,7 +406,12 @@
   });
 </script>
 
-<div class="pane">
+<div class="pane" bind:this={pane}>
+  {#if reading}
+    <!-- Where one paragraph hands over to the next. Quiet on purpose: it makes
+         the mechanic legible without becoming a debug overlay. -->
+    <div class="band" style:top="{bandTop}px"></div>
+  {/if}
   <div class="panehead">
     {#if dirty}<span class="dot" title="unsaved"></span>{/if}
     <span>{filename ? `${filename}.md` : "no doc"}</span>
@@ -208,19 +419,42 @@
     {#if stale}
       <button class="btn icon warn" onclick={() => onreconcile?.()}>⟳ Code changed — reconcile</button>
     {/if}
+    {#if canRead && !editing && steps.length}
+      <button
+        class="btn icon"
+        class:primary={reading}
+        onclick={toggleReading}
+        title="Scroll the doc and the code follows your reading"
+      >
+        {reading ? "▶ Reading" : "▷ Read"}
+      </button>
+    {/if}
     <div class="toggle">
-      <button class:on={!editing} onclick={() => (editing = false)}>Preview</button>
-      <button class:on={editing} onclick={() => (editing = true)}>Edit</button>
+      <button
+        class:on={!editing}
+        onclick={() => {
+          editing = false;
+        }}>Preview</button
+      >
+      <button
+        class:on={editing}
+        onclick={() => {
+          // Scroll-driven state while typing is chaos.
+          editing = true;
+          if (reading) toggleReading();
+        }}>Edit</button
+      >
     </div>
   </div>
 
-  <div class="panebody">
+  <div class="panebody" bind:this={body} onscroll={onDocScroll}>
     {#if editing}
       <textarea class="raw" bind:value={markdown} spellcheck="false"></textarea>
     {:else}
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
       <div
         class="doc"
+        class:reading
         bind:this={container}
         onclick={onClick}
         onkeydown={onKey}
@@ -250,6 +484,16 @@
     min-width: 0;
     min-height: 0;
     height: 100%;
+    position: relative;
+  }
+  .band {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 0;
+    z-index: 3;
+    pointer-events: none;
+    border-top: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
   }
   .panehead {
     background: var(--doc-bg);
@@ -1414,5 +1658,55 @@
   :global(.lgtm-settings .kv.active .k) {
     color: var(--accent);
     font-weight: 600;
+  }
+
+  /* ---- scroll-driven reading ----
+     Inline code that names something in this file. No new syntax: the markdown
+     stays portable, which is why references are backticks and not `{{…}}`. */
+  :global(.doc code.ref) {
+    cursor: pointer;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--accent);
+    border-bottom: 1.5px solid transparent;
+    /* Deliberately NOT transitioning the fill. Fading it meant the outgoing
+       chip was still blue while the incoming one lit, so two references looked
+       current at once — which reads as a glitch. The overlap belongs in the
+       code pane, where it means something; here the hand-over is instant. */
+    transition: border-color 0.2s ease;
+  }
+  :global(.doc code.ref:hover) {
+    border-bottom-color: var(--accent);
+  }
+  :global(.doc code.ref.active) {
+    background: var(--accent);
+    color: #fff;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  /* A later mention in the same paragraph: still a link, not a step. */
+  :global(.doc code.ref.mention) {
+    background: transparent;
+    border: 1px dashed color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  /* The code moved out from under the explanation. Say so — never fall back to
+     plain text and lose the fact quietly. */
+  :global(.doc code.ref.broken) {
+    background: color-mix(in srgb, var(--priv) 12%, transparent);
+    color: var(--priv);
+    text-decoration: line-through;
+    cursor: not-allowed;
+  }
+
+  :global(.doc.reading p.step),
+  :global(.doc.reading li.step),
+  :global(.doc.reading blockquote.step) {
+    transition: opacity 0.35s ease;
+  }
+  :global(.doc.reading .step:not(.now)) {
+    opacity: 0.45;
+  }
+  :global(.reading-lead),
+  :global(.reading-tail) {
+    height: 0;
+    transition: height 0.2s ease;
   }
 </style>
