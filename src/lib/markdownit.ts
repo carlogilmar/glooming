@@ -10,6 +10,8 @@ import { renderTreemap } from "$lib/treemap";
 import { renderStats } from "$lib/stats";
 import { renderDeps } from "$lib/deps";
 import { renderSurface } from "$lib/surface";
+import { renderSettings } from "$lib/settings";
+import { renderTests } from "$lib/tests";
 import type { Outline } from "$lib/ipc";
 
 hljs.registerLanguage("elixir", elixir);
@@ -19,6 +21,8 @@ const TREEMAP_TAG = "lgtm:treemap";
 const STATS_TAG = "lgtm:stats";
 const DEPS_TAG = "lgtm:deps";
 const SURFACE_TAG = "lgtm:surface";
+const SETTINGS_TAG = "lgtm:settings";
+const TESTS_TAG = "lgtm:tests";
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"]/g, (c) =>
@@ -35,7 +39,7 @@ function escapeHtml(s: string): string {
  * `outline` is the ONLY live input: blocks carry their own data as text, and
  * the outline supplies just the line numbers rows and tiles jump to.
  */
-export function createMarkdownIt(outline: Outline | null): MarkdownIt {
+export function createMarkdownIt(outline: Outline | null, filename = ""): MarkdownIt {
   const md = new MarkdownIt({
     html: false,
     linkify: true,
@@ -65,6 +69,24 @@ export function createMarkdownIt(outline: Outline | null): MarkdownIt {
     if (info.startsWith(STATS_TAG)) {
       try {
         return renderStats(token.content);
+      } catch {
+        return defaultFence(tokens, idx, opts, env, self);
+      }
+    }
+
+    // ```lgtm:settings — a config script's tree, and where each value comes from.
+    if (info.startsWith(SETTINGS_TAG)) {
+      try {
+        return renderSettings(token.content, filename);
+      } catch {
+        return defaultFence(tokens, idx, opts, env, self);
+      }
+    }
+
+    // ```lgtm:tests — describes, setups and tests.
+    if (info.startsWith(TESTS_TAG)) {
+      try {
+        return renderTests(token.content, outline?.tests?.module ?? "");
       } catch {
         return defaultFence(tokens, idx, opts, env, self);
       }

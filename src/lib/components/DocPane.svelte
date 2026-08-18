@@ -23,8 +23,28 @@
   let editing = $state(false);
   let container = $state<HTMLDivElement | null>(null);
 
-  const md = $derived(createMarkdownIt(outline));
+  const md = $derived(createMarkdownIt(outline, filename));
   const html = $derived(md.render(markdown));
+
+  /**
+   * Settings and test rows aren't functions, but they are still *blocks* — a
+   * test, a describe, a setup, a multi-line setting. Clicking one selects its
+   * whole span in the code, the same as clicking a function does, rather than
+   * dropping a cursor on the line it happens to start at.
+   */
+  function selectBlock(target: HTMLElement): boolean {
+    const row = target.closest<HTMLElement>(
+      ".lgtm-settings [data-line], .lgtm-tests [data-line]",
+    );
+    if (!row) return false;
+
+    const start = parseInt(row.dataset.line ?? "0", 10);
+    if (start <= 0) return true;
+    const end = parseInt(row.dataset.end ?? String(start), 10) || start;
+
+    focus.set(row.dataset.sig ?? `line ${start}`, [{ start, end }]);
+    return true;
+  }
 
   function select(target: HTMLElement) {
     // Table rows, treemap tiles and the reach block's own functions are all the
@@ -42,6 +62,7 @@
   // The rendered block is raw HTML, so rows are wired by delegation rather than
   // per-row handlers.
   function onClick(e: MouseEvent) {
+    if (selectBlock(e.target as HTMLElement)) return;
     select(e.target as HTMLElement);
   }
 
@@ -170,7 +191,7 @@
     if (!container) return;
 
     for (const el of container.querySelectorAll(
-      ".fnrow, .tm-tile, .lgtm-deps .fn, .lgtm-surface .row",
+      ".fnrow, .tm-tile, .lgtm-deps .fn, .lgtm-surface .row, .lgtm-tests [data-sig], .lgtm-settings [data-sig]",
     )) {
       el.classList.toggle("active", focus.active && (el as HTMLElement).dataset.sig === sig);
     }
@@ -1015,5 +1036,383 @@
     font-size: 12px;
     font-style: italic;
     margin: 0;
+  }
+
+  /* ---- the lgtm:settings block ----
+     A config has no functions, so no chart — the value is the grouping plus one
+     marking: which values come from the environment. Ported from
+     mockup/kinds.html. */
+  :global(.lgtm-settings) {
+    border: 1px solid var(--doc-line);
+    border-radius: 8px;
+    background: var(--code-bg);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    margin: 0 0 22px;
+  }
+  :global(.lgtm-settings.empty),
+  :global(.lgtm-tests.empty) {
+    padding: 18px;
+    color: var(--fg-faint);
+    font-size: 12.5px;
+  }
+  :global(.lgtm-settings > header),
+  :global(.lgtm-tests > header) {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--line-soft);
+    background: var(--bg-inset);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+  }
+  :global(.lgtm-settings > header .tag),
+  :global(.lgtm-tests > header .tag) {
+    font-family: var(--mono);
+    color: var(--mark);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  :global(.lgtm-settings > header .count),
+  :global(.lgtm-tests > header .count) {
+    margin-left: auto;
+    font-family: var(--mono);
+  }
+  :global(.lgtm-settings > footer) {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    border-top: 1px solid var(--line-soft);
+    background: var(--bg-inset);
+    font-size: 11px;
+    color: var(--fg-dim);
+  }
+  :global(.lgtm-settings > footer .lbl) {
+    color: var(--fg-faint);
+  }
+  :global(.lgtm-settings > footer .path) {
+    font-family: var(--mono);
+  }
+  :global(.lgtm-settings > footer .path b) {
+    color: var(--fg);
+  }
+  :global(.lgtm-settings > footer .wins) {
+    margin-left: auto;
+    color: var(--fg-faint);
+  }
+
+  :global(.lgtm-settings .grp) {
+    border-bottom: 1px solid var(--line-soft);
+  }
+  :global(.lgtm-settings .grp:last-child) {
+    border-bottom: 0;
+  }
+  :global(.lgtm-settings .grp > .head) {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 8px 12px 6px;
+    background: var(--bg-raised);
+    cursor: pointer;
+  }
+  :global(.lgtm-settings .grp > .head .app) {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  :global(.lgtm-settings .grp > .head .target) {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--fg);
+  }
+  :global(.lgtm-settings .grp > .head .sep) {
+    color: var(--fg-faint);
+  }
+  :global(.lgtm-settings .grp > .head .envn) {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--priv);
+  }
+  :global(.lgtm-settings .grp > .head .n) {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--fg-faint);
+  }
+
+  :global(.lgtm-settings .kv) {
+    display: grid;
+    grid-template-columns: minmax(140px, 34%) 1fr;
+    gap: 10px;
+    padding: 4px 12px 4px 22px;
+    align-items: baseline;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+  }
+  :global(.lgtm-settings .kv:hover) {
+    background: var(--bg-inset);
+    border-left-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  :global(.lgtm-settings .kv .k) {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--fg-dim);
+  }
+  :global(.lgtm-settings .kv .v) {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* The finding: deploy-time values stand out from baked-in ones. */
+  :global(.lgtm-settings .kv.fromenv .v) {
+    color: var(--priv);
+  }
+  :global(.lgtm-settings .kv .from) {
+    font-size: 9px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--priv);
+    margin-right: 5px;
+  }
+  :global(.lgtm-settings .kv.secret .v) {
+    color: var(--fg-faint);
+    font-style: italic;
+  }
+
+  /* ---- the lgtm:tests block ---- */
+  :global(.lgtm-tests) {
+    border: 1px solid var(--doc-line);
+    border-radius: 8px;
+    background: var(--code-bg);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    margin: 0 0 22px;
+  }
+
+  /* setup is infrastructure, not a test — violet, like every other meta thing */
+  :global(.lgtm-tests .modsetup) {
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-inset);
+    padding-bottom: 4px;
+  }
+  :global(.lgtm-tests .scopelbl) {
+    padding: 7px 12px 4px;
+    font-size: 9.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+  }
+  :global(.lgtm-tests .su) {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    padding: 3px 12px;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+  }
+  :global(.lgtm-tests .su.desc) {
+    padding-left: 24px;
+  }
+  :global(.lgtm-tests .su:hover) {
+    background: var(--bg-raised);
+    border-left-color: color-mix(in srgb, var(--mark) 55%, transparent);
+  }
+  :global(.lgtm-tests .su .gear),
+  :global(.lgtm-tests .ctx .gear) {
+    color: var(--mark);
+    font-size: 11px;
+  }
+  :global(.lgtm-tests .su .kind) {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--mark);
+  }
+  :global(.lgtm-tests .su .lbl) {
+    font-size: 10px;
+    color: var(--fg-faint);
+  }
+  :global(.lgtm-tests .key) {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--fg);
+    background: color-mix(in srgb, var(--mark) 12%, transparent);
+    border-radius: 3px;
+    padding: 0 4px;
+    margin-right: 3px;
+  }
+  :global(.lgtm-tests .named) {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--fg-dim);
+  }
+  :global(.lgtm-tests .unknown) {
+    font-size: 10.5px;
+    color: var(--fg-faint);
+    font-style: italic;
+  }
+  :global(.lgtm-tests .su .spacer) {
+    flex: 1;
+  }
+  :global(.lgtm-tests .su .ln),
+  :global(.lgtm-tests .t .ln) {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-faint);
+    flex: none;
+  }
+
+  /* what a describe's tests actually start with */
+  :global(.lgtm-tests .ctx) {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    flex: none;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-faint);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 1px 7px;
+  }
+
+  :global(.lgtm-tests .desc) {
+    border-bottom: 1px solid var(--line-soft);
+  }
+  :global(.lgtm-tests .desc:last-child) {
+    border-bottom: 0;
+  }
+  :global(.lgtm-tests .desc > .head) {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    cursor: pointer;
+    background: var(--bg-raised);
+  }
+  :global(.lgtm-tests .desc > .head:hover) {
+    background: var(--bg-inset);
+  }
+  :global(.lgtm-tests .desc > .head .name) {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--fg);
+  }
+  :global(.lgtm-tests .desc > .head .name.loose) {
+    color: var(--fg-faint);
+  }
+  :global(.lgtm-tests .desc > .head .name .q) {
+    color: var(--fg-faint);
+  }
+  :global(.lgtm-tests .desc > .head .n) {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--fg-faint);
+  }
+
+  /* one square per test, shaded by how much it asserts */
+  :global(.lgtm-tests .strip) {
+    display: flex;
+    gap: 3px;
+    flex: none;
+  }
+  :global(.lgtm-tests .strip i) {
+    width: 11px;
+    height: 11px;
+    border-radius: 2px;
+    display: block;
+    background: var(--pub);
+  }
+  :global(.lgtm-tests .strip i.a1) {
+    opacity: 0.28;
+  }
+  :global(.lgtm-tests .strip i.a2) {
+    opacity: 0.55;
+  }
+  :global(.lgtm-tests .strip i.a3) {
+    opacity: 1;
+  }
+  :global(.lgtm-tests .strip i.tagged) {
+    box-shadow: inset 0 0 0 1.5px var(--priv);
+  }
+  :global(.lgtm-tests .strip i.skipped) {
+    background: var(--fg-faint);
+    opacity: 0.35;
+  }
+
+  :global(.lgtm-tests .tests) {
+    padding: 2px 0 6px;
+  }
+  :global(.lgtm-tests .t) {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 4px 12px 4px 24px;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+  }
+  :global(.lgtm-tests .t:hover) {
+    background: var(--bg-inset);
+    border-left-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  :global(.lgtm-tests .t .dot) {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--pub);
+    flex: none;
+    align-self: center;
+  }
+  :global(.lgtm-tests .t.skipped .dot) {
+    background: var(--fg-faint);
+  }
+  :global(.lgtm-tests .t .name) {
+    font-size: 12px;
+    color: var(--fg-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  :global(.lgtm-tests .t .badge) {
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--priv);
+    border: 1px solid color-mix(in srgb, var(--priv) 40%, transparent);
+    border-radius: 999px;
+    padding: 0 5px;
+    white-space: nowrap;
+    flex: none;
+  }
+  :global(.lgtm-tests .t .spacer) {
+    flex: 1;
+  }
+  :global(.lgtm-tests .t .as) {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-faint);
+    flex: none;
+  }
+
+  /* A selected test / describe / setup / setting, marked the same way a
+     selected function row is. */
+  :global(.lgtm-tests [data-sig].active),
+  :global(.lgtm-settings [data-sig].active) {
+    background: var(--sel);
+    border-left-color: var(--accent);
+  }
+  :global(.lgtm-tests .t.active .name),
+  :global(.lgtm-tests .desc > .head.active .name),
+  :global(.lgtm-settings .kv.active .k) {
+    color: var(--accent);
+    font-weight: 600;
   }
 </style>

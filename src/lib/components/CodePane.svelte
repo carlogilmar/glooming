@@ -122,8 +122,20 @@
     return colorModules(html)
       .split("\n")
       .map((lineHtml, i) => {
-        const def = defLines.get(i + 1);
-        return def ? markDefName(lineHtml, def.name, def.sig) : lineHtml;
+        const n = i + 1;
+        const def = defLines.get(n);
+        if (def) return markWord(lineHtml, def.name, `data-sig="${def.sig}"`);
+
+        const block = blockLines.get(n);
+        if (block) {
+          const label = block.label.replace(/"/g, "&quot;");
+          return markWord(
+            lineHtml,
+            block.word,
+            `data-start="${block.start}" data-end="${block.end}" data-label="${label}"`,
+          );
+        }
+        return lineHtml;
       });
   });
 
@@ -298,34 +310,65 @@
   });
 
   /**
-   * Wrap the defined name on a `def` line in a click target.
+   * Wrap the first occurrence of a word on a line in a click target.
    *
    * Tag-aware, like colorModules: split on tags and only rewrite text, so the
-   * wrapper nests inside whatever span hljs already put the name in rather than
-   * breaking it. Only the first occurrence is wrapped — on a def line that is
-   * always the name being defined.
+   * wrapper nests inside whatever span hljs already put the word in rather than
+   * breaking it. Only the first occurrence is wrapped — on a `def` line that is
+   * always the name being defined, and on a `test` line it is always the
+   * keyword opening the block.
    */
-  function markDefName(html: string, name: string, sig: string): string {
+  function markWord(html: string, word: string, attrs: string): string {
     const parts = html.split(/(<[^>]+>)/);
     let done = false;
 
     return parts
       .map((part) => {
         if (done || part.startsWith("<")) return part;
-        // `(?![\w!?])` stops `get_user` matching inside `get_user!`.
-        const re = new RegExp(`(^|[^\\w])(${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})(?![\\w!?])`);
+        // `(?![\w!?])` stops `get_user` matching inside `get_user!`, and
+        // `setup` matching inside `setup_all`.
+        const re = new RegExp(`(^|[^\\w])(${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})(?![\\w!?])`);
         const m = re.exec(part);
         if (!m) return part;
         done = true;
         return (
           part.slice(0, m.index) +
           m[1] +
-          `<span class="fname" data-sig="${sig}" role="button" tabindex="0">${m[2]}</span>` +
+          `<span class="fname" ${attrs} role="button" tabindex="0">${m[2]}</span>` +
           part.slice(m.index + m[0].length)
         );
       })
       .join("");
   }
+
+  /**
+   * The other kinds of block a line can open — `test`, `describe`, `setup`,
+   * `config` — keyed by the line the keyword sits on. A test file has no
+   * functions, so without this its code pane would have nothing to click.
+   */
+  const blockLines = $derived.by(() => {
+    const map = new Map<number, { word: string; label: string; start: number; end: number }>();
+
+    for (const s of outline?.tests?.setups ?? []) {
+      map.set(s.line, { word: s.kind, label: s.kind, start: s.line, end: s.endLine });
+    }
+    for (const d of outline?.tests?.describes ?? []) {
+      if (d.name) {
+        map.set(d.line, { word: "describe", label: d.name, start: d.line, end: d.endLine });
+      }
+      for (const s of d.setups) {
+        map.set(s.line, { word: s.kind, label: s.kind, start: s.line, end: s.endLine });
+      }
+      for (const t of d.tests) {
+        map.set(t.line, { word: "test", label: t.name, start: t.line, end: t.endLine });
+      }
+    }
+    for (const g of outline?.config?.groups ?? []) {
+      const label = g.target ? `${g.app} ${g.target}` : g.app;
+      map.set(g.line, { word: "config", label, start: g.line, end: g.endLine });
+    }
+    return map;
+  });
 
   /**
    * Lines occupied by `@moduledoc` / `@doc`, so documentation reads as prose
@@ -709,6 +752,18 @@
       }
     }
 
+    // `test`, `describe`, `setup`, `config` — not functions, but still blocks,
+    // and selecting one covers the whole thing.
+    const block = (e.target as HTMLElement).closest<HTMLElement>(".fname[data-start]");
+    if (block) {
+      const start = parseInt(block.dataset.start ?? "0", 10);
+      const end = parseInt(block.dataset.end ?? "0", 10) || start;
+      if (start > 0) {
+        focus.set(block.dataset.label ?? `line ${start}`, [{ start, end }]);
+        return;
+      }
+    }
+
     const row = (e.target as HTMLElement).closest<HTMLElement>(".row[data-line]");
     if (!row) {
       focus.clear();
@@ -721,12 +776,18 @@
 
   function onCodeKey(e: KeyboardEvent) {
     if (e.key !== "Enter" && e.key !== " ") return;
-    const name = (e.target as HTMLElement).closest<HTMLElement>(".fname[data-sig]");
-    if (!name) return;
+    const el = (e.target as HTMLElement).closest<HTMLElement>(".fname");
+    if (!el) return;
     e.preventDefault();
-    const sig = name.dataset.sig ?? "";
-    const at = locate(sig, outline?.modules?.[0] ?? null);
-    if (at) focus.set(sig, at.ranges, at.related, at.spec, at.doc);
+
+    if (el.dataset.sig) {
+      const at = locate(el.dataset.sig, outline?.modules?.[0] ?? null);
+      if (at) focus.set(el.dataset.sig, at.ranges, at.related, at.spec, at.doc);
+      return;
+    }
+    const start = parseInt(el.dataset.start ?? "0", 10);
+    const end = parseInt(el.dataset.end ?? "0", 10) || start;
+    if (start > 0) focus.set(el.dataset.label ?? `line ${start}`, [{ start, end }]);
   }
 </script>
 

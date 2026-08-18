@@ -18,7 +18,11 @@ use tauri::State;
 #[tauri::command]
 pub fn seed_doc(path: String, outline: Outline, source: String) -> String {
     let history = crate::git::history(Path::new(&path)).unwrap_or_default();
-    seed::seed_markdown(&outline, &source, &history)
+    let filename = Path::new(&path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    seed::seed_markdown(&outline, &source, &history, &filename)
 }
 
 #[allow(clippy::too_many_arguments)]

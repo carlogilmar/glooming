@@ -21,6 +21,12 @@
           what: "Selects the whole function — every clause, its @spec and its @doc — and dims the rest of the file",
         },
         {
+          action: "click test / describe / setup / config",
+          what:
+            "In a test suite or a config script the same gesture works on the keyword opening a " +
+            "block, and selects the whole block",
+        },
+        {
           action: "click any other line",
           what: "Puts the review cursor on that line, for reading one line at a time. Click it again to drop it",
         },
@@ -128,6 +134,32 @@
         {
           action: "Code changed — reconcile",
           what: "Appears when the file on disk no longer matches this reading. Merging keeps every word you wrote",
+        },
+      ],
+    },
+    {
+      title: "Other kinds of file",
+      note:
+        "A module is not the only shape a file comes in, and the blocks that suit one say nothing " +
+        "about another — so lgtm seeds different blocks depending on what it finds.",
+      rows: [
+        {
+          action: "a config script",
+          what:
+            "Settings grouped by app, with every value marked as literal or read from the " +
+            "environment. A hardcoded credential is reported without its value",
+        },
+        {
+          action: "a test suite",
+          what:
+            "Describes with a strip of one square per test, shaded by how much it asserts, plus " +
+            "the setup each group inherits and the context its tests start with",
+        },
+        {
+          action: "anything else",
+          what:
+            "A script, a one-off .exs, a file that doesn't parse — a title, the size, and a blank " +
+            "page. No error, and no empty blocks pretending there was something to say",
         },
       ],
     },

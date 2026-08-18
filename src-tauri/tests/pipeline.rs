@@ -71,7 +71,7 @@ fn normalize_reports_both_clauses() {
 
 #[test]
 fn the_seeded_doc_is_ready_to_write_into() {
-    let md = seed::seed_markdown(&outline(), FIXTURE, &FileHistory::default());
+    let md = seed::seed_markdown(&outline(), FIXTURE, &FileHistory::default(), "accounts.ex");
 
     assert!(md.starts_with("# MyApp.Accounts\n"));
     assert!(md.contains("Reads and writes for the `users` table."));
@@ -111,7 +111,7 @@ fn a_later_edit_to_the_file_never_costs_you_prose() {
     }
 
     let written = explain(
-        &seed::seed_markdown(&outline(), FIXTURE, &FileHistory::default()),
+        &seed::seed_markdown(&outline(), FIXTURE, &FileHistory::default(), "accounts.ex"),
         "create_user/1",
         " Entry point. Validates, then inserts.",
     );
@@ -174,3 +174,21 @@ fn end_lines_span_the_whole_function_body() {
 
 
 
+
+
+/// Reconcile touches `lgtm:functions` and nothing else. A config or test doc
+/// has no such block, so re-parsing must pass it through untouched rather than
+/// mangling blocks it doesn't understand.
+#[test]
+fn reconciling_a_config_doc_changes_nothing() {
+    let cfg = "import Config\n\nconfig :my_app, MyApp.Repo, pool_size: 10\n";
+    let outline = parse::parse(cfg, "elixir").unwrap();
+    let md = seed::seed_markdown(&outline, cfg, &FileHistory::default(), "dev.exs");
+
+    assert!(md.contains("```lgtm:settings"));
+    assert_eq!(
+        lgtm_lib::reconcile::reconcile_markdown(&md, &outline),
+        md,
+        "a doc with no functions block is passed through verbatim"
+    );
+}

@@ -49,9 +49,74 @@ export interface ModuleInfo {
   deps: Dep[];
 }
 
+export type FileKind = "module" | "config" | "test" | "plain";
+
+export type ValueSource =
+  | { kind: "literal"; value: string }
+  | { kind: "env"; var: string; required: boolean }
+  | { kind: "secret" };
+
+export interface Setting {
+  key: string;
+  line: number;
+  endLine: number;
+  source: ValueSource;
+}
+
+export interface ConfigGroup {
+  app: string;
+  target: string | null;
+  line: number;
+  endLine: number;
+  settings: Setting[];
+}
+
+export interface ConfigInfo {
+  groups: ConfigGroup[];
+  imports: string[];
+}
+
+export interface SetupInfo {
+  kind: string;
+  line: number;
+  endLine: number;
+  named: string | null;
+  /** `null` means unknown — a named callback defined elsewhere. */
+  provides: string[] | null;
+}
+
+export interface TestCase {
+  name: string;
+  line: number;
+  endLine: number;
+  asserts: number;
+  tags: string[];
+  skipped: boolean;
+}
+
+export interface Describe {
+  name: string | null;
+  line: number;
+  endLine: number;
+  setups: SetupInfo[];
+  tests: TestCase[];
+}
+
+export interface TestInfo {
+  module: string;
+  caseTemplate: string | null;
+  isAsync: boolean;
+  setups: SetupInfo[];
+  describes: Describe[];
+}
+
 export interface Outline {
   lang: string;
+  /** Which blocks this file's doc gets — a config has no functions to size. */
+  kind: FileKind;
   modules: ModuleInfo[];
+  config: ConfigInfo | null;
+  tests: TestInfo | null;
 }
 
 export interface DocSummary {

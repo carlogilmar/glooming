@@ -50,9 +50,52 @@ function ago(value: string | undefined): string | null {
   return `${Math.floor(days / 365)} years ago`;
 }
 
-function tile(value: string, label: string, sub?: string | null): string {
+/**
+ * Labels for the keys the seeder writes. A file kind decides which of these
+ * appear — a config has no `public`, a test suite has no `settings` — so the
+ * renderer formats whatever it finds rather than expecting a fixed set. An
+ * unknown key still renders, with the key itself as the label, because the
+ * block is yours to edit.
+ */
+const LABELS: Record<string, string> = {
+  lines: "lines",
+  code: "code",
+  public: "public fns",
+  private: "private fns",
+  // config
+  apps: "apps",
+  groups: "groups",
+  settings: "settings",
+  fromenv: "from env",
+  literal: "literal",
+  imports: "imports",
+  // tests
+  tests: "tests",
+  describes: "describes",
+  assertions: "assertions",
+  setups: "setups",
+  async: "async",
+  case: "case",
+  tagged: "tagged",
+  // git
+  commits: "commits",
+  authors: "authors",
+  created: "created",
+  updated: "last touched",
+};
+
+/** Keys worth colouring: something to act on rather than just to know. */
+const WARN = new Set(["fromenv", "tagged"]);
+
+/** `1 (1 required)` → value `1`, sub `1 required`. */
+function split(raw: string): { value: string; sub: string | null } {
+  const m = /^(.*?)\s*\(([^)]*)\)\s*$/.exec(raw);
+  return m ? { value: m[1].trim(), sub: m[2].trim() } : { value: raw, sub: null };
+}
+
+function tile(value: string, label: string, sub?: string | null, warn = false): string {
   return (
-    `<div class="stat">` +
+    `<div class="stat${warn ? " warn" : ""}">` +
     `<b>${esc(value)}</b>` +
     `<span class="lbl">${esc(label)}</span>` +
     (sub ? `<span class="sub">${esc(sub)}</span>` : "") +
@@ -60,36 +103,48 @@ function tile(value: string, label: string, sub?: string | null): string {
   );
 }
 
-function plural(value: string | undefined, one: string, many: string): string {
-  return value === "1" ? one : many;
-}
-
 export function renderStats(body: string): string {
   const s = parseStats(body);
-  if (!Object.keys(s).length) {
+  const keys = Object.keys(s);
+  if (!keys.length) {
     return `<div class="lgtm-stats empty">Empty stats block — re-seed this doc, or write <code>lines: 120</code> style lines here.</div>`;
   }
 
   const tiles: string[] = [];
-  if (s.lines) tiles.push(tile(s.lines, "lines", s.code ? `${s.code} non-blank` : null));
-  if (s.public) tiles.push(tile(s.public, plural(s.public, "public fn", "public fns")));
-  if (s.private) tiles.push(tile(s.private, plural(s.private, "private fn", "private fns")));
+  const seen = new Set<string>();
 
-  const authors = s.authors ? s.authors.split(",").map((a) => a.trim()).filter(Boolean) : [];
-  if (authors.length) {
-    // The first name is the busiest committer — who you'd actually ask.
-    tiles.push(
-      tile(
-        String(authors.length),
-        authors.length === 1 ? "author" : "authors",
-        authors[0] ?? null,
-      ),
-    );
+  for (const key of keys) {
+    // `code` and `authors` ride along with another tile rather than taking one
+    // of their own.
+    if (key === "code" || key === "authors" || seen.has(key)) continue;
+
+    const { value, sub } = split(s[key]);
+    const label = LABELS[key] ?? key;
+
+    if (key === "lines") {
+      tiles.push(tile(value, label, s.code ? `${s.code} non-blank` : sub));
+      continue;
+    }
+    if (key === "commits") {
+      // The busiest committer is who you'd actually ask about this file.
+      const authors = (s.authors ?? "").split(",").map((a) => a.trim()).filter(Boolean);
+      if (authors.length) {
+        tiles.push(
+          tile(String(authors.length), authors.length === 1 ? "author" : "authors", authors[0]),
+        );
+      }
+      tiles.push(tile(value, label, sub));
+      continue;
+    }
+    if (key === "created" || key === "updated") {
+      tiles.push(tile(shortDate(value) ?? value, label, key === "updated" ? ago(value) : sub));
+      continue;
+    }
+    tiles.push(tile(value, label, sub, WARN.has(key)));
+    seen.add(key);
   }
-  if (s.commits) tiles.push(tile(s.commits, plural(s.commits, "commit", "commits")));
-  if (s.created) tiles.push(tile(shortDate(s.created) ?? "—", "created"));
-  if (s.updated) tiles.push(tile(shortDate(s.updated) ?? "—", "last touched", ago(s.updated)));
 
+  const authors = (s.authors ?? "").split(",").map((a) => a.trim()).filter(Boolean);
   const who =
     authors.length > 1
       ? `<div class="who">Touched by ${authors.map(esc).join(", ")}</div>`

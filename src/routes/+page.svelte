@@ -144,7 +144,11 @@
     doc = await ipc.createDoc({
       path: opened.path,
       lang: opened.lang ?? "text",
-      title: opened.outline?.modules?.[0]?.name ?? opened.filename,
+      // A test suite names itself; a config or a script has only its filename.
+      title:
+        opened.outline?.tests?.module ??
+        opened.outline?.modules?.[0]?.name ??
+        opened.filename,
       branch: opened.branch,
       markdown: seeded,
       source: opened.source,
@@ -322,7 +326,7 @@
     }
     if (meta && e.key === "p") {
       e.preventDefault();
-      if (outline) showPalette = !showPalette;
+      if (outline?.modules?.[0]?.functions.length) showPalette = !showPalette;
       return;
     }
 
@@ -492,17 +496,26 @@
 
     <div class="status">
       <span>
-        {#if outline}
+        {#if outline?.kind === "config"}
+          tree-sitter-{file.lang} · config · {outline.config?.groups.length ?? 0} groups
+        {:else if outline?.kind === "test"}
+          tree-sitter-{file.lang} · test suite · {outline.tests?.describes.reduce(
+            (n, d) => n + d.tests.length,
+            0,
+          ) ?? 0} tests
+        {:else if outline?.kind === "module"}
           tree-sitter-{file.lang} · {outline.modules.reduce((n, m) => n + m.functions.length, 0)} functions
+        {:else if outline}
+          tree-sitter-{file.lang} · no module, config or test suite here
         {:else}
           no outline for this file type
         {/if}
       </span>
-      {#if moduleCount > 1}
+      {#if outline?.kind === "module" && moduleCount > 1}
         <span class="warn">{moduleCount} modules in this file — seeded from the first</span>
       {/if}
       <span class="spacer"></span>
-      {#if outline}
+      {#if outline?.modules?.[0]?.functions.length}
         <span class="keys">
           <kbd>/</kbd> find · <kbd>⌘P</kbd> jump · <kbd>[</kbd><kbd>]</kbd> fns ·
           <kbd>j</kbd><kbd>k</kbd><kbd>gg</kbd><kbd>G</kbd> vim · <kbd>?</kbd> help

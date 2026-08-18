@@ -5,7 +5,9 @@
 //! unexplained function renders as a ghost "explain…" placeholder.
 
 use crate::db::models::FileHistory;
-use crate::parse::{ModuleInfo, Outline, Visibility};
+use crate::parse::{
+    ConfigInfo, FileKind, ModuleInfo, Outline, SetupInfo, TestInfo, ValueSource, Visibility,
+};
 
 /// The fence tag the frontend renderer looks for.
 pub const BLOCK_TAG: &str = "lgtm:functions";
@@ -22,6 +24,10 @@ pub const DEPS_TAG: &str = "lgtm:deps";
 /// The module's surface as a directory: public and private, sorted by name.
 /// Distinct from `lgtm:functions`, which is where *you* write.
 pub const SURFACE_TAG: &str = "lgtm:surface";
+/// A config script's settings, grouped by app.
+pub const SETTINGS_TAG: &str = "lgtm:settings";
+/// A test suite's describes, setups and tests.
+pub const TESTS_TAG: &str = "lgtm:tests";
 
 /// Build the whole starter doc.
 ///
@@ -29,9 +35,21 @@ pub const SURFACE_TAG: &str = "lgtm:surface";
 /// computed at render time: the markdown file is the data, so it stays
 /// readable as plain text, survives being copied anywhere, and can be edited
 /// by hand when you disagree with it.
-pub fn seed_markdown(outline: &Outline, source: &str, history: &FileHistory) -> String {
+pub fn seed_markdown(
+    outline: &Outline,
+    source: &str,
+    history: &FileHistory,
+    filename: &str,
+) -> String {
+    match outline.kind {
+        FileKind::Config => return seed_config(outline, source, history, filename),
+        FileKind::Test => return seed_test(outline, source, history),
+        FileKind::Plain => return seed_plain(source, history, filename),
+        FileKind::Module => {}
+    }
+
     let Some(module) = outline.modules.first() else {
-        return "# Untitled\n\n> _what is this file for?_\n".to_string();
+        return seed_plain(source, history, filename);
     };
     let mut out = format!("# {}\n\n", module.name);
 
@@ -71,6 +89,243 @@ pub fn seed_markdown(outline: &Outline, source: &str, history: &FileHistory) -> 
     out.push_str("## Explain\n\n");
     out.push_str(&functions_block(module));
     out.push_str("\n## Notes\n\n");
+    out
+}
+
+/// A config script. No functions, so no surface, treemap or reach — those
+/// blocks would all be empty, and an empty block reads as broken.
+fn seed_config(
+    outline: &Outline,
+    source: &str,
+    history: &FileHistory,
+    filename: &str,
+) -> String {
+    let config = outline.config.clone().unwrap_or_default();
+    let title = if filename.is_empty() { "Configuration" } else { filename };
+    let mut out = format!("# {title}\n\n> _what does this file configure?_\n\n");
+
+    out.push_str(&config_stats_block(&config, source, history));
+    out.push('\n');
+    out.push_str("## Settings\n\n");
+    out.push_str(&settings_block(&config, filename));
+    out.push_str("\n## Notes\n\n");
+    out
+}
+
+/// A test suite. Its structure is describes, setups and tests — none of which a
+/// plain module has, and none of the module blocks say anything about it.
+fn seed_test(outline: &Outline, source: &str, history: &FileHistory) -> String {
+    let tests = outline.tests.clone().unwrap_or_default();
+    let mut out = format!("# {}\n\n> _what does this suite cover?_\n\n", tests.module);
+
+    out.push_str(&test_stats_block(&tests, source, history));
+    out.push('\n');
+    out.push_str("## Tests\n\n");
+    out.push_str(&tests_block(&tests));
+    out.push_str("\n## Notes\n\n");
+    out
+}
+
+/// Anything else — a script, a one-off `.exs`, a file that didn't parse. A
+/// title, the size, and a blank page. No blocks, and above all no error.
+fn seed_plain(source: &str, history: &FileHistory, filename: &str) -> String {
+    let title = if filename.is_empty() { "Untitled" } else { filename };
+    let mut out = format!("# {title}\n\n> _what is this file for?_\n\n");
+    out.push_str(&stats_lines(
+        &[
+            ("lines", source.lines().count().to_string()),
+            (
+                "code",
+                source.lines().filter(|l| !l.trim().is_empty()).count().to_string(),
+            ),
+        ],
+        history,
+    ));
+    // Say why there are no blocks, so their absence reads as a fact about the
+    // file rather than as something broken.
+    out.push_str(
+        "\n_No module, config or test suite recognised in this file — nothing structural to \
+         show. The code is on the left; write whatever you need here._\n",
+    );
+    out.push_str("\n## Notes\n\n");
+    out
+}
+
+/// The shared tail of every stats block: the git facts, when there are any.
+fn stats_lines(rows: &[(&str, String)], history: &FileHistory) -> String {
+    let mut out = format!("```{STATS_TAG}\n");
+    for (k, v) in rows {
+        out.push_str(&format!("{k}: {v}\n"));
+    }
+    if history.commits > 0 {
+        out.push_str(&format!("commits: {}\n", history.commits));
+        if !history.authors.is_empty() {
+            out.push_str(&format!("authors: {}\n", history.authors.join(", ")));
+        }
+        if let Some(first) = &history.first {
+            out.push_str(&format!("created: {}\n", date_only(first)));
+        }
+        if let Some(last) = &history.last {
+            out.push_str(&format!("updated: {}\n", date_only(last)));
+        }
+    }
+    out.push_str("```\n");
+    out
+}
+
+fn config_stats_block(config: &ConfigInfo, source: &str, history: &FileHistory) -> String {
+    let all: Vec<_> = config.groups.iter().flat_map(|g| &g.settings).collect();
+    let env = all
+        .iter()
+        .filter(|s| matches!(s.source, ValueSource::Env { .. }))
+        .count();
+    let required = all
+        .iter()
+        .filter(|s| matches!(s.source, ValueSource::Env { required: true, .. }))
+        .count();
+    let masked = all
+        .iter()
+        .filter(|s| matches!(s.source, ValueSource::Secret))
+        .count();
+    let apps: std::collections::BTreeSet<_> = config.groups.iter().map(|g| &g.app).collect();
+
+    let mut rows = vec![
+        ("lines", source.lines().count().to_string()),
+        ("apps", apps.len().to_string()),
+        ("groups", config.groups.len().to_string()),
+        ("settings", all.len().to_string()),
+        ("fromEnv", format!("{env} ({required} required)")),
+        ("literal", format!("{} ({masked} masked)", all.len() - env)),
+    ];
+    if !config.imports.is_empty() {
+        rows.push(("imports", config.imports.join(", ")));
+    }
+    stats_lines(&rows, history)
+}
+
+fn test_stats_block(tests: &TestInfo, source: &str, history: &FileHistory) -> String {
+    let all: Vec<_> = tests.describes.iter().flat_map(|d| &d.tests).collect();
+    let asserts: u32 = all.iter().map(|t| t.asserts).sum();
+    let named = tests.describes.iter().filter(|d| d.name.is_some()).count();
+    let setups = tests.setups.len() + tests.describes.iter().map(|d| d.setups.len()).sum::<usize>();
+    let tags: std::collections::BTreeSet<_> =
+        all.iter().flat_map(|t| t.tags.iter()).cloned().collect();
+
+    let per = if all.is_empty() {
+        "0".to_string()
+    } else {
+        format!("{:.1}", f64::from(asserts) / all.len() as f64)
+    };
+
+    let mut rows = vec![
+        ("lines", source.lines().count().to_string()),
+        ("tests", all.len().to_string()),
+        ("describes", named.to_string()),
+        ("assertions", format!("{asserts} ({per} per test)")),
+        ("setups", format!("{setups} ({} module-wide)", tests.setups.len())),
+        ("async", tests.is_async.to_string()),
+    ];
+    if let Some(c) = &tests.case_template {
+        rows.push(("case", c.clone()));
+    }
+    if !tags.is_empty() {
+        rows.push((
+            "tagged",
+            tags.iter().map(|t| format!("@{t}")).collect::<Vec<_>>().join(", "),
+        ));
+    }
+    stats_lines(&rows, history)
+}
+
+/// The ```lgtm:settings block. Two levels by indent, like `lgtm:deps`: the
+/// group, then its keys with where each value comes from.
+pub fn settings_block(config: &ConfigInfo, filename: &str) -> String {
+    let mut out = format!("```{SETTINGS_TAG} file={filename}\n");
+
+    for g in &config.groups {
+        let target = g.target.as_deref().map(|t| format!(" {t}")).unwrap_or_default();
+        out.push_str(&format!("  {}{} : {}\n", g.app, target, span(g.line, g.end_line)));
+
+        let width = g.settings.iter().map(|s| s.key.len()).max().unwrap_or(0);
+        for s in &g.settings {
+            let key = &s.key;
+            let value = match &s.source {
+                ValueSource::Env { var, required } => {
+                    format!("env{} {var}", if *required { "!" } else { "" })
+                }
+                ValueSource::Secret => "secret".to_string(),
+                ValueSource::Literal { value } => format!("= {value}"),
+            };
+            out.push_str(&format!(
+                "    {key:width$} : {} {value}\n",
+                span(s.line, s.end_line)
+            ));
+        }
+    }
+
+    for i in &config.imports {
+        out.push_str(&format!("  import_config : {i}\n"));
+    }
+    out.push_str("```\n");
+    out
+}
+
+/// `12` when a block is one line, `12-40` when it spans several — so selecting
+/// a row can highlight the whole thing rather than just where it starts.
+fn span(start: u32, end: u32) -> String {
+    if end > start {
+        format!("{start}-{end}")
+    } else {
+        start.to_string()
+    }
+}
+
+fn setup_row(s: &SetupInfo, indent: &str) -> String {
+    let what = match (&s.named, &s.provides) {
+        (Some(n), _) => format!("runs :{n}"),
+        (None, Some(keys)) if !keys.is_empty() => {
+            keys.iter().map(|k| format!(":{k}")).collect::<Vec<_>>().join(" ")
+        }
+        (None, Some(_)) => "-".to_string(),
+        // Unknown, which is not the same as "provides nothing".
+        (None, None) => "?".to_string(),
+    };
+    format!("{indent}{} : {} {what}\n", s.kind, span(s.line, s.end_line))
+}
+
+/// The ```lgtm:tests block: module setups, then each describe with its own
+/// setups and tests.
+pub fn tests_block(tests: &TestInfo) -> String {
+    let mut out = format!("```{TESTS_TAG} module={}\n", tests.module);
+
+    for s in &tests.setups {
+        out.push_str(&setup_row(s, "  "));
+    }
+
+    for d in &tests.describes {
+        match &d.name {
+            Some(name) => {
+                out.push_str(&format!("  describe \"{name}\" : {}\n", span(d.line, d.end_line)))
+            }
+            None => out.push_str(&format!("  (no describe) : {}\n", span(d.line, d.end_line))),
+        }
+        for s in &d.setups {
+            out.push_str(&setup_row(s, "    "));
+        }
+
+        let width = d.tests.iter().map(|t| t.name.len()).max().unwrap_or(0);
+        for t in &d.tests {
+            let name = &t.name;
+            let tags: String = t.tags.iter().map(|g| format!(" @{g}")).collect();
+            out.push_str(&format!(
+                "    {name:width$} : {} {}{tags}\n",
+                span(t.line, t.end_line),
+                t.asserts
+            ));
+        }
+    }
+
+    out.push_str("```\n");
     out
 }
 
@@ -298,6 +553,7 @@ end
                 first: Some("2025-02-14T09:00:00+00:00".into()),
                 last: Some("2026-08-10T09:00:00+00:00".into()),
             },
+            "accounts.ex",
         )
     }
 
@@ -417,7 +673,7 @@ end
   defp normalize(a), do: Changeset.cast(a, %{}, [])
 end
 "#;
-        let md = seed_markdown(&elixir::parse(src).unwrap(), src, &FileHistory::default());
+        let md = seed_markdown(&elixir::parse(src).unwrap(), src, &FileHistory::default(), "accounts.ex");
         let block = md
             .split("```lgtm:deps")
             .nth(1)
@@ -437,7 +693,7 @@ end
     #[test]
     fn a_module_that_reaches_nothing_gets_no_reach_section() {
         let src = "defmodule MyApp.Pure do\n  def add(a, b), do: a + b\nend\n";
-        let md = seed_markdown(&elixir::parse(src).unwrap(), src, &FileHistory::default());
+        let md = seed_markdown(&elixir::parse(src).unwrap(), src, &FileHistory::default(), "accounts.ex");
         assert!(!md.contains("lgtm:deps"), "nothing to show, so no block:\n{md}");
         assert!(!md.contains("## Reach"));
     }
@@ -445,7 +701,7 @@ end
     #[test]
     fn a_file_with_no_module_still_seeds_something() {
         let outline = elixir::parse("x = 1\n").unwrap();
-        assert!(seed_markdown(&outline, "x = 1\n", &FileHistory::default()).starts_with("# Untitled"));
+        assert!(seed_markdown(&outline, "x = 1\n", &FileHistory::default(), "").starts_with("# Untitled"));
     }
 
     #[test]
@@ -481,9 +737,199 @@ end
 
     #[test]
     fn a_repo_less_file_omits_the_git_facts() {
-        let md = seed_markdown(&elixir::parse(SAMPLE).unwrap(), SAMPLE, &FileHistory::default());
+        let md = seed_markdown(&elixir::parse(SAMPLE).unwrap(), SAMPLE, &FileHistory::default(), "accounts.ex");
         assert!(md.contains("lines: "), "size still reported");
         assert!(!md.contains("commits:"), "no git, no git columns");
         assert!(!md.contains("authors:"));
+    }
+}
+
+#[cfg(test)]
+mod kind_tests {
+    use super::*;
+    use crate::parse;
+
+    fn seed(src: &str) -> String {
+        seed_markdown(
+            &parse::parse(src, "elixir").unwrap(),
+            src,
+            &FileHistory::default(),
+            "sample.exs",
+        )
+    }
+
+    fn block_of<'a>(md: &'a str, tag: &str) -> &'a str {
+        md.split(&format!("```{tag}"))
+            .nth(1)
+            .and_then(|b| b.split("```").next())
+            .unwrap_or_else(|| panic!("no {tag} block in:\n{md}"))
+    }
+
+    const CONFIG: &str = r#"import Config
+
+config :my_app, MyApp.Repo,
+  username: "postgres",
+  password: System.fetch_env!("DB_PASSWORD"),
+  signing_salt: "abc123"
+
+config :logger, :console, level: :debug
+
+import_config "dev.secret.exs"
+"#;
+
+    #[test]
+    fn a_config_seeds_settings_and_nothing_about_functions() {
+        let md = seed(CONFIG);
+        assert!(md.contains("```lgtm:settings"), "{md}");
+        // The module blocks would all be empty here, so they are not written.
+        for absent in ["lgtm:surface", "lgtm:treemap", "lgtm:deps", "lgtm:functions"] {
+            assert!(!md.contains(absent), "{absent} has nothing to say:\n{md}");
+        }
+    }
+
+    #[test]
+    fn the_settings_block_says_where_each_value_comes_from() {
+        let block = seed(CONFIG);
+        let block = block_of(&block, "lgtm:settings");
+        assert!(block.contains(":my_app MyApp.Repo"), "{block}");
+        assert!(block.contains("env! DB_PASSWORD"), "required env:\n{block}");
+        assert!(block.contains(r#"= "postgres""#), "literal value:\n{block}");
+        // A hardcoded credential is reported without its value.
+        assert!(block.contains("signing_salt"), "{block}");
+        assert!(block.contains("secret"), "{block}");
+        assert!(!block.contains("abc123"), "value must not ride along:\n{block}");
+        assert!(block.contains("import_config : dev.secret.exs"), "{block}");
+    }
+
+    #[test]
+    fn config_stats_count_what_matters_for_a_config() {
+        let md = seed(CONFIG);
+        let stats = block_of(&md, "lgtm:stats");
+        assert!(stats.contains("apps: 2"), "{stats}");
+        assert!(stats.contains("settings: 4"), "{stats}");
+        assert!(stats.contains("fromEnv: 1 (1 required)"), "{stats}");
+        assert!(stats.contains("literal: 3 (1 masked)"), "{stats}");
+    }
+
+    const SUITE: &str = r#"defmodule MyApp.AccountsTest do
+  use MyApp.DataCase, async: true
+
+  setup do
+    %{user: user_fixture()}
+  end
+
+  describe "create_user/1" do
+    setup :put_user
+
+    @tag :slow
+    test "creates a user" do
+      assert true
+      refute false
+    end
+  end
+
+  test "loose" do
+    assert true
+  end
+end
+"#;
+
+    #[test]
+    fn a_test_suite_seeds_its_own_structure() {
+        let md = seed(SUITE);
+        assert!(md.contains("# MyApp.AccountsTest"), "{md}");
+        assert!(md.contains("```lgtm:tests"), "{md}");
+        for absent in ["lgtm:surface", "lgtm:treemap", "lgtm:functions"] {
+            assert!(!md.contains(absent), "{absent} says nothing here:\n{md}");
+        }
+    }
+
+    #[test]
+    fn the_tests_block_nests_setups_where_they_apply() {
+        let md = seed(SUITE);
+        let block = block_of(&md, "lgtm:tests");
+
+        // Module scope first, then the describe with its own setup indented.
+        let module_setup = block.lines().position(|l| l.trim().starts_with("setup :")).unwrap();
+        let describe = block.lines().position(|l| l.contains("describe")).unwrap();
+        assert!(module_setup < describe, "module scope leads:\n{block}");
+
+        assert!(block.contains(":user"), "provided keys:\n{block}");
+        // A named callback is unknown, not empty.
+        assert!(block.contains("runs :put_user"), "{block}");
+        assert!(block.contains("@slow"), "{block}");
+        assert!(block.contains("(no describe)"), "loose tests still listed:\n{block}");
+    }
+
+    #[test]
+    fn test_stats_count_what_matters_for_a_suite() {
+        let md = seed(SUITE);
+        let stats = block_of(&md, "lgtm:stats");
+        assert!(stats.contains("tests: 2"), "{stats}");
+        assert!(stats.contains("describes: 1"), "{stats}");
+        assert!(stats.contains("assertions: 3"), "{stats}");
+        assert!(stats.contains("async: true"), "{stats}");
+        assert!(stats.contains("case: MyApp.DataCase"), "{stats}");
+    }
+
+    #[test]
+    fn an_unrecognised_file_gets_a_blank_page_not_an_error() {
+        let md = seed("IO.puts(\"hi\")\nx = 1\n");
+        // Titled by filename — "Untitled" only when there isn't one.
+        assert!(md.starts_with("# sample.exs"), "{md}");
+        // And it says why there is nothing else, rather than just being bare.
+        assert!(md.contains("nothing structural to"), "{md}");
+        // Size still reported; nothing structural claimed.
+        assert!(md.contains("lines: 2"), "{md}");
+        assert!(md.contains("## Notes"), "{md}");
+        for absent in ["lgtm:surface", "lgtm:treemap", "lgtm:deps", "lgtm:functions", "lgtm:tests"] {
+            assert!(!md.contains(absent), "{absent} must be absent:\n{md}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod span_tests {
+    use super::*;
+    use crate::parse;
+
+    const SUITE: &str = r#"defmodule MyApp.AccountsTest do
+  use MyApp.DataCase
+
+  setup do
+    %{user: user_fixture()}
+  end
+
+  describe "create_user/1" do
+    test "creates a user" do
+      assert true
+      refute false
+    end
+
+    test "one liner", do: assert(true)
+  end
+end
+"#;
+
+    #[test]
+    fn every_block_carries_its_whole_span() {
+        let outline = parse::parse(SUITE, "elixir").unwrap();
+        let md = seed_markdown(&outline, SUITE, &FileHistory::default(), "accounts_test.exs");
+        let block = md
+            .split("```lgtm:tests")
+            .nth(1)
+            .and_then(|b| b.split("```").next())
+            .unwrap();
+
+        // setup do … end spans lines 4-6.
+        assert!(block.contains("setup : 4-6"), "{block}");
+        // The describe wraps everything from 8 to 15.
+        assert!(block.contains("describe \"create_user/1\" : 8-15"), "{block}");
+        // A multi-line test carries its body; selecting it covers the whole thing.
+        assert!(block.contains("creates a user : 9-12"), "{block}");
+        // A one-liner has nothing to span, so it stays a single number.
+        // The `do:` one-liner form has no do_block, so its assertion is only
+        // found by counting over the whole call.
+        assert!(block.contains("one liner      : 14 1"), "{block}");
     }
 }

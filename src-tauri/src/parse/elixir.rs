@@ -14,7 +14,8 @@
 //! def foo(a, b \\ nil) do …   arity 2, min_arity 1
 //! ```
 
-use super::{Dep, DepKind, FnInfo, ModuleInfo, Outline, Range, RemoteFn, Visibility};
+use super::kinds;
+use super::{Dep, DepKind, FileKind, FnInfo, ModuleInfo, Outline, Range, RemoteFn, Visibility};
 use std::collections::HashMap;
 use crate::error::{AppError, AppResult};
 use tree_sitter::{Node, Parser};
@@ -29,13 +30,70 @@ pub fn parse(source: &str) -> AppResult<Outline> {
         .parse(source, None)
         .ok_or_else(|| AppError::Parse("tree-sitter returned no tree".into()))?;
 
+    let root = tree.root_node();
+
+    // A config script has no modules at all, so it is decided before the walk.
+    if kinds::looks_like_config(root, source) {
+        return Ok(Outline {
+            lang: "elixir".into(),
+            kind: FileKind::Config,
+            modules: Vec::new(),
+            config: Some(kinds::config_info(root, source)),
+            tests: None,
+        });
+    }
+
     let mut modules = Vec::new();
-    collect_modules(tree.root_node(), source, &mut modules);
+    collect_modules(root, source, &mut modules);
+
+    // A test suite is a module, but a `use …Case` one — and the blocks that
+    // suit a module (surface, treemap, reach) say nothing useful about it.
+    if let Some(tests) = test_suite(root, source) {
+        return Ok(Outline {
+            lang: "elixir".into(),
+            kind: FileKind::Test,
+            modules,
+            config: None,
+            tests: Some(tests),
+        });
+    }
+
+    // A module with nothing in it is not a module worth describing.
+    let kind = if modules.iter().any(|m| !m.functions.is_empty()) {
+        FileKind::Module
+    } else {
+        FileKind::Plain
+    };
 
     Ok(Outline {
         lang: "elixir".into(),
+        kind,
         modules,
+        config: None,
+        tests: None,
     })
+}
+
+/// The first `defmodule` whose body uses a case template.
+fn test_suite(root: Node, src: &str) -> Option<super::TestInfo> {
+    fn find<'a>(node: Node<'a>, src: &str) -> Option<(String, Node<'a>)> {
+        if node.kind() == "call" && call_target(node, src).as_deref() == Some("defmodule") {
+            let name = arguments_of(node)
+                .and_then(|a| a.named_child(0))
+                .map(|n| text(n, src).to_string());
+            if let (Some(name), Some(body)) = (name, do_block(node)) {
+                if kinds::looks_like_test(body, src) {
+                    return Some((name, body));
+                }
+            }
+        }
+        let mut cursor = node.walk();
+        let found = node.named_children(&mut cursor).find_map(|c| find(c, src));
+        found
+    }
+
+    let (name, body) = find(root, src)?;
+    Some(kinds::test_info(&name, body, src))
 }
 
 // ---------------------------------------------------------------- modules ---
@@ -898,5 +956,6 @@ end
         assert_eq!(parse("x = 1\n").unwrap().modules.len(), 0);
     }
 }
+
 
 

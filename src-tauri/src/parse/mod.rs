@@ -3,6 +3,7 @@
 //! same shape — nothing downstream changes.
 
 pub mod elixir;
+pub mod kinds;
 
 use serde::{Deserialize, Serialize};
 
@@ -125,11 +126,134 @@ pub struct ModuleInfo {
     pub deps: Vec<Dep>,
 }
 
+/// What shape a file came in.
+///
+/// A module is not the only thing an Elixir file can be, and the blocks that
+/// make sense for one make no sense for another: a config has no functions to
+/// size, a test suite has no public surface. Anything unrecognised is `Plain`
+/// and gets a blank page rather than four empty blocks, which read as broken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FileKind {
+    Module,
+    Config,
+    Test,
+    Plain,
+}
+
+/// Where a configured value comes from — the one thing worth seeing in a config
+/// file, because it is the difference between a value you can change at deploy
+/// time and one baked into the release.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ValueSource {
+    /// Written in the file.
+    Literal { value: String },
+    /// `System.get_env/1` or `System.fetch_env!/1`; `required` marks the bang.
+    Env { var: String, required: bool },
+    /// A literal that looks like a credential. The value is deliberately not
+    /// carried — the doc gets pasted into PR comments — but the fact that it is
+    /// hardcoded at all is the finding.
+    Secret,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Setting {
+    pub key: String,
+    pub line: u32,
+    /// Last line of the block, so selecting it covers the whole thing
+    /// rather than just its opening line.
+    pub end_line: u32,
+    pub source: ValueSource,
+}
+
+/// One `config :app, Target, …` call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigGroup {
+    /// `:my_app`
+    pub app: String,
+    /// `MyApp.Repo` or `:console` — absent for the two-arity form.
+    pub target: Option<String>,
+    pub line: u32,
+    /// Last line of the block, so selecting it covers the whole thing
+    /// rather than just its opening line.
+    pub end_line: u32,
+    pub settings: Vec<Setting>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigInfo {
+    pub groups: Vec<ConfigGroup>,
+    /// `import_config "dev.secret.exs"` — the load chain, later wins.
+    pub imports: Vec<String>,
+}
+
+/// A `setup` or `setup_all` block.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupInfo {
+    /// `setup` or `setup_all`.
+    pub kind: String,
+    pub line: u32,
+    /// Last line of the block, so selecting it covers the whole thing
+    /// rather than just its opening line.
+    pub end_line: u32,
+    /// `setup :put_user` — a callback defined elsewhere in the file.
+    pub named: Option<String>,
+    /// Context keys the block returns, read from its last expression.
+    /// `None` means unknown, which is different from "provides nothing".
+    pub provides: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestCase {
+    pub name: String,
+    pub line: u32,
+    /// Last line of the block, so selecting it covers the whole thing
+    /// rather than just its opening line.
+    pub end_line: u32,
+    pub asserts: u32,
+    pub tags: Vec<String>,
+    pub skipped: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Describe {
+    /// `None` for tests written directly in the module body.
+    pub name: Option<String>,
+    pub line: u32,
+    /// Last line of the block, so selecting it covers the whole thing
+    /// rather than just its opening line.
+    pub end_line: u32,
+    pub setups: Vec<SetupInfo>,
+    pub tests: Vec<TestCase>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestInfo {
+    pub module: String,
+    /// `use MyApp.DataCase` — what the suite is built on.
+    pub case_template: Option<String>,
+    pub is_async: bool,
+    /// Module-scope setups: every test in the file inherits these.
+    pub setups: Vec<SetupInfo>,
+    pub describes: Vec<Describe>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Outline {
     pub lang: String,
+    pub kind: FileKind,
     pub modules: Vec<ModuleInfo>,
+    pub config: Option<ConfigInfo>,
+    pub tests: Option<TestInfo>,
 }
 
 impl Outline {

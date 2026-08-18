@@ -77,6 +77,7 @@ Vite server survived a previous run: `lsof -ti:1420 | xargs kill -9`.
 mockup/index.html              standalone visual contract — no build, just open it
 mockup/deps.html               the reach block's visual contract
 mockup/surface.html            the surface block's visual contract
+mockup/kinds.html              config / test / fallback — the non-module kinds
 app-icon.png                   icon source (1024², RGBA); also copied to static/
 IMPLEMENTATION_PLAN.md         the reasoning behind every decision here
 README.md                      user-facing: clone, install, run, build
@@ -101,11 +102,14 @@ src/
     stats.ts                   parses + draws the stats block
     deps.ts                    parses + draws the reach block (see mockup/deps.html)
     surface.ts                 parses + draws the surface block (see mockup/surface.html)
+    settings.ts                parses + draws the config settings block
+    tests.ts                   parses + draws the test suite block
     ipc.ts                     typed wrappers over invoke()
 
 src-tauri/
   src/
     parse/elixir.rs            tree-sitter → Outline   ← the load-bearing file
+    parse/kinds.rs             config scripts and test suites
     seed.rs                    Outline + source + git history → starter markdown
     reconcile.rs               doc + re-parsed source → merged doc
     git.rs                     .git/HEAD read + lazy blame + log for stats
@@ -141,7 +145,58 @@ number a row or tile jumps to.
 A block whose body is empty renders as a short "re-seed this doc, or write
 `…` style rows here" hint, never as a blank box.
 
-### The five blocks
+### A file is not always a module
+
+`FileKind` decides which blocks a doc gets, because the blocks that suit one
+shape say nothing about another:
+
+| Kind | Detected by | Blocks |
+|---|---|---|
+| `Module` | `defmodule` with `def`s | stats, surface, treemap, deps, functions |
+| `Config` | `import Config` / any `config` call | stats, **settings** |
+| `Test` | `use …Case` in a module body | stats, **tests** |
+| `Plain` | anything else | stats only, plus a note saying why |
+
+The fallback is the point of the whole mechanism. A config file parsed as a
+module produces four empty blocks, and **an empty block reads as broken** — so
+`Plain` writes a title, the size, and one italic line explaining that nothing
+structural was recognised. No error, no empty boxes.
+
+`Config` is decided before the module walk (a config script has no modules at
+all); `Test` after, since a suite *is* a module, just one where surface, treemap
+and reach say nothing useful.
+
+**Every block carries a span, not a line.** `12-40` in the text collapses to
+`12` when a block is one line. That's what lets clicking a test, describe,
+setup or setting select the *whole* block in the code rather than dropping a
+cursor on its opening line — the same thing clicking a function does.
+
+**Keywords are click targets too.** In the code pane `markWord` wraps the first
+`test` / `describe` / `setup` / `config` on a line, exactly as it wraps a
+function's name on a `def` line. The negative lookahead matters twice: it stops
+`setup` matching inside `setup_all`, and stops a test named `"the config test"`
+having the word in its *name* wrapped instead of the keyword.
+
+**Only `lgtm:functions` is reconciled**, and only module docs have one — so a
+config or test doc passes through `reconcile_markdown` verbatim. Pinned by
+`reconciling_a_config_doc_changes_nothing`.
+
+**The config block's finding is `env` vs literal.** `System.get_env` versus a
+hardcoded string is the difference between a value you can change at deploy time
+and one baked into the release; `fetch_env!` is marked `env!` because it crashes
+on boot when unset. A literal whose *key* looks like a credential
+(`SECRETISH` in `parse/kinds.rs`) is reported as `secret` **without its value** —
+that it is hardcoded is the finding, but docs get pasted into PR comments.
+
+**The test block's finding is that setup stacks.** A test starts from module
+`setup_all` + module `setup` + its describe's `setup`, which can be a hundred
+lines apart, so each describe shows the accumulated context its tests can
+destructure. `provides` is a best-effort read of the block's *last expression*
+(`%{user: user}`, `{:ok, repo: repo}`); a named callback (`setup :put_user`)
+lives elsewhere in the file, so its keys are `None` — **unknown, which is not
+the same as "provides nothing"** — and the UI shows `+?` rather than guessing.
+
+### The five module blocks
 
 ````markdown
 ```lgtm:stats
