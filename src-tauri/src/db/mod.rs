@@ -1,5 +1,6 @@
 pub mod docs;
 pub mod models;
+pub mod projects;
 
 use crate::error::{AppError, AppResult};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};

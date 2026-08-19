@@ -6,6 +6,7 @@
   import Library from "$lib/components/Library.svelte";
   import FnPalette from "$lib/components/FnPalette.svelte";
   import HelpModal from "$lib/components/HelpModal.svelte";
+  import FilePalette from "$lib/components/FilePalette.svelte";
   import { displaySig, locate } from "$lib/select";
   import { when } from "$lib/when";
   import { theme } from "$lib/stores/theme.svelte";
@@ -21,9 +22,11 @@
   let dirty = $state(false);
   let error = $state<string | null>(null);
   let showLibrary = $state(false);
-  /** The paste-a-path prompt (⌘L). Paths arrive by copy far more than by dialog. */
-  let showPath = $state(false);
-  let pathInput = $state("");
+  /** ⌘T — search the open folder by name, or paste a path. */
+  let showFiles = $state(false);
+  /** The folder being searched. Remembered, so it is picked once per project. */
+  let project = $state<ipc.Project | null>(null);
+  let projects = $state<ipc.Project[]>([]);
   /** ⌘P — jump to a function by name. */
   let showPalette = $state(false);
   /** `?` — what everything does. */
@@ -86,15 +89,37 @@
     if (typeof picked === "string") await load(picked);
   }
 
-  async function openTypedPath() {
-    const raw = pathInput.trim();
-    if (!raw) return;
-    showPath = false;
-    pathInput = "";
-    // Rust normalizes the path (quotes, file://, ~, escaped spaces) and reports
-    // a clear error if it isn't a readable file.
-    await load(raw);
+  /** Pick a folder to search. Once per project, not once per file. */
+  async function chooseProject() {
+    const picked = await openDialog({ directory: true, multiple: false });
+    if (typeof picked !== "string") return;
+    try {
+      project = await ipc.openProject(picked);
+      projects = await ipc.recentProjects();
+      // Land straight in the search: picking a folder and being returned to an
+      // unchanged screen leaves you wondering whether it worked.
+      showFiles = true;
+    } catch (e) {
+      error = String(e);
+    }
   }
+
+  async function useProject(p: ipc.Project) {
+    project = await ipc.openProject(p.path).catch(() => p);
+    projects = await ipc.recentProjects();
+    showFiles = true;
+  }
+
+  $effect(() => {
+    ipc
+      .recentProjects()
+      .then((r) => {
+        projects = r;
+        // The last folder is almost always the one you want again.
+        if (!project && r.length) project = r[0];
+      })
+      .catch(() => (projects = []));
+  });
 
   async function load(path: string) {
     error = null;
@@ -298,7 +323,7 @@
     if (e.key === "Escape") {
       if (showHelp) showHelp = false;
       else if (showPalette) showPalette = false;
-      else if (showPath) showPath = false;
+      else if (showFiles) showFiles = false;
       else if (showLibrary) showLibrary = false;
       else focus.clear();
       return;
@@ -319,9 +344,9 @@
       showLibrary = !showLibrary;
       return;
     }
-    if (meta && e.key === "l") {
+    if (meta && e.key === "t") {
       e.preventDefault();
-      showPath = !showPath;
+      showFiles = !showFiles;
       return;
     }
     if (meta && e.key === "p") {
@@ -383,8 +408,8 @@
 
       <span class="save" class:dirty>{saving ? "Saving…" : dirty ? "Unsaved" : doc ? "Saved ✓" : ""}</span>
       <button class="btn" onclick={reparseNow}>Re-parse</button>
-      <button class="btn" onclick={() => (showPath = true)} title="Open a path you copied (⌘L)">
-        Path…
+      <button class="btn" onclick={() => (showFiles = true)} title="Find a file by name (⌘T)">
+        Find…
       </button>
       <button class="btn" onclick={() => (showLibrary = true)}>Library</button>
       <button class="btn primary" onclick={pickFile}>Open file…</button>
@@ -410,26 +435,26 @@
       <h1>lgtm</h1>
       <p>Open an Elixir file. The source goes left, your explanation goes right.</p>
       <div class="actions">
-        <button class="btn primary" onclick={pickFile}>Open a file… <kbd>⌘O</kbd></button>
+        <button class="btn primary" onclick={() => (showFiles = true)}>
+          Find a file… <kbd>⌘T</kbd>
+        </button>
+        <button class="btn" onclick={pickFile}>Open a file… <kbd>⌘O</kbd></button>
         <button class="btn" onclick={() => (showLibrary = true)}>Library <kbd>⌘K</kbd></button>
         <button class="btn" onclick={() => (showHelp = true)}>What it does <kbd>?</kbd></button>
       </div>
 
-      <form
-        class="pathform"
-        onsubmit={(e) => {
-          e.preventDefault();
-          openTypedPath();
-        }}
-      >
-        <input
-          bind:value={pathInput}
-          placeholder="…or paste a path: ~/code/my_app/lib/accounts.ex"
-          spellcheck="false"
-          autocapitalize="off"
-        />
-        <button class="btn" type="submit" disabled={!pathInput.trim()}>Open</button>
-      </form>
+      <div class="projects">
+        {#if project}
+          <button class="proj on" onclick={() => (showFiles = true)}>
+            <span class="folder">▸</span>
+            <b>{project.name}</b>
+            <span class="path">{project.path}</span>
+          </button>
+        {/if}
+        <button class="proj pick" onclick={chooseProject}>
+          {project ? "Open a different folder…" : "Open a folder…"}
+        </button>
+      </div>
 
       {#if recents.length}
         <div class="recents">
@@ -459,7 +484,7 @@
           path={file.path}
           hasGit={file.hasGit}
           {outline}
-          keysEnabled={!showLibrary && !showPath && !showPalette && !showHelp}
+          keysEnabled={!showLibrary && !showFiles && !showPalette && !showHelp}
         />
       </div>
 
@@ -526,42 +551,23 @@
     </div>
   {/if}
 
-  {#if showPath}
-    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <div class="scrim" onclick={() => (showPath = false)}>
-      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-      <div class="pathpanel" onclick={(e) => e.stopPropagation()}>
-      <form
-        onsubmit={(e) => {
-          e.preventDefault();
-          openTypedPath();
-        }}
-      >
-        <label for="pathfield">Open a path</label>
-        <!-- svelte-ignore a11y_autofocus -->
-        <input
-          id="pathfield"
-          bind:value={pathInput}
-          placeholder="~/code/my_app/lib/my_app/accounts.ex"
-          spellcheck="false"
-          autocapitalize="off"
-          autofocus
-        />
-        <p class="hint">
-          Quotes, <code>file://</code>, <code>~</code> and escaped spaces are all handled — paste
-          whatever you copied.
-        </p>
-        <div class="acts">
-          <button class="btn" type="button" onclick={() => (showPath = false)}>Cancel</button>
-          <button class="btn primary" type="submit" disabled={!pathInput.trim()}>Open</button>
-        </div>
-      </form>
-      </div>
-    </div>
-  {/if}
-
-  {#if showHelp}
-    <HelpModal onclose={() => (showHelp = false)} />
+  {#if showFiles}
+    <FilePalette
+      {project}
+      onpick={(f) => {
+        showFiles = false;
+        load(f.path);
+      }}
+      onpickpath={(p) => {
+        showFiles = false;
+        load(p);
+      }}
+      onchoose={() => {
+        showFiles = false;
+        chooseProject();
+      }}
+      onclose={() => (showFiles = false)}
+    />
   {/if}
 
   {#if showPalette}
@@ -801,28 +807,6 @@
     margin-left: 4px;
   }
 
-  .pathform {
-    display: flex;
-    gap: 8px;
-    margin-top: 18px;
-    width: min(520px, 80vw);
-  }
-  .pathform input {
-    flex: 1;
-    min-width: 0;
-    font: inherit;
-    font-size: 12.5px;
-    font-family: var(--mono);
-    padding: 7px 11px;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    background: var(--bg);
-    color: var(--fg);
-    outline: none;
-  }
-  .pathform input:focus {
-    border-color: var(--accent);
-  }
 
   /* Recent readings — the fastest route back into a file you were already in. */
   .recents {
@@ -905,63 +889,56 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .scrim {
-    position: fixed;
-    inset: 0;
-    z-index: 20;
-    background: rgba(10, 12, 16, 0.35);
+
+  /* Pick the folder once; after that it is ⌘T all the way down. */
+  .projects {
     display: flex;
-    justify-content: center;
-    align-items: flex-start;
-    padding-top: 14vh;
-  }
-  .pathpanel {
-    width: min(620px, 92vw);
-    background: var(--bg-raised);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    box-shadow: 0 22px 60px rgba(10, 12, 16, 0.28);
-    padding: 16px;
-  }
-  .pathpanel label {
-    display: block;
-    font-size: 10.5px;
-    letter-spacing: 0.09em;
-    text-transform: uppercase;
-    color: var(--fg-faint);
-    margin-bottom: 7px;
-  }
-  .pathpanel input {
-    display: block;
-    width: 100%;
-    font: inherit;
-    font-family: var(--mono);
-    font-size: 12.5px;
-    padding: 8px 11px;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    background: var(--bg);
-    color: var(--fg);
-    outline: none;
-  }
-  .pathpanel input:focus {
-    border-color: var(--accent);
-  }
-  .pathpanel .hint {
-    margin: 8px 0 0;
-    font-size: 11px;
-    color: var(--fg-faint);
-    line-height: 1.5;
-  }
-  .pathpanel .hint code {
-    font-family: var(--mono);
-    color: var(--fg-dim);
-  }
-  .pathpanel .acts {
-    display: flex;
-    justify-content: flex-end;
+    flex-direction: column;
+    align-items: stretch;
     gap: 6px;
-    margin-top: 14px;
+    width: min(560px, 84vw);
+    margin-top: 22px;
+  }
+  .proj {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font: inherit;
+    text-align: left;
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 9px 12px;
+    cursor: pointer;
+    color: var(--fg-dim);
+    min-width: 0;
+  }
+  .proj:hover {
+    border-color: var(--accent);
+    color: var(--fg);
+  }
+  .proj .folder {
+    color: var(--accent);
+  }
+  .proj b {
+    font-size: 13px;
+    color: var(--fg);
+    flex: none;
+  }
+  .proj .path {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--fg-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    text-align: left;
+  }
+  .proj.pick {
+    justify-content: center;
+    border-style: dashed;
+    font-size: 12px;
   }
 
   .chooser {

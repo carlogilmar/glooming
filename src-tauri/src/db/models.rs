@@ -75,3 +75,25 @@ pub struct FileHistory {
     pub first: Option<String>,
     pub last: Option<String>,
 }
+
+/// A folder you search within. Deliberately thin: a project is a path, not a
+/// scanned index or a set of member files.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct Project {
+    pub id: i64,
+    pub path: String,
+    pub name: String,
+    pub opened_at: String,
+}
+
+/// One candidate in the file picker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectFile {
+    /// Absolute path, for opening.
+    pub path: String,
+    /// Path relative to the project root — what you actually search and read.
+    pub rel: String,
+    pub name: String,
+}

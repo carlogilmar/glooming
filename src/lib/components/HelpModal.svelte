@@ -209,11 +209,20 @@
       title: "Files and docs",
       rows: [
         { action: "← Home", what: "Back to your recent readings. Saves anything pending first" },
-        { keys: ["⌘O"], what: "Open a file with the picker" },
         {
-          keys: ["⌘L"],
-          what: "Open a path you copied — quotes, file://, ~ and escaped spaces are all handled",
+          keys: ["⌘T"],
+          what:
+            "Find a file by name in the open folder. Matches the whole path, so `web/proc` and " +
+            "`my_app/acc` both narrow — and pasting a full path works too, for anything outside " +
+            "the project",
         },
+        {
+          action: "Open a folder…",
+          what:
+            "Pick the project once; it is remembered, and the last one is reopened next launch. " +
+            "Build output and dependencies are never listed",
+        },
+        { keys: ["⌘O"], what: "Open a single file with the system picker" },
         { keys: ["⌘K"], what: "Library: search, sort by recent / name / folder, ↑↓↵ to open" },
         { keys: ["?"], what: "This help" },
       ],

@@ -113,6 +113,7 @@ src/
       CodePane.svelte          source, line numbers, blame, focus, search, vim motions, font size
       DocPane.svelte           preview/edit/read, block styling, row wiring, treemap tooltip
       FontStepper.svelte       A− / A+, shared by both panes
+      FilePalette.svelte       ⌘T — find a file in the open folder
       FnPalette.svelte         ⌘P — jump to a function by name
       RefMenu.svelte           / — insert a reference while editing
       HelpModal.svelte         ? — what everything does
@@ -144,7 +145,10 @@ src-tauri/
     git.rs                     .git/HEAD read + lazy blame + log for stats
     db/{mod,models,docs}.rs    pool, serde shapes, doc CRUD
     commands/{files,docs}.rs   IPC surface (blame lives in files.rs)
+    commands/projects.rs       open a folder, walk it for Elixir files
+    db/projects.rs             remembered folders, most recent first
   migrations/0001_initial.sql
+  migrations/0002_projects.sql
   tests/pipeline.rs            end-to-end, pinned to the mockup
 ```
 
@@ -545,6 +549,39 @@ version put a "reading path" arc diagram in the divider; it was cut because it
 needed explaining, which meant it wasn't working. The same data as a plain
 two-axis chart (step across, file position down) is legible, and is parked as a
 possible `lgtm:path` block rather than built.
+
+### Projects are a path, nothing more
+
+`⌘T` searches the open folder by name; the folder is picked explicitly with
+**Open a folder…** and remembered in a `projects` table, most recent first, so
+the last one is reopened next launch.
+
+Deliberately thin. There is **no index on disk, no scan at startup and no notion
+of membership** — the walk runs when the palette opens, takes milliseconds even
+on a large app, and caching it would be inventing a staleness problem to solve
+in a tree that changes while you work.
+
+Two things it does *not* do, both on purpose:
+
+- **No root inference.** An earlier plan walked up for `mix.exs`. Explicit is
+  predictable, and predictable beats clever for something used fifty times a day.
+- **No git.** Listing changed files was discussed and cut: the tool is about
+  opening files to read, and knowing what changed is done elsewhere.
+
+`ignore::WalkBuilder` honours `.gitignore`, with `_build`, `deps`,
+`node_modules`, `.git`, `.elixir_ls` and `cover` skipped explicitly on top —
+a fresh checkout may not have them ignored yet. Only `.ex`/`.exs` are listed:
+lgtm can open anything, but the picker offers what it actually reads.
+
+**Matching ranks filename hits above directory hits**, otherwise everything
+under a `processor/` directory outranks `processor.ex` itself. Substring first,
+then subsequence over the whole relative path, so `myacc` finds
+`my_app/accounts.ex`.
+
+`⌘T` also absorbed `⌘L`: if what you have typed looks like a path rather than a
+search, `↵` opens it directly. A path from a stack trace is often outside the
+project, and two near-identical dialogs for "open a file by naming it" was one
+too many.
 
 ### The library
 

@@ -199,3 +199,27 @@ export const deleteDoc = (id: number) => invoke<void>("delete_doc", { id });
 
 export const reconcileDoc = (id: number, outline: Outline, source: string) =>
   invoke<Doc>("reconcile_doc", { id, outline, source });
+
+// ---- projects --------------------------------------------------------------
+
+export interface Project {
+  id: number;
+  path: string;
+  name: string;
+  openedAt: string;
+}
+
+export interface ProjectFile {
+  path: string;
+  /** Relative to the project root — what you search and read. */
+  rel: string;
+  name: string;
+}
+
+export const openProject = (path: string) => invoke<Project>("open_project", { path });
+
+export const recentProjects = () => invoke<Project[]>("recent_projects");
+
+export const forgetProject = (id: number) => invoke<void>("forget_project", { id });
+
+export const projectFiles = (path: string) => invoke<ProjectFile[]>("project_files", { path });

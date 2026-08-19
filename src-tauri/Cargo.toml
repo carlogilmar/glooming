@@ -31,6 +31,9 @@ tokio = { version = "1", features = ["sync"] }
 thiserror = "2"
 dirs = "6"
 sha2 = "0.10"
+# Directory walking that honours .gitignore, so `_build` and `deps` never
+# reach the picker.
+ignore = "0.4"
 time = { version = "0.3", features = ["formatting", "macros"] }
 
 # Parsing. Elixir first; more grammars slot in beside it.

@@ -36,6 +36,10 @@ pub fn run() {
             commands::docs::list_docs,
             commands::docs::delete_doc,
             commands::docs::reconcile_doc,
+            commands::projects::open_project,
+            commands::projects::recent_projects,
+            commands::projects::forget_project,
+            commands::projects::project_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running lgtm");

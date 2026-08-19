@@ -101,8 +101,8 @@ pnpm tauri icon       # no arguments — app-icon.png is the default input
 
 | Key | Does |
 |---|---|
-| `⌘O` | open a file |
-| `⌘L` | open a path you copied (quotes, `file://`, `~` all handled) |
+| `⌘O` | open a single file with the system picker |
+| `⌘T` | find a file by name in the open folder — or paste a path |
 | `⌘K` | library — everything you've written |
 | `⌘P` | jump to a function by name |
 | `⌘S` | force a save (autosave already runs 800ms after you stop typing) |
@@ -120,6 +120,15 @@ The code pane also has **vim motions** (`j`/`k`, `gg`/`G`, `42G`, `H`/`M`/`L`,
 the file, **font size** steppers, and a **blame gutter** that tints each line
 with its author's colour — only inside a git repo, and it only shells out when
 you press the button. Long lines always soft-wrap.
+
+### Opening files
+
+Pick a folder once — **Open a folder…** on the welcome screen — and then `⌘T`
+finds anything in it by name. It matches the whole path, so `web/proc` and
+`my_app/acc` both narrow, and build output and dependencies are never listed.
+The folder is remembered and reopened next launch.
+
+Pasting a full path into the same box works too, for files outside the project.
 
 ### The doc is plain markdown
 
