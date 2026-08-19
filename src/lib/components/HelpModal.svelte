@@ -90,7 +90,7 @@
     {
       title: "The code pane's controls",
       rows: [
-        { action: "A− / A+", what: "Font size, 10–22px. Remembered between sessions" },
+        { action: "A− / A+", what: "Code font size, 10–22px. Remembered between sessions" },
         {
           action: "◫ Blame",
           what:
@@ -109,6 +109,13 @@
       note: "Plain markdown with five extra blocks. The values live in the text, so you can edit any of them.",
       rows: [
         { action: "Preview / Edit", what: "Rendered blocks, or the raw markdown source" },
+        {
+          action: "A− / A+",
+          what:
+            "Text size for both Preview and Edit, kept separately from the code pane's. Headings, " +
+            "inline code and the markdown source all scale with it; the blocks keep their own " +
+            "sizes, since they are data rather than text",
+        },
         {
           keys: ["/"],
           what:

@@ -112,6 +112,7 @@ src/
     components/
       CodePane.svelte          source, line numbers, blame, focus, search, vim motions, font size
       DocPane.svelte           preview/edit/read, block styling, row wiring, treemap tooltip
+      FontStepper.svelte       A− / A+, shared by both panes
       FnPalette.svelte         ⌘P — jump to a function by name
       RefMenu.svelte           / — insert a reference while editing
       HelpModal.svelte         ? — what everything does
@@ -120,6 +121,7 @@ src/
     stores/
       theme.svelte.ts          ported from Alexandria; lgtm defaults to LIGHT
       focus.svelte.ts          which function is selected — shared by BOTH panes
+      fontSize.svelte.ts       a remembered, clamped font size; one per pane
     markdownit.ts              markdown-it + the lgtm:* fence renderers
     lgtmBlock.ts               parses the functions block (mirrors reconcile.rs)
     refs.ts                    recognises `create_user/1` / `L30-34` in prose
@@ -688,6 +690,19 @@ habits load-bearing rather than optional:
 - Rust owns parsing; the frontend never sees a syntax tree, only an `Outline`.
 - Commands in `commands/` stay thin; logic lives in `db/`, `parse/`, `seed.rs`,
   `reconcile.rs`, `git.rs`.
+- **Each pane owns its font size, under its own key** (`codeFontSize`,
+  `docFontSize`) via one shared `fontSize()` store. `--doc-font` sits on the doc
+  pane's scroll container so **both** the rendered prose and the markdown editor
+  read it — the editor at `0.89` of it, the ratio their two defaults already had
+  (12.5px mono against 14px prose), so stepping keeps the relationship instead of
+  converging on one number. Every block keeps absolute sizes, because a table
+  that reflows when you nudge the reading size is a data display behaving like
+  text.
+
+  Two consequences worth not breaking: `.mirror` and `.raw` share one
+  declaration block because the `/` menu's caret measurement needs their metrics
+  identical, and `caretXY` derives its line offset from the measured marker
+  height rather than a constant, which would drift the moment the size changed.
 - **Prose is capped, pictures are not.** `.doc` fills its pane; only the text
   elements carry a `max-width` for a readable measure. Capping the whole doc
   left dead space beside every diagram, so widening the window bought nothing.

@@ -2,6 +2,8 @@
   import { createMarkdownIt } from "$lib/markdownit";
   import { locate } from "$lib/select";
   import RefMenu from "$lib/components/RefMenu.svelte";
+  import FontStepper from "$lib/components/FontStepper.svelte";
+  import { fontSize } from "$lib/stores/fontSize.svelte";
   import { focus } from "$lib/stores/focus.svelte";
   import type { Outline } from "$lib/ipc";
 
@@ -23,6 +25,11 @@
     stale: boolean;
     onreconcile?: () => void;
   } = $props();
+
+  // Scales the prose only — the blocks are data displays, not text, and keep
+  // their own sizes so a table doesn't reflow when you nudge the reading size.
+  const font = fontSize("docFontSize", 14);
+  $effect(() => font.load());
 
   let editing = $state(false);
   let container = $state<HTMLDivElement | null>(null);
@@ -81,8 +88,9 @@
     mirror.textContent = "";
     return {
       x: m.left - box.left - editor.scrollLeft,
-      // below the caret's own line, not on top of it
-      y: m.top - box.top - editor.scrollTop + 22,
+      // One line below the caret, measured rather than assumed — a constant
+      // here would drift the moment the editor's font size changed.
+      y: m.top - box.top - editor.scrollTop + (m.height || 22),
     };
   }
 
@@ -562,6 +570,7 @@
     {#if stale}
       <button class="btn icon warn" onclick={() => onreconcile?.()}>⟳ Code changed — reconcile</button>
     {/if}
+    <FontStepper {font} label="text" />
     {#if canRead && !editing && steps.length}
       <button
         class="btn icon read"
@@ -590,7 +599,12 @@
     </div>
   </div>
 
-  <div class="panebody" bind:this={body} onscroll={onDocScroll}>
+  <div
+    class="panebody"
+    style:--doc-font="{font.value}px"
+    bind:this={body}
+    onscroll={onDocScroll}
+  >
     {#if editing}
       <div class="editwrap">
         <textarea
@@ -729,7 +743,12 @@
   .mirror,
   .raw {
     font-family: var(--mono);
-    font-size: 12.5px;
+    /* One control scales both views. The ratio is the one the two defaults
+       already had — 12.5px of mono reads about the same size as 14px of prose —
+       so stepping keeps the relationship rather than converging on one number.
+       Both selectors MUST keep identical metrics or the caret measurement that
+       positions the `/` menu goes wrong, which is why they share this block. */
+    font-size: calc(var(--doc-font, 14px) * 0.89);
     line-height: 1.7;
     padding: 26px 30px;
     white-space: pre-wrap;
@@ -758,6 +777,10 @@
     /* Enough tail room to clear the window edge, not a screenful of nothing. */
     padding: 26px 30px 40px;
     position: relative;
+    /* The base the prose is measured against. Only the text elements below use
+       `em`; every block keeps absolute sizes, because they are data displays
+       and should not reflow when you nudge the reading size. */
+    font-size: var(--doc-font, 14px);
   }
   /* Prose keeps a readable measure; the visual blocks take the whole pane, so
      widening the window actually buys you a bigger picture. Capping the doc
@@ -801,13 +824,13 @@
 
   /* The rendered doc is injected HTML, so these rules are global. */
   :global(.doc h1) {
-    font-size: 20px;
+    font-size: 1.43em;
     margin: 0 0 6px;
     letter-spacing: -0.01em;
     color: var(--doc-fg);
   }
   :global(.doc h2) {
-    font-size: 13px;
+    font-size: 0.93em;
     text-transform: uppercase;
     letter-spacing: 0.1em;
     color: var(--fg-faint);
@@ -815,6 +838,7 @@
   }
   :global(.doc p) {
     color: var(--fg-dim);
+    font-size: 1em;
     line-height: 1.7;
     margin: 0 0 14px;
   }
@@ -827,7 +851,7 @@
   }
   :global(.doc code) {
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: 0.86em;
     background: var(--bg-inset);
     padding: 1px 5px;
     border-radius: 4px;
@@ -1864,6 +1888,8 @@
      Inline code that names something in this file. No new syntax: the markdown
      stays portable, which is why references are backticks and not `{{…}}`. */
   :global(.doc code.ref) {
+    /* A reference is prose, so it scales with the prose. */
+    font-size: 0.89em;
     cursor: pointer;
     background: color-mix(in srgb, var(--accent) 10%, transparent);
     color: var(--accent);

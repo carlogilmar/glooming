@@ -5,6 +5,8 @@
   import { focus } from "$lib/stores/focus.svelte";
   import { displaySig, locate } from "$lib/select";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+  import FontStepper from "$lib/components/FontStepper.svelte";
+  import { fontSize } from "$lib/stores/fontSize.svelte";
 
   hljs.registerLanguage("elixir", elixir);
 
@@ -56,22 +58,8 @@
   }
 
   // ---- font size ----------------------------------------------------------
-  const FONT_KEY = "codeFontSize";
-  const MIN = 10;
-  const MAX = 22;
-  const DEFAULT = 12.5;
-
-  let fontSize = $state(DEFAULT);
-
-  $effect(() => {
-    const stored = parseFloat(localStorage.getItem(FONT_KEY) ?? "");
-    if (stored >= MIN && stored <= MAX) fontSize = stored;
-  });
-
-  function setFont(next: number) {
-    fontSize = Math.min(MAX, Math.max(MIN, Math.round(next * 2) / 2));
-    localStorage.setItem(FONT_KEY, String(fontSize));
-  }
+  const font = fontSize("codeFontSize", 12.5);
+  $effect(() => font.load());
 
   const lines = $derived(source.length ? source.split("\n") : []);
 
@@ -807,24 +795,7 @@
     {/if}
     <span class="spacer"></span>
 
-    <div class="fontsize">
-      <button
-        onclick={() => setFont(fontSize - 0.5)}
-        disabled={fontSize <= MIN}
-        aria-label="Smaller text"
-        title="Smaller ({fontSize}px)"
-      >
-        A<small>−</small>
-      </button>
-      <button
-        onclick={() => setFont(fontSize + 0.5)}
-        disabled={fontSize >= MAX}
-        aria-label="Larger text"
-        title="Larger ({fontSize}px)"
-      >
-        A<small>+</small>
-      </button>
-    </div>
+    <FontStepper {font} label="code" />
 
   </div>
 
@@ -850,7 +821,7 @@
 
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div class="panebody" bind:this={body} onclick={onCodeClick} onkeydown={onCodeKey} onscroll={onScroll}>
-      <div class="code" class:focusing={dimming} class:guided style:font-size="{fontSize}px">
+      <div class="code" class:focusing={dimming} class:guided style:font-size="{font.value}px">
         {#each highlighted as html, i}
           {@const n = i + 1}
           <div
@@ -1132,39 +1103,6 @@
   }
   .panefoot .spacer {
     flex: 1;
-  }
-
-  .fontsize {
-    display: flex;
-    align-items: stretch;
-    border: 1px solid var(--line);
-    border-radius: 5px;
-    overflow: hidden;
-  }
-  .fontsize button {
-    font: inherit;
-    font-size: 11px;
-    background: transparent;
-    color: var(--fg-dim);
-    border: 0;
-    padding: 2px 7px;
-    cursor: pointer;
-    line-height: 1.6;
-  }
-  .fontsize button small {
-    font-size: 9px;
-    vertical-align: super;
-  }
-  .fontsize button:hover:not(:disabled) {
-    background: var(--bg-inset);
-    color: var(--fg);
-  }
-  .fontsize button:disabled {
-    opacity: 0.35;
-    cursor: default;
-  }
-  .fontsize button + button {
-    border-left: 1px solid var(--line);
   }
 
   .code {
