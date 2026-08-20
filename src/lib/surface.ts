@@ -78,14 +78,16 @@ export function parseSurface(body: string): Surface {
   return out;
 }
 
-function rowHtml(f: SurfaceFn): string {
+function rowHtml(f: SurfaceFn, n: number): string {
   const slash = f.sig.indexOf("/");
   const name = slash === -1 ? f.sig : f.sig.slice(0, slash);
   const arity = slash === -1 ? "" : f.sig.slice(slash);
   const badges = f.flags.map((b) => `<span class="badge">${esc(b)}</span>`).join("");
 
   return (
-    `<div class="row" data-sig="${esc(f.sig)}"${f.line ? ` data-line="${f.line}"` : ""} role="button" tabindex="0">` +
+    // `--i` is the stagger index. Doing it in CSS rather than JS keeps this a
+    // pure string render — nothing here knows or cares that it animates.
+    `<div class="row" style="--i:${n}" data-sig="${esc(f.sig)}"${f.line ? ` data-line="${f.line}"` : ""} role="button" tabindex="0">` +
     `<span class="sig">${esc(name)}<span class="ar">${esc(arity)}</span></span>` +
     badges +
     `<span class="spacer"></span>` +
@@ -95,7 +97,11 @@ function rowHtml(f: SurfaceFn): string {
 }
 
 function column(kind: "public" | "private", fns: SurfaceFn[], empty: string): string {
-  const rows = fns.length ? fns.map(rowHtml).join("") : `<p class="none">${empty}</p>`;
+  // The index is per column, so both columns cascade together rather than the
+  // right-hand one waiting for the left to finish.
+  const rows = fns.length
+    ? fns.map((f, i) => rowHtml(f, i)).join("")
+    : `<p class="none">${empty}</p>`;
   return (
     `<div class="col ${kind}">` +
     `<div class="label"><span class="bar"></span>${kind}<span class="n">${fns.length}</span></div>` +

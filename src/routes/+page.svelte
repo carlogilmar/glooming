@@ -29,6 +29,16 @@
   let doc = $state<Doc | null>(null);
   /** Paths the prose actually references — the strip's hollow-dot signal. */
   let referenced = $state<Set<string>>(new Set());
+  /**
+   * Bumped when a *different* reading opens — the doc pane's cue to play its
+   * arrival animations once.
+   *
+   * It has to be a separate token rather than "did `doc` change", because adding
+   * or removing a file also replaces `doc`, and re-cascading the whole surface
+   * block because you opened one more file is exactly the kind of restlessness
+   * that gets animation turned off.
+   */
+  let opened = $state(0);
   let markdown = $state("");
   let basis = $state(52);
   let saving = $state(false);
@@ -138,6 +148,7 @@
 
   /** Adopt a whole reading in one go — every mutation returns one of these. */
   function adopt(r: ipc.Reading, prefer?: string | null) {
+    if (doc?.id !== r.doc.id) opened += 1;
     doc = r.doc;
     files = r.files;
     markdown = r.doc.markdown;
@@ -741,6 +752,7 @@
             {dirty}
             {stale}
             onreconcile={reconcile}
+            {opened}
             onshowfile={showFile}
             onrefs={(paths) => (referenced = paths)}
           />
@@ -901,7 +913,7 @@
     background: var(--read);
     border-radius: 999px;
     pointer-events: none;
-    animation: badge 1.1s ease forwards;
+    animation: badge 1.1s var(--ease) forwards;
   }
   @keyframes badge {
     0% { opacity: 0; transform: translate(-50%, -4px); }
@@ -1053,7 +1065,7 @@
     margin-bottom: 10px;
     background: color-mix(in srgb, var(--accent) 16%, transparent);
     border: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
-    animation: breathe 2.1s ease-in-out infinite;
+    animation: breathe var(--slow) ease-in-out infinite;
   }
   @keyframes breathe {
     0%,
@@ -1069,6 +1081,21 @@
   @media (prefers-reduced-motion: reduce) {
     .orb {
       animation: none;
+    }
+    /* The badge names which file you landed on after a swap — that is the whole
+       message, so it stays put instead of fading. It is cleared on a timer
+       either way. */
+    .swapbadge {
+      animation: none;
+    }
+    /* And the pane swap itself: the dip is what makes a file change legible
+       rather than looking like the code moved under you. Without motion it just
+       changes, which is honest — but the fade must not leave it invisible. */
+    .codewrap {
+      transition: none;
+    }
+    .codewrap.swapping {
+      opacity: 1;
     }
   }
 

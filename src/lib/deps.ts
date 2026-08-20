@@ -175,6 +175,14 @@ export function renderDeps(body: string, module: ModuleInfo | null): string {
       `<path class="edge ${e.kind}" data-from="${esc(e.from)}" data-to="${esc(e.to)}" stroke-width="2"` +
         ` d="M${x1},${e.y1} C${x1 + c},${e.y1} ${DOT_X - c},${e.y2} ${DOT_X},${e.y2}"/>`,
     );
+    // An arrowhead, hidden until reduced motion is on. The travelling dash is
+    // what says the call goes *outward*; without motion something else has to
+    // carry that, and a static picture with no direction is the thing this whole
+    // block exists to avoid.
+    parts.push(
+      `<path class="head ${e.kind}" data-from="${esc(e.from)}" data-to="${esc(e.to)}"` +
+        ` d="M${DOT_X - 9},${e.y2 - 4} L${DOT_X - 2},${e.y2} L${DOT_X - 9},${e.y2 + 4} Z"/>`,
+    );
   }
 
   for (const f of locals) {
@@ -206,6 +214,11 @@ export function renderDeps(body: string, module: ModuleInfo | null): string {
         `<g class="rfn" data-to="${esc(`${d.module}.${fn.name}`)}" data-callers="${esc(fn.callers.join("|"))}" role="button" tabindex="0">`,
         `<rect class="rfn-hit" x="${DOT_X - 8}" y="${(fn.y ?? 0) - 11}" width="330" height="22" rx="5"/>`,
         `<circle class="dot ${d.kind}" cx="${DOT_X}" cy="${fn.y ?? 0}" r="3"/>`,
+        // The hit on arrival. A ring of its own rather than growing the dot,
+        // so nothing has to animate `r` — `transform` on a fill-box origin is
+        // the safe way to scale an SVG circle.
+        `<circle class="arrival" data-to="${esc(`${d.module}.${fn.name}`)}"` +
+          ` cx="${DOT_X}" cy="${fn.y ?? 0}" r="3.5"/>`,
         `<text class="rfn-name" x="${DOT_X + 14}" y="${(fn.y ?? 0) + 4}">${esc(fn.name)}</text>`,
         `</g>`,
       );

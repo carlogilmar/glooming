@@ -56,6 +56,26 @@
 
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
+
+  /* ---- motion, in two tiers (see mockup/motion.html) ----------------------
+     Cadence is a design token like a colour is. 2.1s was already repeated in
+     four places by hand — it is Xray's tmPulse timing, carried over on purpose —
+     and a fifth copy was one edit away from drifting.
+
+     AMBIENT is "this is the state right now": infinite, and the app's budget for
+     it is already spent on the focus pulses and the treemap. Nothing added since
+     loops, deliberately — more infinite motion is the one way to make this
+     actively worse.
+
+     TRANSIENT is "this just happened": it runs once and stops. --trace borrows
+     the beat `focus.leaving` uses for the read-mode crossfade, so a connection
+     being drawn and a selection handing over feel like the same tempo. */
+  --slow:  2.1s;    /* ambient: focus pulses, the loading orb */
+  --calm:  1.9s;    /* ambient: the treemap's top three, kept distinct */
+  --fast:  0.18s;   /* transient: a thing arrived */
+  --trace: 0.62s;   /* transient: a connection being drawn */
+  --ring:  0.7s;    /* transient: one pulse, then nothing */
+  --ease:  cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
 /* Scoped to a CLASS, not to `html`, so a subtree can opt into the dark palette

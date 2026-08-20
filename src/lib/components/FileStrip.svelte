@@ -34,6 +34,32 @@
   /** Removing is destructive enough to confirm, and cheap enough to confirm inline. */
   let confirming = $state<string | null>(null);
 
+  /**
+   * Paths whose dot has just turned green.
+   *
+   * A hollow dot means "you opened this and never wrote about it". The moment
+   * your prose first names something in the file, that stops being true — and a
+   * state change *you* caused is the one place a small reward is honest. Tracked
+   * against the previous set rather than the current one, because the animation
+   * is about the transition, not the state.
+   */
+  let seen = $state<Set<string>>(new Set());
+  let earned = $state<Set<string>>(new Set());
+
+  $effect(() => {
+    const now = referenced;
+    const fresh = [...now].filter((p) => !seen.has(p));
+    // First paint of an already-written note is not an achievement: seed the
+    // baseline silently, and only celebrate what changes afterwards.
+    const baseline = seen.size === 0 && !earned.size;
+    seen = new Set(now);
+    if (baseline || !fresh.length) return;
+
+    earned = new Set([...earned, ...fresh]);
+    const off = setTimeout(() => (earned = new Set()), 900);
+    return () => clearTimeout(off);
+  });
+
   type State = "stale" | "missing" | "written" | "unread";
 
   function stateOf(f: ReadingFile): State {
@@ -60,6 +86,7 @@
         <button
           class="tab {st}"
           class:on={f.path === current}
+          class:earned={earned.has(f.path)}
           class:removable={!f.origin}
           role="tab"
           aria-selected={f.path === current}
@@ -199,6 +226,45 @@
   .tab.unread i {
     background: transparent;
     box-shadow: inset 0 0 0 1.5px var(--fg-faint);
+  }
+  /* Earning it: the dot fills, and one ring leaves. */
+  .tab.earned i {
+    animation: fill var(--fast) var(--ease) both;
+  }
+  .tab.earned i::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    border: 1.5px solid var(--pub);
+    animation: dotring var(--ring) var(--ease) both;
+  }
+  @keyframes fill {
+    from {
+      transform: scale(0.4);
+    }
+    to {
+      transform: scale(1);
+    }
+  }
+  @keyframes dotring {
+    0% {
+      opacity: 0.9;
+      transform: scale(0.6);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(1.9);
+    }
+  }
+  /* Motion off: the dot is simply green, which was always the actual message. */
+  @media (prefers-reduced-motion: reduce) {
+    .tab.earned i {
+      animation: none;
+    }
+    .tab.earned i::after {
+      display: none;
+    }
   }
   .tab.missing .name {
     text-decoration: line-through;

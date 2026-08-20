@@ -104,6 +104,8 @@ mockup/kinds.html              config / test / fallback — the non-module kinds
 mockup/reading.html            scroll-driven reading, first cut
 mockup/authoring.html          read mode as shipped, plus the edge cases
 mockup/group.html              a reading across several files
+mockup/motion.html             the animation contract, replayable
+scripts/motion-audit.py        every animation vs its reduced-motion rule
 app-icon.png                   icon source (1024², RGBA); also copied to static/
 IMPLEMENTATION_PLAN.md         the reasoning behind every decision here
 README.md                      user-facing: clone, install, run, build
@@ -622,6 +624,105 @@ reconciliation does nothing at all. The stats, surface and deps blocks are left
 alone; re-seed the doc if you want them refreshed.
 
 If you touch this file, the tests in it are the specification.
+
+### Motion means something
+
+`mockup/motion.html` is the contract — standalone and replayable, with a reduced
+motion toggle, because a motion spec you cannot re-watch is not a spec.
+
+**Cadence is a design token, like a colour.** `2.1s` had already been typed out
+in four places by hand and a fifth copy was one edit from drifting, so it lives
+in `app.css` with the rest, in **two tiers**:
+
+| Token | | Means |
+|---|---|---|
+| `--slow` | 2.1s | ambient — Xray's `tmPulse` beat: the focus pulses, the orb |
+| `--calm` | 1.9s | ambient — the treemap's top three, kept distinct |
+| `--fast` | 0.18s | transient — a thing arrived |
+| `--trace` | 0.62s | transient — a connection being drawn |
+| `--ring` | 0.7s | transient — one pulse, then nothing |
+
+**Nothing added since the first pass is ambient**, and that is deliberate rather
+than incidental: the app's budget for infinite motion is already spent, and more
+of it is the single easiest way to make this worse. `--trace` borrows the beat
+`focus.leaving` uses for the read-mode crossfade, so a connection being drawn and
+a selection handing over feel like one tempo.
+
+Each animation carries information rather than decorating:
+
+- **The reach block traces outward.** A static boundary shows you *that*
+  `create_user/1` reaches `Repo.insert/1`, never that the call goes **out**. A
+  travelling `stroke-dashoffset` does. The far dot then takes one ring on arrival,
+  fired on a 260ms timer so it reads as the *consequence* of the dash getting
+  there — both at once is the static picture again with extra noise. The ring is
+  its own `<circle>` scaled by `transform` on a `fill-box` origin, because `r` is
+  not reliably animatable and this way the renderer supplies no geometry for it.
+- **Opening a file points at the blank page.** The pane rises, then 260ms later a
+  ring expands from the **Explain invitation** — not the pane. "A file arrived" is
+  decoration; you know, you just opened it. The invitation is found
+  *structurally*: the last paragraph of the doc, containing nothing but emphasis.
+  That is what `seed.rs` writes, and **the moment you type a word it stops
+  matching** — so nothing has to remember whether a doc is "fresh", and the nudge
+  only ever appears on a doc you have not written in.
+- **A reference arrives; it never fades in.** The rule from the read-mode notes
+  still holds — transitioning the chip's *fill* left two references looking
+  current at once. So the outgoing chip loses its state in the same frame and only
+  the **incoming** one animates: an underline wiping in from the left. Hover's
+  border is suppressed on an active chip, or one word gets two underlines.
+- **The directory arrives in order.** `--i` per row in `surface.ts`, staggered
+  16ms in CSS, and **capped at row 12** — 200 functions would otherwise cascade
+  for 3.4s, and waiting on an animation to look a name up is worse than no
+  animation. Both columns share the index so they arrive together.
+- **The dot earns its colour.** `FileStrip` diffs `referenced` against the
+  previous set, so this fires on the *transition* rather than the state — and the
+  first paint of an already-written note is seeded silently, because that is not
+  an achievement. A state change you caused is the one place a small reward is
+  honest.
+- **The trigger band flashes per step.** It showed you *where* the hand-over
+  happens but never *that* it happened, which is the difference between "the code
+  changed on its own" and "I did that by scrolling". Only on an actual step
+  change; every scroll frame would be noise, and noise is what gets animation
+  switched off.
+
+**Arrival animations are gated on `opened`, not on render.** `html` is derived
+from `markdown`, so it re-renders on every keystroke — an unguarded stagger
+re-cascades the surface block while you type. The shell bumps `opened` only when
+the *doc id* changes (adding a file replaces `doc` too, and re-cascading because
+you opened one more file is exactly that restlessness), and `DocPane` puts
+`.arriving` on the container for one beat.
+
+**Restarting a CSS animation needs a forced reflow** — remove the class, read
+`offsetWidth`, add it back. Without the read the browser coalesces both changes
+into one frame and nothing runs. That single awkwardness is the whole reason an
+animation library looks tempting; it is three lines, and it appears in
+`arriveAt`, `pulseInvitation` and the band flash.
+
+**Reduced motion: the motion stops, the meaning survives.** Every rule keeps its
+*end* state — the ring becomes a static outline, the underline stays drawn, the
+focus bar keeps the bright end of its pulse — and the trace hands direction over
+to an **arrowhead** that is invisible the rest of the time. Honouring the setting
+by deleting the signal would be worse than ignoring it.
+
+`scripts/motion-audit.py` enforces this, and it compares **selector text**, not
+just animation names. That is not pedantry: on its first run it found three rules
+that were written, looked correct, and could never apply — each had a *shorter*
+selector than the rule it meant to override (`.edge.lit` against
+`svg.focusing .edge.lit`) and lost on specificity. It also found `hintIn` had
+never been covered at all. Run it after touching any animation:
+
+```bash
+python3 scripts/motion-audit.py     # exits non-zero on an uncovered animation
+```
+
+**What was refused** is in `mockup/motion.html`'s last section, and matters more
+than the six above because these are the things a library makes easy: counting
+the stats up (it delays reading the number, which was the whole point of the
+block), any motion in the code pane's *text* (that surface is for reading — the
+existing bar breathes in the gutter, deliberately, and stays out of the glyphs),
+route transitions (there is one route), and easing scroll position (read mode
+already drives the code pane *from* scroll; animating scroll from scroll fights
+the trackpad). And the library itself: all six are `class` + `@keyframes`, none
+interpolate arbitrary values, none need a timeline or physics.
 
 ### Focus is one shared store
 

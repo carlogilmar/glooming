@@ -975,7 +975,7 @@
     text-transform: none;
     letter-spacing: 0;
     font-size: 10.5px;
-    animation: hintIn 0.14s ease-out;
+    animation: hintIn var(--fast) ease-out;
   }
 
   /* Floats over the code rather than sitting in the flow, so appearing and
@@ -998,7 +998,7 @@
     font-size: 11.5px;
     text-align: left;
     cursor: pointer;
-    animation: hintIn 0.12s ease-out;
+    animation: hintIn var(--fast) ease-out;
   }
   .sticky:hover {
     background: var(--bg-inset);
@@ -1305,7 +1305,25 @@
   }
 
   .code .row.hit.head {
-    animation: rowPulse 2.1s ease-in-out infinite;
+    animation: rowPulse var(--slow) ease-in-out infinite;
+  }
+  /* The rule for every reduced-motion block in this app: the motion stops, the
+     MEANING survives. This bar is how you find the top of a selection, so it
+     keeps the bright end of its own pulse rather than disappearing. Honouring
+     the setting by removing the signal would be worse than ignoring it. */
+  @media (prefers-reduced-motion: reduce) {
+    .code .row.hit.head {
+      animation: none;
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
+    /* The pills and the sticky header: they translate as they fade in, and a
+       translate is the part of "arrival" that reduced motion is actually asking
+       about. They still appear — just without travelling to get there. */
+    .copied,
+    .sticky,
+    .focushint {
+      animation: none;
+    }
   }
   .code .row.hit.tail {
     box-shadow:
@@ -1362,7 +1380,7 @@
     color: var(--fg-dim);
     white-space: nowrap;
     cursor: pointer;
-    animation: hintIn 0.16s ease-out;
+    animation: hintIn var(--fast) ease-out;
   }
   .focushint:hover {
     color: var(--fg);

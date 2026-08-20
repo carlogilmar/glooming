@@ -18,6 +18,7 @@
     onreconcile,
     onshowfile,
     onrefs,
+    opened = 0,
   }: {
     markdown: string;
     /** Every file the reading covers — references may point into any of them. */
@@ -35,7 +36,62 @@
     onshowfile?: (path: string) => Promise<void> | void;
     /** Which files the prose references — the file strip's hollow-dot signal. */
     onrefs?: (paths: Set<string>) => void;
+    /**
+     * Bumped whenever a *different* reading is opened.
+     *
+     * The arrival animations have to be gated on something, because `html` is
+     * derived from `markdown` and re-renders on every keystroke — an unguarded
+     * stagger would re-cascade the surface block while you type, which is the
+     * exact behaviour that makes people disable animation. This token changes
+     * once per doc, so `.arriving` is on for one beat and then gone.
+     */
+    opened?: number;
   } = $props();
+
+  /**
+   * Play the arrival animations once per reading.
+   *
+   * `.arriving` is what every "this just appeared" rule hangs off, so the class
+   * is added on a new `opened` token and removed a beat later. Re-renders in
+   * between — every keystroke — carry no class and therefore no animation.
+   */
+  $effect(() => {
+    opened;
+    const el = container;
+    if (!el) return;
+    el.classList.add("arriving");
+    const off = setTimeout(() => el.classList.remove("arriving"), 900);
+    // The invitation is pointed at *after* the page has settled. Both at once
+    // reads as one busy event; sequenced, the second one is clearly pointing.
+    const ping = setTimeout(pulseInvitation, 260);
+    return () => {
+      clearTimeout(off);
+      clearTimeout(ping);
+      el.classList.remove("arriving");
+    };
+  });
+
+  /**
+   * One ring around the Explain invitation, on a doc nobody has written in.
+   *
+   * Identified structurally rather than by a marker: the last paragraph of the
+   * doc, containing nothing but emphasis. That is what `seed.rs` writes — and
+   * the moment you type a word it stops matching, which is exactly when the
+   * nudge should stop. Nothing has to remember whether the doc is "fresh".
+   */
+  function pulseInvitation() {
+    if (!container) return;
+    const paras = container.querySelectorAll<HTMLElement>(":scope > p");
+    const last = paras[paras.length - 1];
+    const em = last?.firstElementChild;
+    if (!last || last.children.length !== 1 || em?.tagName !== "EM") return;
+    if (em.textContent?.trim() !== last.textContent?.trim()) return;
+
+    last.classList.remove("invite-pulse");
+    void last.offsetWidth;
+    last.classList.add("invite-pulse");
+    setTimeout(() => last.classList.remove("invite-pulse"), 1000);
+  }
 
   const originFile = $derived(originOf(files));
   const currentFile = $derived(byPath(files, current) ?? originFile);
@@ -60,6 +116,7 @@
   let body = $state<HTMLDivElement | null>(null);
   let pane = $state<HTMLDivElement | null>(null);
   let bandTop = $state(0);
+  let bandEl = $state<HTMLDivElement | null>(null);
 
   // ---- scroll-driven reading ----------------------------------------------
   // The doc is the text and the code pane is the sticky graphic, which is the
@@ -317,6 +374,34 @@
     for (const el of host.querySelectorAll(".lit, .on")) el.classList.remove("lit", "on");
   }
 
+  /**
+   * Land the arrival ring where the trace was heading.
+   *
+   * Timed rather than instant, so the hit reads as the *consequence* of the dash
+   * getting there — firing both together says "two things lit up", which is the
+   * static picture again with extra noise.
+   *
+   * Restarting a CSS animation needs the class off, a forced reflow, then the
+   * class back on: without the reflow the browser coalesces both changes in one
+   * frame and nothing runs at all.
+   */
+  let arriveTimer: ReturnType<typeof setTimeout> | null = null;
+  function arriveAt(host: HTMLElement, targets: string[]) {
+    if (arriveTimer) clearTimeout(arriveTimer);
+    for (const el of host.querySelectorAll(".arrival.hit")) el.classList.remove("hit");
+    if (!targets.length) return;
+
+    arriveTimer = setTimeout(() => {
+      for (const to of targets) {
+        const ring = host.querySelector<SVGElement>(`.arrival[data-to="${CSS.escape(to)}"]`);
+        if (!ring) continue;
+        ring.classList.remove("hit");
+        void (ring as unknown as HTMLElement).offsetWidth;
+        ring.classList.add("hit");
+      }
+    }, 260);
+  }
+
   function neutralReach(host: HTMLElement) {
     host.querySelector("svg")?.classList.remove("focusing");
     const readout = host.querySelector(".readout");
@@ -335,7 +420,11 @@
     edges.forEach((e) => e.classList.add("lit"));
     for (const to of targets) {
       host.querySelector(`.rfn[data-to="${CSS.escape(to)}"]`)?.classList.add("lit");
+      host
+        .querySelector(`.head[data-from="${CSS.escape(sig)}"][data-to="${CSS.escape(to)}"]`)
+        ?.classList.add("lit");
     }
+    arriveAt(host, targets);
 
     const readout = host.querySelector(".readout");
     if (readout) {
@@ -358,7 +447,11 @@
       host
         .querySelector(`.edge[data-from="${CSS.escape(c)}"][data-to="${CSS.escape(to)}"]`)
         ?.classList.add("lit");
+      host
+        .querySelector(`.head[data-from="${CSS.escape(c)}"][data-to="${CSS.escape(to)}"]`)
+        ?.classList.add("lit");
     }
+    arriveAt(host, [to]);
 
     const readout = host.querySelector(".readout");
     if (readout) {
@@ -498,6 +591,16 @@
       // effect, keyed on focus.sig — one mechanism, so scrolling and clicking
       // can never disagree about which reference is current.
       steps.forEach((p, n) => p.classList.toggle("now", n === i));
+
+      // And the band takes one flash, so the hand-over is something you *see*
+      // happen rather than a line you infer. Only on an actual step change —
+      // firing every scroll frame is noise, and noise is what gets animation
+      // switched off.
+      if (bandEl) {
+        bandEl.classList.remove("fire");
+        void bandEl.offsetWidth;
+        bandEl.classList.add("fire");
+      }
     });
   }
 
@@ -666,7 +769,7 @@
   {#if reading}
     <!-- Where one paragraph hands over to the next. Quiet on purpose: it makes
          the mechanic legible without becoming a debug overlay. -->
-    <div class="band" style:top="{bandTop}px"></div>
+    <div class="band" style:top="{bandTop}px" bind:this={bandEl}></div>
   {/if}
   <div class="panehead">
     {#if dirty}<span class="dot" title="unsaved"></span>{/if}
@@ -780,7 +883,32 @@
     height: 0;
     z-index: 3;
     pointer-events: none;
-    border-top: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
+    border-top: 1px solid color-mix(in srgb, var(--read) 30%, transparent);
+  }
+  /* One flash per step. Without it the band shows you *where* the hand-over
+     happens but never *that* it happened — which is the difference between "the
+     code changed on its own" and "I did that by scrolling". Drawn on ::after so
+     the hairline itself never moves. */
+  .band::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -1px;
+    height: 1.5px;
+    background: var(--read);
+    opacity: 0;
+  }
+  .band:global(.fire)::after {
+    animation: bandfire var(--ring) var(--ease) both;
+  }
+  @keyframes bandfire {
+    0% {
+      opacity: 0.85;
+    }
+    100% {
+      opacity: 0;
+    }
   }
   /* Read mode's surface is `.dark` for the semantic colours plus
      `.reading-surface` for a warm set of neutrals — both live in app.css, and
@@ -1095,7 +1223,7 @@
   :global(.fnrow.active) {
     background: var(--sel);
     border-left-color: var(--accent);
-    animation: fnPulse 2.1s ease-in-out infinite;
+    animation: fnPulse var(--slow) ease-in-out infinite;
   }
   :global(.fnrow.active .sig) {
     color: var(--accent);
@@ -1111,7 +1239,7 @@
     top: 9px;
     color: var(--accent);
     font-size: 11px;
-    animation: caretNudge 2.1s ease-in-out infinite;
+    animation: caretNudge var(--slow) ease-in-out infinite;
   }
   @keyframes fnPulse {
     0%,
@@ -1206,7 +1334,7 @@
      this size — the fill is what the eye actually catches. Staggered so they
      read as three things, not one flashing block. */
   :global(.tm-top) {
-    animation: tmBreathe 1.9s ease-in-out infinite;
+    animation: tmBreathe var(--calm) ease-in-out infinite;
   }
   :global(.tm-tile:nth-of-type(2) .tm-top) {
     animation-delay: 0.25s;
@@ -1227,6 +1355,41 @@
     :global(.tm-top) {
       animation: none;
       filter: brightness(1.3);
+    }
+    /* The two that ran forever and ignored the setting entirely. Same rule as
+       everywhere else: keep the bright end of the pulse, drop the pulse. */
+    :global(.fnrow.active) {
+      animation: none;
+      box-shadow:
+        inset 3px 0 0 0 var(--accent),
+        0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+    :global(.fnrow.active::after) {
+      animation: none;
+      opacity: 0.75;
+    }
+    /* And the transient ones: each keeps its END state, so the ring still says
+       "here", the underline is still drawn, and a step still marks its band. */
+    :global(.doc p.invite-pulse::after) {
+      animation: none;
+      opacity: 0.35;
+    }
+    :global(.doc code.ref.active::after) {
+      animation: none;
+      transform: scaleX(1);
+    }
+    :global(.doc.arriving .lgtm-surface .row) {
+      animation: none;
+    }
+    .band:global(.fire)::after {
+      animation: none;
+    }
+    :global(.lgtm-deps svg.focusing .edge.lit) {
+      stroke-dasharray: none;
+      animation: none;
+    }
+    :global(.lgtm-deps .arrival.hit) {
+      animation: none;
     }
   }
 
@@ -1383,6 +1546,60 @@
   }
   :global(.lgtm-deps svg.focusing .edge.lit) {
     opacity: 0.95;
+    /* The dash TRAVELS, outward. This is the only thing in the block that can
+       say which way the call goes — a static boundary shows you *that*
+       create_user/1 connects to Repo.insert/1, never that it reaches out. */
+    stroke-dasharray: 7 9;
+    animation: trace var(--trace) linear infinite;
+  }
+  @keyframes trace {
+    to {
+      stroke-dashoffset: -32;
+    }
+  }
+
+  /* The arrowhead is the reduced-motion stand-in for the travelling dash:
+     hidden while the dash is doing the job, and the only thing carrying
+     direction once motion is off. */
+  :global(.lgtm-deps .head) {
+    opacity: 0;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :global(.lgtm-deps svg.focusing .head.lit) {
+      opacity: 0.95;
+    }
+    :global(.lgtm-deps .head.app) {
+      fill: var(--accent);
+    }
+  }
+
+  /* The hit on arrival: one ring, timed to land when the trace would have got
+     there. Scaled by transform on a fill-box origin — `r` is not reliably
+     animatable, and this needs no geometry from the renderer. */
+  :global(.lgtm-deps .arrival) {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 1.5;
+    opacity: 0;
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+  :global(.lgtm-deps .arrival.hit) {
+    animation: arrive var(--ring) var(--ease) both;
+  }
+  @keyframes arrive {
+    0% {
+      opacity: 0.9;
+      transform: scale(0.6);
+    }
+    70% {
+      opacity: 0.18;
+      transform: scale(2.6);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(3);
+    }
   }
 
   :global(.lgtm-deps .mod-name) {
@@ -1990,6 +2207,64 @@
     font-weight: 600;
   }
 
+  /* ---- arrival: the invitation ----
+     A doc you have not written in has an empty Explain section, and that
+     emptiness is the whole nudge of the tool — so the ring expands from the
+     invitation rather than from the pane. "A file arrived" is decoration; you
+     know, you just opened it. "You, here" is not.
+
+     Once. An infinite pulse around the thing you are about to type into would
+     be unbearable inside a minute. */
+  :global(.doc p.invite-pulse) {
+    position: relative;
+  }
+  :global(.doc p.invite-pulse::after) {
+    content: "";
+    position: absolute;
+    inset: -7px -9px;
+    border-radius: 8px;
+    border: 1.5px solid var(--accent);
+    pointer-events: none;
+    animation: ring var(--ring) var(--ease) both;
+  }
+  @keyframes ring {
+    0% {
+      opacity: 0.9;
+      transform: scale(0.985);
+    }
+    70% {
+      opacity: 0.14;
+      transform: scale(1.02);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(1.03);
+    }
+  }
+
+  /* ---- arrival: the directory ----
+     Forty names appearing at once reads as a wall; cascading reads as arriving,
+     and the eye follows the first column down — which is the order the block
+     wants to be read in anyway.
+
+     The stagger is CAPPED. A 200-function module would otherwise cascade for
+     four seconds, and waiting on an animation to look a name up is worse than
+     no animation at all. Both columns share the index so they arrive together. */
+  :global(.doc.arriving .lgtm-surface .row) {
+    animation: rowin var(--fast) var(--ease) both;
+    animation-delay: calc(min(var(--i, 0), 12) * 16ms);
+  }
+  @keyframes rowin {
+    from {
+      opacity: 0;
+      transform: translateY(3px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
   /* ---- scroll-driven reading ----
      Inline code that names something in this file. No new syntax: the markdown
      stays portable, which is why references are backticks and not `{{…}}`. */
@@ -2006,8 +2281,38 @@
        code pane, where it means something; here the hand-over is instant. */
     transition: border-color 0.2s ease;
   }
-  :global(.doc code.ref:hover) {
+  /* Not on an active chip: it already has an underline wiping in, and both at
+     once is two lines under one word. */
+  :global(.doc code.ref:not(.active):hover) {
     border-bottom-color: var(--accent);
+  }
+
+  /* The arrival. An underline wipes in from the left on the chip that just
+     became current — and ONLY on that one. The outgoing chip loses its state in
+     the same frame, which is the rule the comment above is about: animating the
+     fill left two references looking current at once. */
+  :global(.doc code.ref) {
+    position: relative;
+  }
+  :global(.doc code.ref::after) {
+    content: "";
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    bottom: -2.5px;
+    height: 1.5px;
+    border-radius: 1px;
+    background: var(--accent);
+    transform: scaleX(0);
+    transform-origin: left;
+  }
+  :global(.doc code.ref.active::after) {
+    animation: wipe var(--fast) var(--ease) forwards;
+  }
+  @keyframes wipe {
+    to {
+      transform: scaleX(1);
+    }
   }
   :global(.doc code.ref.active) {
     background: var(--accent);

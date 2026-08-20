@@ -85,6 +85,8 @@ pnpm build            # frontend production build
 
 cargo test   --manifest-path src-tauri/Cargo.toml    # parser, seeder, reconciler, DB
 cargo clippy --manifest-path src-tauri/Cargo.toml
+
+python3 scripts/motion-audit.py   # every animation has a reduced-motion rule
 ```
 
 ## Building the macOS app
@@ -124,6 +126,13 @@ pnpm tauri icon       # no arguments — app-icon.png is the default input
 Clicking a function focuses it. There are **four ways out** and they all work:
 `Esc`, clicking the row again, clicking empty space in the code pane, or
 clicking the hint pill at the bottom.
+
+Motion is used sparingly and always to say something: the reach diagram traces a
+call *outward* along its edge, opening a file rings the empty Explain section
+rather than the whole pane, a file's tab dot fills the moment your prose first
+mentions it, and read mode's trigger band flashes as each paragraph hands over.
+All of it respects `prefers-reduced-motion` — the movement stops, the meaning
+stays.
 
 The code pane also has **vim motions** (`j`/`k`, `gg`/`G`, `42G`, `H`/`M`/`L`,
 `{`/`}`, `⌃d`/`⌃u`, `zz`, `yy`), **`/` search** that marks every occurrence in
