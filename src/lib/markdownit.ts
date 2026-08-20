@@ -5,15 +5,16 @@
 import MarkdownIt from "markdown-it";
 import hljs from "highlight.js/lib/core";
 import elixir from "highlight.js/lib/languages/elixir";
-import { parseBlock, withOutline, type FnEntry } from "$lib/lgtmBlock";
+import { parseBlock, parseInfo, withOutline, type FnEntry } from "$lib/lgtmBlock";
 import { renderTreemap } from "$lib/treemap";
 import { renderStats } from "$lib/stats";
 import { renderDeps } from "$lib/deps";
 import { renderSurface } from "$lib/surface";
 import { renderSettings } from "$lib/settings";
 import { renderTests } from "$lib/tests";
-import { looksLikeRef, resolveRef } from "$lib/refs";
-import type { Outline } from "$lib/ipc";
+import { looksLikeRef, refResolver } from "$lib/refs";
+import { fileForModule, moduleOf, origin } from "$lib/fileset";
+import type { ReadingFile } from "$lib/ipc";
 
 hljs.registerLanguage("elixir", elixir);
 
@@ -32,19 +33,42 @@ function escapeHtml(s: string): string {
 }
 
 /**
- * `outline` is passed in so rendered rows carry the line numbers they jump to.
- * It changes whenever the file is re-parsed, so the instance is rebuilt rather
- * than mutated — markdown rendering is cheap and this keeps it stateless.
+ * Tag every block with the file it is about.
+ *
+ * A row in a block belonging to billing.ex has to switch the code pane to
+ * billing.ex when you click it, and the renderers are shared with the
+ * single-file case — so rather than threading a path through six signatures,
+ * the attribute is added to the one element each of them returns. Every block
+ * renderer's output starts with `<div`, which is what makes this safe.
  */
+function owned(html: string, path: string | null): string {
+  if (!path || !html.startsWith("<div")) return html;
+  return html.replace("<div", `<div data-path="${escapeHtml(path)}"`);
+}
+
 /**
- * `outline` is the ONLY live input: blocks carry their own data as text, and
- * the outline supplies just the line numbers rows and tiles jump to.
+ * The file set is the ONLY live input: blocks carry their own data as text, and
+ * the outlines supply just the line numbers rows and tiles jump to.
+ *
+ * Blocks belong to the file the doc was seeded from — except when the block
+ * names its module, which `lgtm:functions`, `lgtm:surface` and `lgtm:deps` all
+ * do. That attribute was already in the markdown for readability; in a
+ * multi-file reading it becomes the thing that finds the right outline, instead
+ * of the current tab's being assumed.
  */
 export function createMarkdownIt(
-  outline: Outline | null,
-  filename = "",
-  lineCount = 0,
+  files: ReadingFile[],
+  currentPath: string | null = null,
 ): MarkdownIt {
+  const home = origin(files);
+  const outline = home?.outline ?? null;
+  const filename = home?.filename ?? "";
+
+  /** The file a block is about: whatever its `module=` names, else the origin. */
+  const blockFile = (info: string) => {
+    const named = parseInfo(info).module;
+    return (named ? fileForModule(files, named) : null) ?? home;
+  };
   const md = new MarkdownIt({
     html: false,
     linkify: true,
@@ -73,7 +97,7 @@ export function createMarkdownIt(
     // ```lgtm:stats — file-level facts, drawn from the outline plus git.
     if (info.startsWith(STATS_TAG)) {
       try {
-        return renderStats(token.content);
+        return owned(renderStats(token.content), home?.path ?? null);
       } catch {
         return defaultFence(tokens, idx, opts, env, self);
       }
@@ -82,7 +106,7 @@ export function createMarkdownIt(
     // ```lgtm:settings — a config script's tree, and where each value comes from.
     if (info.startsWith(SETTINGS_TAG)) {
       try {
-        return renderSettings(token.content, filename);
+        return owned(renderSettings(token.content, filename), home?.path ?? null);
       } catch {
         return defaultFence(tokens, idx, opts, env, self);
       }
@@ -91,7 +115,10 @@ export function createMarkdownIt(
     // ```lgtm:tests — describes, setups and tests.
     if (info.startsWith(TESTS_TAG)) {
       try {
-        return renderTests(token.content, outline?.tests?.module ?? "");
+        return owned(
+          renderTests(token.content, outline?.tests?.module ?? ""),
+          home?.path ?? null,
+        );
       } catch {
         return defaultFence(tokens, idx, opts, env, self);
       }
@@ -100,7 +127,11 @@ export function createMarkdownIt(
     // ```lgtm:surface — the directory: public and private, sorted by name.
     if (info.startsWith(SURFACE_TAG)) {
       try {
-        return renderSurface(token.content, outline?.modules?.[0]?.name ?? "");
+        const f = blockFile(info);
+        return owned(
+          renderSurface(token.content, moduleOf(f)?.name ?? ""),
+          f?.path ?? null,
+        );
       } catch {
         return defaultFence(tokens, idx, opts, env, self);
       }
@@ -109,7 +140,8 @@ export function createMarkdownIt(
     // ```lgtm:deps — what the module reaches, drawn from the edges in the text.
     if (info.startsWith(DEPS_TAG)) {
       try {
-        return renderDeps(token.content, outline?.modules?.[0] ?? null);
+        const f = blockFile(info);
+        return owned(renderDeps(token.content, moduleOf(f)), f?.path ?? null);
       } catch {
         return defaultFence(tokens, idx, opts, env, self);
       }
@@ -119,7 +151,8 @@ export function createMarkdownIt(
     // body is ignored; the shape of the code is not something you hand-edit.
     if (info.startsWith(TREEMAP_TAG)) {
       try {
-        return renderTreemap(token.content, outline?.modules?.[0] ?? null);
+        const f = blockFile(info);
+        return owned(renderTreemap(token.content, moduleOf(f)), f?.path ?? null);
       } catch {
         return defaultFence(tokens, idx, opts, env, self);
       }
@@ -130,24 +163,41 @@ export function createMarkdownIt(
     }
 
     try {
+      const f = blockFile(info);
       let block = parseBlock(info, token.content);
-      const module = outline?.modules?.[0];
+      const module = moduleOf(f);
       if (module) {
         block = withOutline(block, module.functions);
       }
-      return renderFunctionsBlock(block.module ?? module?.name ?? "", block.entries, md);
+      return owned(
+        renderFunctionsBlock(block.module ?? module?.name ?? "", block.entries, md),
+        f?.path ?? null,
+      );
     } catch {
       // A malformed block must never take the doc down with it.
       return defaultFence(tokens, idx, opts, env, self);
     }
   };
 
-  // Inline code that names something in this module becomes a reference: a
-  // click target, and the anchor a scroll-driven reading steps through. Only
-  // for modules — a config or a test suite is a directory, not a narrative, so
-  // there is nothing to walk.
-  if (outline?.kind === "module") {
-    const module = outline.modules?.[0] ?? null;
+  // Inline code that names something in the reading becomes a reference: a click
+  // target, and the anchor a scroll-driven reading steps through. Only when
+  // there is a module somewhere in the set — a config or a test suite is a
+  // directory, not a narrative, so there is nothing to walk.
+  const walkable = files.some((f) => f.outline?.kind === "module");
+  if (walkable) {
+    const resolver = refResolver(files);
+
+    // The resolver threads a "current file" through the prose in document
+    // order, so it has to start clean on every pass. `render` is the only entry
+    // point the doc pane uses, which makes this the one honest place to reset —
+    // and doing it here rather than per-reference is what keeps an unqualified
+    // name meaning "the file this paragraph is about".
+    const baseRender = md.render.bind(md);
+    md.render = (src: string, env?: unknown) => {
+      resolver.reset();
+      return baseRender(src, env as never);
+    };
+
     const defaultInline =
       md.renderer.rules.code_inline ??
       ((tokens, idx, opts, _env, self) => self.renderToken(tokens, idx, opts));
@@ -156,18 +206,25 @@ export function createMarkdownIt(
       const text = tokens[idx].content.trim();
       if (!looksLikeRef(text)) return defaultInline(tokens, idx, opts, env, self);
 
-      const hit = resolveRef(text, module, lineCount);
+      const hit = resolver.resolve(text);
       if (hit === "dangling") {
         return (
-          `<code class="ref broken" title="not in this file any more">${escapeHtml(text)}</code>`
+          `<code class="ref broken" title="not in this reading any more">` +
+          `${escapeHtml(text)}</code>`
         );
       }
       if (!hit) return defaultInline(tokens, idx, opts, env, self);
 
+      // `data-path` is what lets a reference point into a file other than the
+      // one on screen: clicking it, or scrolling onto it in read mode, switches
+      // the code pane first and then selects.
+      const away = hit.path !== currentPath;
       return (
-        `<code class="ref" data-sig="${escapeHtml(hit.sig)}"` +
-        ` data-line="${hit.start}" data-end="${hit.end}" role="button" tabindex="0">` +
-        `${escapeHtml(text)}</code>`
+        `<code class="ref${away ? " away" : ""}" data-sig="${escapeHtml(hit.sig)}"` +
+        ` data-path="${escapeHtml(hit.path)}"` +
+        ` data-line="${hit.start}" data-end="${hit.end}" role="button" tabindex="0"` +
+        (away ? ` title="in ${escapeHtml(hit.filename)}"` : "") +
+        `>${escapeHtml(text)}</code>`
       );
     };
   }

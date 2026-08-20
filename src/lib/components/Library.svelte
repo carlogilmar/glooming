@@ -161,9 +161,15 @@
                   <div class="what">
                     <b>Delete this explanation?</b>
                     <span>
-                      Removes the markdown you wrote for <code>{doc.filename}</code> and the source
-                      snapshot saved with it. This cannot be undone.
-                      <em>Your {doc.filename} file on disk is not touched.</em>
+                      Removes the markdown you wrote and the
+                      {doc.fileCount > 1
+                        ? `${doc.fileCount} source snapshots saved with it`
+                        : "source snapshot saved with it"}. This cannot be undone.
+                      <em>
+                        {doc.fileCount > 1
+                          ? `None of the ${doc.fileCount} files on disk are touched.`
+                          : `Your ${doc.filename} file on disk is not touched.`}
+                      </em>
                     </span>
                   </div>
                   <div class="acts">
@@ -178,7 +184,10 @@
               {:else}
                 <div class="main">
                   <b>{doc.title}</b>
-                  <span class="path">{doc.filename} · {prettyFolder(folderOf(doc))}</span>
+                  <span class="path">
+                    {doc.filename}{doc.fileCount > 1 ? ` +${doc.fileCount - 1}` : ""} ·
+                    {prettyFolder(folderOf(doc))}
+                  </span>
                 </div>
                 <div class="meta">
                   {#if doc.branch}<span class="branch">⑂ {doc.branch}</span>{/if}
@@ -407,11 +416,6 @@
     color: var(--fg-dim);
     line-height: 1.45;
     margin-top: 2px;
-  }
-  .confirm .what code {
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--fg);
   }
   .confirm .what em {
     font-style: normal;

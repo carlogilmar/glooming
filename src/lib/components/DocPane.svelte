@@ -5,26 +5,50 @@
   import FontStepper from "$lib/components/FontStepper.svelte";
   import { fontSize } from "$lib/stores/fontSize.svelte";
   import { focus } from "$lib/stores/focus.svelte";
-  import type { Outline } from "$lib/ipc";
+  import { byPath, hasModules, moduleOf, origin as originOf, vocabulary } from "$lib/fileset";
+  import type { ReadingFile } from "$lib/ipc";
 
   let {
     markdown = $bindable(""),
-    outline = null,
+    files = [],
+    current = null,
     filename = "",
-    lineCount = 0,
     dirty = false,
     stale = false,
     onreconcile,
+    onshowfile,
+    onrefs,
   }: {
     markdown: string;
-    outline: Outline | null;
+    /** Every file the reading covers — references may point into any of them. */
+    files: ReadingFile[];
+    /** The file on screen in the code pane. */
+    current: string | null;
     filename: string;
-    /** Lines in the file, so an out-of-range `L…` reference can be flagged. */
-    lineCount: number;
     dirty: boolean;
     stale: boolean;
     onreconcile?: () => void;
+    /**
+     * Bring a file to the front. Awaited, because a selection is only meaningful
+     * once the code pane is actually showing the file it refers to.
+     */
+    onshowfile?: (path: string) => Promise<void> | void;
+    /** Which files the prose references — the file strip's hollow-dot signal. */
+    onrefs?: (paths: Set<string>) => void;
   } = $props();
+
+  const originFile = $derived(originOf(files));
+  const currentFile = $derived(byPath(files, current) ?? originFile);
+
+  /** Switch the code pane if a reference points somewhere else. */
+  async function switchIfNeeded(path: string | null | undefined) {
+    if (path && path !== current) await onshowfile?.(path);
+  }
+
+  /** The file a clicked element belongs to — every block carries `data-path`. */
+  function ownerOf(el: HTMLElement): string | null {
+    return el.closest<HTMLElement>("[data-path]")?.dataset.path ?? current;
+  }
 
   // Scales the prose only — the blocks are data displays, not text, and keep
   // their own sizes so a table doesn't reflow when you nudge the reading size.
@@ -54,7 +78,9 @@
    */
   let activeRef = $state<number | null>(null);
 
-  const canRead = $derived(outline?.kind === "module");
+  // Any module anywhere in the reading is something to walk. A config script or
+  // a test suite on its own is a directory, not a narrative.
+  const canRead = $derived(hasModules(files));
 
   // ---- `/` to insert a reference --------------------------------------------
   // The function list costs nothing: the outline is already parsed. What this
@@ -149,9 +175,9 @@
     });
   }
 
-  // The line count is only needed so an `L900` reference on a 42-line file reads
-  // as dangling rather than resolving to nothing.
-  const md = $derived(createMarkdownIt(outline, filename, lineCount));
+  // The whole file set goes in: a reference may name a function in any of them,
+  // and each block finds its own file from the `module=` it already carried.
+  const md = $derived(createMarkdownIt(files, current));
   const html = $derived(md.render(markdown));
 
   /**
@@ -160,7 +186,7 @@
    * whole span in the code, the same as clicking a function does, rather than
    * dropping a cursor on the line it happens to start at.
    */
-  function selectBlock(target: HTMLElement): boolean {
+  async function selectBlock(target: HTMLElement): Promise<boolean> {
     // Inline references are here too: their span was already computed when the
     // reference was resolved (clauses, plus the @spec and @doc above), and an
     // `L30-34` reference has no function name to look up at all.
@@ -173,13 +199,24 @@
     if (start <= 0) return true;
     const end = parseInt(row.dataset.end ?? String(start), 10) || start;
 
+    // A reference can point into any file of the reading, so the pane has to be
+    // showing the right one before the span means anything.
+    const path = ownerOf(row);
+    const crossed = !!path && path !== current;
+    await switchIfNeeded(path);
+
     // The chip you clicked, not the first one that shares its name.
     activeRef = row.dataset.ref !== undefined ? Number(row.dataset.ref) : null;
-    focus.set(row.dataset.sig ?? `line ${start}`, [{ start, end }]);
+    focus.path = path;
+    const sig = row.dataset.sig ?? `line ${start}`;
+    // Crossing a file is a move, never a toggle: arriving somewhere new and
+    // being handed an empty selection would read as the click failing.
+    if (crossed) focus.select(sig, [{ start, end }]);
+    else focus.set(sig, [{ start, end }]);
     return true;
   }
 
-  function select(target: HTMLElement) {
+  async function select(target: HTMLElement) {
     // Table rows, treemap tiles and the reach block's own functions are all the
     // same gesture — every one of them carries data-sig.
     const row = target.closest<HTMLElement>(
@@ -188,33 +225,41 @@
     );
     if (!row) return false;
     const sig = row.dataset.sig ?? "";
-    const at = locate(sig, outline?.modules?.[0] ?? null);
+    // A block belongs to the file whose module it names, which may not be the
+    // file on screen — the reach diagram of one module is still clickable while
+    // you are standing in another.
+    const path = ownerOf(row);
+    const at = locate(sig, moduleOf(byPath(files, path) ?? currentFile));
     if (at) {
+      const crossed = !!path && path !== current;
+      await switchIfNeeded(path);
       // Clicked a table row or a tile, so there is no particular chip in mind —
       // the first mention of that name is the reasonable one to light.
       const chip = container?.querySelector<HTMLElement>(
         `.doc code.ref[data-sig="${CSS.escape(sig)}"]`,
       );
       activeRef = chip?.dataset.ref !== undefined ? Number(chip.dataset.ref) : null;
-      focus.set(sig, at.ranges, at.related, at.spec, at.doc);
+      focus.path = path;
+      if (crossed) focus.select(sig, at.ranges, at.related, at.spec, at.doc);
+      else focus.set(sig, at.ranges, at.related, at.spec, at.doc);
     }
     return true;
   }
 
   // The rendered block is raw HTML, so rows are wired by delegation rather than
   // per-row handlers.
-  function onClick(e: MouseEvent) {
+  async function onClick(e: MouseEvent) {
     const target = e.target as HTMLElement;
-    if (selectBlock(target) || select(target)) alignReading(target);
+    if ((await selectBlock(target)) || (await select(target))) alignReading(target);
   }
 
-  function onKey(e: KeyboardEvent) {
+  async function onKey(e: KeyboardEvent) {
     if (e.key !== "Enter" && e.key !== " ") return;
     const target = e.target as HTMLElement;
-    if (selectBlock(target) || select(target)) {
-      e.preventDefault();
-      alignReading(target);
-    }
+    // Prevented up front: the switch is awaited, and by the time it resolves the
+    // default scroll a space bar causes has already happened.
+    e.preventDefault();
+    if ((await selectBlock(target)) || (await select(target))) alignReading(target);
   }
 
   // ---- the reach block ----------------------------------------------------
@@ -396,7 +441,15 @@
       const end = parseInt(ref.dataset.end ?? "0", 10) || start;
       if (start > 0) {
         activeRef = Number(ref.dataset.ref ?? -1);
-        focus.step(ref.dataset.sig ?? `line ${start}`, [{ start, end }]);
+        const path = ref.dataset.path ?? current;
+        // A reading crosses files, so a step may be a file swap and a selection.
+        // The swap goes first — a span means nothing over the wrong source — and
+        // `focus.step` is told the path so it can skip the crossfade, which has
+        // nothing to fade between across two files.
+        void (async () => {
+          await switchIfNeeded(path);
+          focus.step(ref.dataset.sig ?? `line ${start}`, [{ start, end }], null, null, path);
+        })();
       }
 
       // Only the paragraph is marked here. The chip is marked by the selection
@@ -523,6 +576,16 @@
     }
     steps = found;
     activeRef = null;
+
+    // Which files the prose actually reaches. The file strip draws a hollow dot
+    // for the others: opening a file to check something and never referring to
+    // it again is the normal accident of a review, and the dot is the same nudge
+    // an empty explanation slot is, one level up.
+    const reached = new Set<string>();
+    for (const r of container.querySelectorAll<HTMLElement>(".doc code.ref[data-path]")) {
+      if (r.dataset.path) reached.add(r.dataset.path);
+    }
+    onrefs?.(reached);
   });
 
   // Mark the focused row, so both panes show the same selection — and repaint
@@ -622,7 +685,7 @@
         {#if slashAt !== null && canRead}
           <RefMenu
             bind:this={menu}
-            module={outline?.modules?.[0] ?? null}
+            entries={vocabulary(files, current)}
             query={slashQuery}
             x={menuX}
             y={menuY}
@@ -1907,6 +1970,20 @@
     background: var(--accent);
     color: #fff;
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  /* Points into a different file of the reading. Clicking it swaps the code
+     pane, which is a bigger move than scrolling — so it is worth being able to
+     see it coming. Marked with a leading edge rather than a different colour:
+     the meaning is still "a reference", and colour already means public /
+     private / current elsewhere. */
+  :global(.doc code.ref.away) {
+    border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+    padding-left: 3px;
+    border-top-left-radius: 2px;
+    border-bottom-left-radius: 2px;
+  }
+  :global(.doc code.ref.away.active) {
+    border-left-color: #fff;
   }
   /* A later mention in the same paragraph: still a link, not a step. */
   :global(.doc code.ref.mention) {

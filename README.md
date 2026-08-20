@@ -6,9 +6,12 @@
 
 **A desktop tool for reading code deeply.**
 
-Open one source file. The window splits — source on the left, your explanation
+Open a source file. The window splits — source on the left, your explanation
 on the right. lgtm parses the file and seeds the explanation with the module's
 functions, their sizes, and what git knows about it. You fill in the prose.
+
+Open another file and it joins the same note, because a change worth reviewing
+rarely lives in one file.
 
 *A file is done when you understand it well enough to say **looks good to me**.*
 
@@ -30,6 +33,11 @@ functions, their sizes, and what git knows about it. You fill in the prose.
   ones are struck through *but keep their explanation*.
 - **Reads, never writes.** The left pane is read-only, permanently. lgtm never
   modifies your source.
+- **One note, several files.** During a review you open file after file, and
+  those files *are* the reading — there is no group to create and manage. Tabs
+  show which files are in, which you have written about, and which you opened by
+  accident; references may name any of them, and read mode swaps the code pane
+  where your prose crosses a boundary.
 - **No AI.** The explanation is yours. Writing it is the entire point —
   generating it would defeat the tool.
 
@@ -102,7 +110,7 @@ pnpm tauri icon       # no arguments — app-icon.png is the default input
 | Key | Does |
 |---|---|
 | `⌘O` | open a single file with the system picker |
-| `⌘T` | find a file by name in the open folder — or paste a path |
+| `⌘T` | find a file by name in the open folder — or paste a path. With a reading open, this adds the file to it |
 | `⌘K` | library — everything you've written |
 | `⌘P` | jump to a function by name |
 | `⌘S` | force a save (autosave already runs 800ms after you stop typing) |
@@ -129,6 +137,31 @@ finds anything in it by name. It matches the whole path, so `web/proc` and
 The folder is remembered and reopened next launch.
 
 Pasting a full path into the same box works too, for files outside the project.
+
+### A reading of several files
+
+With a reading open, `⌘T` **adds** the file rather than starting over. Nothing is
+seeded for it — your note stays yours — it simply widens what you can reference.
+
+Tabs above the code carry the state: a green dot means your prose references that
+file, amber that it has changed on disk since you read it, and hollow that you
+opened it and never mentioned it. The `×` removes a file you opened by accident;
+its snapshot leaves the reading, and neither your note nor the file on disk is
+touched. To start a separate reading instead, go ← Home first.
+
+References name a file when they need to and inherit one when they don't:
+
+```markdown
+`create_user/1` validates, then hands off.
+
+Then `MyApp.Billing.charge/2` builds the invoice. `L25-29` is where it rounds.
+```
+
+The `L25-29` is billing's, because the sentence before it was — references resolve
+in the order your prose takes, not by whichever tab is open. `billing.ex:25-29`
+says it outright when you would rather be explicit. While editing, `/` offers
+every function in the reading grouped by module, inserting bare names inside their
+own file and module-qualified ones elsewhere.
 
 ### The doc is plain markdown
 
@@ -196,10 +229,16 @@ One SQLite file:
 ~/Library/Application Support/com.alertmedia.lgtm/lgtm.db
 ```
 
-Each row is one *reading*: the file path, your markdown, and a **snapshot of the
-source as it was when you read it** — so your prose can never silently drift
-onto code that changed underneath it. Deleting a doc from the library asks first,
-and never touches your source file.
+Each row is one *reading*: your markdown, plus one row per file it covers holding
+a **snapshot of that file as it was when you read it** — so your prose can never
+silently drift onto code that changed underneath it, and each file can say for
+itself whether it has moved. Deleting a reading from the library asks first, and
+never touches your source files.
+
+The file set lives in those rows rather than in the markdown, for the same reason
+a single-file doc's path always did: the note has never declared which file it was
+about. What the prose carries instead is module-qualified references, which tell a
+reader which modules a reading covers without a manifest at the top.
 
 ## Project layout
 
@@ -209,14 +248,17 @@ IMPLEMENTATION_PLAN.md     the reasoning behind every decision
 CLAUDE.md                  the map, for humans and Claude sessions alike
 
 src/                       SvelteKit frontend
-  lib/components/          CodePane, DocPane, Divider, Library, FnPalette, HelpModal
+  lib/components/          CodePane, DocPane, Divider, Library, FileStrip, RefMenu
   lib/stores/              theme, focus (shared by both panes)
+  lib/fileset.ts           the reading's file set: which file owns what
+  lib/refs.ts              references in prose, and which file each one means
   lib/markdownit.ts        the lgtm:* fence renderers
   lib/{stats,surface,treemap,deps}.ts   one block each
 src-tauri/                 Rust + Tauri backend
   src/parse/elixir.rs      tree-sitter → Outline   ← the load-bearing file
   src/seed.rs              Outline → starter markdown
   src/reconcile.rs         doc + re-parsed source → merged doc
+  src/db/doc_files.rs      the files one reading covers
   src/git.rs               .git/HEAD read + lazy git blame + git log
 ```
 

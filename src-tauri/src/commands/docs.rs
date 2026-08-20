@@ -1,10 +1,10 @@
 //! Doc CRUD plus seeding. Thin wrappers — the logic lives in `db::docs`,
 //! `seed` and `reconcile`.
 
-use crate::commands::files::sha256;
+use crate::commands::files::{normalize_path, sha256};
 use crate::commands::AppState;
-use crate::db::docs as docs_db;
-use crate::db::models::{Doc, DocSummary};
+use crate::db::models::{Doc, DocSummary, Reading, ReadingFile};
+use crate::db::{doc_files as files_db, docs as docs_db};
 use crate::error::AppResult;
 use crate::parse::Outline;
 use crate::{reconcile, seed};
@@ -42,7 +42,7 @@ pub async fn create_doc(
         .unwrap_or_else(|| path.clone());
     let sha = sha256(&source);
 
-    docs_db::create(
+    let doc = docs_db::create(
         &state.pool,
         &path,
         &filename,
@@ -53,7 +53,128 @@ pub async fn create_doc(
         &source,
         &sha,
     )
-    .await
+    .await?;
+
+    // Every reading starts as a one-file reading, and the origin is a row here
+    // like any other file — so nothing downstream has to special-case "the
+    // first one" when walking the set.
+    files_db::add(
+        &state.pool, doc.id, &path, &filename, &lang, &source, &sha,
+    )
+    .await?;
+
+    Ok(doc)
+}
+
+/// Read one file of a reading as the UI needs it.
+///
+/// Disk wins when the file is readable, because you are reviewing the code as
+/// it is now; the snapshot is the fallback, which is what lets a reading survive
+/// one of its files being deleted or moved.
+fn read_one(f: &crate::db::models::DocFile, origin: &str) -> ReadingFile {
+    let p = Path::new(&f.path);
+    let disk = std::fs::read_to_string(p).ok();
+    let missing = disk.is_none();
+    let source = disk.unwrap_or_else(|| f.source.clone());
+    let source_sha = sha256(&source);
+    let lang = crate::parse::lang_for_path(&f.path).map(str::to_string);
+
+    // A parse failure must not stop you reading the file — you just get no
+    // outline, so its functions never join the reference vocabulary.
+    let outline = match &lang {
+        Some(l) => crate::parse::parse(&source, l).ok(),
+        None => None,
+    };
+
+    ReadingFile {
+        filename: f.filename.clone(),
+        // Staleness is a property of *this* file, which is the whole reason
+        // there is a row per file rather than one snapshot per doc.
+        stale: !missing && source_sha != f.source_sha,
+        missing,
+        snapshot_sha: f.source_sha.clone(),
+        has_git: crate::git::repo_root(p).is_some(),
+        branch: crate::git::current_branch(p),
+        origin: f.path == origin,
+        path: f.path.clone(),
+        source,
+        source_sha,
+        lang,
+        outline,
+    }
+}
+
+async fn build_reading(state: &State<'_, AppState>, id: i64) -> AppResult<Reading> {
+    let doc = docs_db::get(&state.pool, id).await?;
+    let rows = files_db::list(&state.pool, id).await?;
+    let files = rows.iter().map(|f| read_one(f, &doc.path)).collect();
+    Ok(Reading { doc, files })
+}
+
+/// A whole reading in one payload: the doc, and every file it covers with its
+/// source, outline and staleness.
+#[tauri::command]
+pub async fn open_reading(state: State<'_, AppState>, id: i64) -> AppResult<Reading> {
+    build_reading(&state, id).await
+}
+
+/// Add a file to a reading.
+///
+/// **Nothing is seeded.** The note is yours from the first file onward; what an
+/// added file contributes is source to read and functions to reference, which
+/// is exactly what a review needs and no more.
+#[tauri::command]
+pub async fn add_doc_file(state: State<'_, AppState>, id: i64, path: String) -> AppResult<Reading> {
+    let path = normalize_path(&path);
+    let p = Path::new(&path);
+    if !p.is_file() {
+        return Err(crate::error::AppError::NotFound(format!(
+            "no file at {path}"
+        )));
+    }
+    let source = std::fs::read_to_string(p)?;
+    let sha = sha256(&source);
+    let filename = p
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.clone());
+    let lang = crate::parse::lang_for_path(&path).unwrap_or("text");
+
+    files_db::add(&state.pool, id, &path, &filename, lang, &source, &sha).await?;
+    build_reading(&state, id).await
+}
+
+/// Drop a file you opened by accident. The prose is untouched — a reference to
+/// something no longer in the reading simply reads as dangling, which is the
+/// same signal a deleted function gets.
+#[tauri::command]
+pub async fn remove_doc_file(
+    state: State<'_, AppState>,
+    id: i64,
+    path: String,
+) -> AppResult<Reading> {
+    let doc = docs_db::get(&state.pool, id).await?;
+    files_db::remove(&state.pool, id, &path, &doc.path).await?;
+    build_reading(&state, id).await
+}
+
+/// Accept the current state of one file as what you read.
+#[tauri::command]
+pub async fn resnapshot_doc_file(
+    state: State<'_, AppState>,
+    id: i64,
+    path: String,
+) -> AppResult<Reading> {
+    let source = std::fs::read_to_string(Path::new(&path))?;
+    let sha = sha256(&source);
+    files_db::resnapshot(&state.pool, id, &path, &source, &sha).await?;
+    // The origin's snapshot lives in two places, because `docs.source` is what
+    // the library and the chooser read. Keep them in step.
+    let doc = docs_db::get(&state.pool, id).await?;
+    if doc.path == path {
+        docs_db::update_source(&state.pool, id, &source, &sha, &doc.markdown).await?;
+    }
+    build_reading(&state, id).await
 }
 
 #[tauri::command]
@@ -108,5 +229,8 @@ pub async fn reconcile_doc(
     let doc = docs_db::get(&state.pool, id).await?;
     let merged = reconcile::reconcile_markdown(&doc.markdown, &outline);
     let sha = sha256(&source);
+    // Both places the origin's snapshot lives, or it would still read as stale
+    // in the file strip after a reconcile.
+    files_db::resnapshot(&state.pool, id, &doc.path, &source, &sha).await?;
     docs_db::update_source(&state.pool, id, &source, &sha, &merged).await
 }

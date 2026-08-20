@@ -7,15 +7,28 @@
   import FnPalette from "$lib/components/FnPalette.svelte";
   import HelpModal from "$lib/components/HelpModal.svelte";
   import FilePalette from "$lib/components/FilePalette.svelte";
+  import FileStrip from "$lib/components/FileStrip.svelte";
+  import { byPath, origin as originOf } from "$lib/fileset";
   import { displaySig, locate } from "$lib/select";
   import { when } from "$lib/when";
   import { theme } from "$lib/stores/theme.svelte";
   import { focus } from "$lib/stores/focus.svelte";
   import * as ipc from "$lib/ipc";
-  import type { Doc, DocSummary, OpenedFile } from "$lib/ipc";
+  import type { Doc, DocSummary, OpenedFile, ReadingFile } from "$lib/ipc";
 
-  let file = $state<OpenedFile | null>(null);
+  /**
+   * A reading is a set of files, not one.
+   *
+   * `files` is the single source of truth for the left pane — including during
+   * the moment before a doc exists, when it holds exactly one synthesized entry.
+   * One shape everywhere was worth more than saving that conversion: everything
+   * downstream asks "which file am I looking at" and gets the same answer.
+   */
+  let files = $state<ReadingFile[]>([]);
+  let currentPath = $state<string | null>(null);
   let doc = $state<Doc | null>(null);
+  /** Paths the prose actually references — the strip's hollow-dot signal. */
+  let referenced = $state<Set<string>>(new Set());
   let markdown = $state("");
   let basis = $state(52);
   let saving = $state(false);
@@ -64,15 +77,79 @@
   /** Existing docs for a just-opened path, awaiting your choice. */
   let chooser = $state<DocSummary[] | null>(null);
 
+  const file = $derived(byPath(files, currentPath) ?? files[0] ?? null);
+  const origin = $derived(originOf(files));
   const outline = $derived(file?.outline ?? null);
-  /** The file on disk has changed since this doc was written. */
-  const stale = $derived(!!doc && !!file && doc.sourceSha !== file.sourceSha);
+  /**
+   * Staleness is per-file now, which is the whole reason there is a snapshot per
+   * file. The reconcile button in the note still belongs to the origin, though —
+   * it is the only file with an `lgtm:functions` block to merge.
+   */
+  const stale = $derived(!!origin?.stale);
+  const currentStale = $derived(!!file && !file.origin && (file.stale || file.missing));
   const moduleCount = $derived(outline?.modules?.length ?? 0);
+
+  /**
+   * Switching file fades the pane rather than crossfading line ranges.
+   *
+   * Within one file the outgoing range lingers under the incoming one, and that
+   * overlap is what makes a jump read as a connection. Across two different
+   * files there is nothing shared to fade between, so the same treatment reads
+   * as a glitch — the pane dips instead, and a badge names where you landed.
+   */
+  let swapping = $state(false);
+  let swapped = $state("");
+  let swapTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function showFile(path: string) {
+    if (!path || path === currentPath) return;
+    swapping = true;
+    await new Promise((r) => setTimeout(r, 130));
+    currentPath = path;
+    swapping = false;
+    swapped = path.split("/").pop() ?? path;
+    if (swapTimer) clearTimeout(swapTimer);
+    swapTimer = setTimeout(() => (swapped = ""), 1100);
+  }
+
+  /** A click on a tab is a move out of whatever was selected in the old file. */
+  async function switchTo(path: string) {
+    focus.clear();
+    await showFile(path);
+  }
+
+  /** The pre-doc moment still has to feed the code pane, so it gets one entry. */
+  function asReadingFile(o: OpenedFile): ReadingFile {
+    return {
+      path: o.path,
+      filename: o.filename,
+      lang: o.lang,
+      source: o.source,
+      sourceSha: o.sourceSha,
+      snapshotSha: o.sourceSha,
+      stale: false,
+      missing: false,
+      outline: o.outline,
+      hasGit: o.hasGit,
+      branch: o.branch,
+      origin: true,
+    };
+  }
+
+  /** Adopt a whole reading in one go — every mutation returns one of these. */
+  function adopt(r: ipc.Reading, prefer?: string | null) {
+    doc = r.doc;
+    files = r.files;
+    markdown = r.doc.markdown;
+    dirty = false;
+    const want = prefer && r.files.some((f) => f.path === prefer) ? prefer : null;
+    currentPath = want ?? originOf(r.files)?.path ?? null;
+  }
 
   // The welcome screen is the only place these are shown, so only load them
   // while it's up.
   $effect(() => {
-    if (file) return;
+    if (files.length) return;
     ipc
       .listDocs(undefined, 6)
       .then((r) => (recents = r))
@@ -121,21 +198,36 @@
       .catch(() => (projects = []));
   });
 
+  /**
+   * Open a file.
+   *
+   * **With a reading already open, this adds to it.** That is the whole flow the
+   * feature exists for: during a review you open file after file, and those files
+   * *are* the group — there is no separate gesture for creating one. Opening
+   * something unrelated by accident is undone by the `×` on its tab, which is
+   * cheaper than being asked "same reading or new one?" every single time. The
+   * deliberate out is ← Home, which starts cold.
+   */
   async function load(path: string) {
     error = null;
+    if (doc) return addFile(path);
+
     focus.clear();
     beginLoad(path);
     try {
       const opened = await ipc.openFile(path);
-      file = opened;
+      files = [asReadingFile(opened)];
+      currentPath = opened.path;
       if (opened.existing.length) {
-        // Your past reading of this file is worth more than a fresh start.
+        // Your past reading of this file is worth more than a fresh start — and
+        // that includes a reading where this file is one of several, not the one
+        // it started from.
         chooser = opened.existing;
         doc = null;
         markdown = "";
       } else {
         chooser = null;
-        await startFreshDoc(opened);
+        await startFreshDoc(files[0]);
       }
     } catch (e) {
       error = String(e);
@@ -144,8 +236,59 @@
     }
   }
 
+  /**
+   * Bring a file into the open reading. Nothing is seeded: it contributes source
+   * to read and functions the `/` menu can offer, and leaves your prose alone.
+   */
+  async function addFile(path: string) {
+    if (!doc) return;
+    focus.clear();
+    beginLoad(path);
+    loadingStep = "Adding it to this reading";
+    try {
+      const r = await ipc.addDocFile(doc.id, path);
+      // The markdown is the one thing not to adopt here: an autosave may be in
+      // flight, and replacing what you are typing with the server's copy would
+      // lose the sentence you are in the middle of.
+      const pending = markdown;
+      adopt(r, path);
+      markdown = pending;
+      currentPath = path;
+    } catch (e) {
+      error = String(e);
+    } finally {
+      endLoad();
+    }
+  }
+
+  async function removeFile(path: string) {
+    if (!doc) return;
+    try {
+      const r = await ipc.removeDocFile(doc.id, path);
+      const pending = markdown;
+      adopt(r, path === currentPath ? null : currentPath);
+      markdown = pending;
+      focus.clear();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  /** Accept the file's current state as what you read. */
+  async function acceptCurrent() {
+    if (!doc || !file) return;
+    try {
+      const r = await ipc.resnapshotDocFile(doc.id, file.path);
+      const pending = markdown;
+      adopt(r, file.path);
+      markdown = pending;
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   /** Chooser button: seeding and saving take the same beat as a fresh open. */
-  async function startFreshFrom(opened: OpenedFile) {
+  async function startFreshFrom(opened: ReadingFile) {
     beginLoad(opened.path);
     try {
       await startFreshDoc(opened);
@@ -156,7 +299,7 @@
     }
   }
 
-  async function startFreshDoc(opened: OpenedFile) {
+  async function startFreshDoc(opened: ReadingFile) {
     // Named per IPC call, so the message is what is actually happening rather
     // than a spinner pretending. Seeding is the slow one: it shells out to
     // `git log --follow`, which on a long history is the whole wait.
@@ -181,45 +324,39 @@
     markdown = doc.markdown;
     dirty = false;
     chooser = null;
+
+    // Re-read the reading rather than trusting the local shape: the origin's
+    // file row is created server-side, and this is the one call that returns it.
+    adopt(await ipc.openReading(doc.id), opened.path);
   }
 
-  async function openExisting(summary: DocSummary) {
+  async function openExisting(summary: DocSummary, prefer?: string | null) {
     beginLoad(summary.path);
     try {
-      await openExistingInner(summary);
+      await openExistingInner(summary, prefer);
     } finally {
       endLoad();
     }
   }
 
-  async function openExistingInner(summary: DocSummary) {
-    const loaded = await ipc.loadDoc(summary.id);
-    doc = loaded;
-    markdown = loaded.markdown;
-    dirty = false;
+  /**
+   * `prefer` is the path you arrived by. Choosing a reading of accounts.ex from
+   * having just opened billing.ex should land you on billing.ex — you asked for
+   * that file, the reading is only how you are going to read it.
+   */
+  async function openExistingInner(summary: DocSummary, prefer?: string | null) {
+    loadingStep = "Re-reading the files";
+    const r = await ipc.openReading(summary.id);
+    adopt(r, prefer ?? null);
     chooser = null;
 
-    // Opening from the library may mean no file is loaded yet.
-    if (!file || file.path !== loaded.path) {
-      loadingStep = "Re-reading the file";
-      try {
-        file = await ipc.reparse(loaded.path);
-      } catch {
-        // The file moved or was deleted. The doc still opens — it carries its
-        // own snapshot of the source, which is the point of storing it.
-        file = {
-          path: loaded.path,
-          filename: loaded.filename,
-          source: loaded.source,
-          sourceSha: loaded.sourceSha,
-          lang: loaded.lang,
-          outline: null,
-          branch: loaded.branch,
-          hasGit: false,
-          existing: [],
-        };
-        error = "File not found on disk — showing the snapshot saved with this doc.";
-      }
+    // A reading survives its files moving: each one carries its own snapshot,
+    // which is exactly what gets shown when the path no longer resolves.
+    const gone = r.files.filter((f) => f.missing).map((f) => f.filename);
+    if (gone.length) {
+      error =
+        `Not on disk any more: ${gone.join(", ")} — showing the snapshot saved ` +
+        `with this reading.`;
     }
   }
 
@@ -236,25 +373,40 @@
     await save();
 
     focus.clear();
-    file = null;
+    files = [];
+    currentPath = null;
     doc = null;
     markdown = "";
     chooser = null;
     dirty = false;
     error = null;
+    referenced = new Set();
   }
 
+  /** Re-read every file in the reading from disk, and re-check staleness. */
   async function reparseNow() {
-    if (!file) return;
-    file = await ipc.reparse(file.path);
+    if (doc) {
+      const pending = markdown;
+      adopt(await ipc.openReading(doc.id), currentPath);
+      markdown = pending;
+      return;
+    }
+    if (file) {
+      files = [asReadingFile(await ipc.reparse(file.path))];
+      currentPath = files[0].path;
+    }
   }
 
+  /**
+   * Reconcile the origin. Only it has an `lgtm:functions` block — every other
+   * file joined the reading without being seeded — so it is the only one there
+   * is anything to merge.
+   */
   async function reconcile() {
-    if (!doc || !file?.outline) return;
-    const merged = await ipc.reconcileDoc(doc.id, file.outline, file.source);
-    doc = merged;
-    markdown = merged.markdown;
-    dirty = false;
+    if (!doc || !origin?.outline) return;
+    await ipc.reconcileDoc(doc.id, origin.outline, origin.source);
+    const r = await ipc.openReading(doc.id);
+    adopt(r, currentPath);
   }
 
   // ---- autosave -----------------------------------------------------------
@@ -403,6 +555,9 @@
       {#if file.branch}
         <span class="branch" title="Branch, read from .git/HEAD">⑂ {file.branch}</span>
       {/if}
+      {#if files.length > 1}
+        <span class="count" title="Files in this reading">{files.length} files</span>
+      {/if}
 
       <span class="spacer"></span>
 
@@ -477,15 +632,55 @@
   {:else}
     <div class="split">
       <div class="pane" style:flex="0 0 {basis}%">
-        <CodePane
-          source={file.source}
-          lang={file.lang}
-          filename={file.filename}
-          path={file.path}
-          hasGit={file.hasGit}
-          {outline}
-          keysEnabled={!showLibrary && !showFiles && !showPalette && !showHelp}
-        />
+        <!-- The strip only earns its row once there is more than one file: a
+             single-file reading should look exactly as it always did. -->
+        {#if doc && files.length > 1}
+          <FileStrip
+            {files}
+            current={currentPath}
+            {referenced}
+            onswitch={switchTo}
+            onremove={removeFile}
+            onadd={() => (showFiles = true)}
+          />
+        {/if}
+
+        {#if currentStale}
+          <!-- Only for a file that joined the reading later. The origin's
+               staleness is the note's business, and DocPane offers the richer
+               action there: reconcile, which merges rather than overwrites. -->
+          <div class="filenote">
+            <span>
+              {file.missing
+                ? `${file.filename} is not on disk any more — this is the snapshot.`
+                : `${file.filename} has changed since you read it.`}
+            </span>
+            <span class="spacer"></span>
+            {#if !file.missing}
+              <button onclick={acceptCurrent}>Accept as read</button>
+            {/if}
+          </div>
+        {/if}
+
+        <!-- Keyed on the path so switching file remounts the pane. Blame and a
+             search belong to the file they were run against; carrying either
+             across a switch would attribute one file's authors to another. -->
+        <div class="codewrap" class:swapping>
+          {#key currentPath}
+            <CodePane
+              source={file.source}
+              lang={file.lang}
+              filename={file.filename}
+              path={file.path}
+              hasGit={file.hasGit}
+              {outline}
+              keysEnabled={!showLibrary && !showFiles && !showPalette && !showHelp}
+            />
+          {/key}
+          {#if swapped}
+            <div class="swapbadge">▸ {swapped}</div>
+          {/if}
+        </div>
       </div>
 
       <Divider bind:basis />
@@ -493,11 +688,11 @@
       <div class="pane grow">
         {#if chooser}
           <div class="chooser">
-            <h2>You've read this file before</h2>
+            <h2>This file is already part of a reading</h2>
             <ul>
               {#each chooser as c (c.id)}
                 <li>
-                  <button onclick={() => openExisting(c)}>
+                  <button onclick={() => openExisting(c, file?.path ?? null)}>
                     <b>{c.title}</b>
                     <span>{c.branch ?? "no branch"} · {new Date(c.updatedAt).toLocaleDateString()}</span>
                   </button>
@@ -509,12 +704,14 @@
         {:else}
           <DocPane
             bind:markdown
-            {outline}
-            filename={file.filename}
-            lineCount={file.source.split("\n").length}
+            {files}
+            current={currentPath}
+            filename={origin?.filename ?? file.filename}
             {dirty}
             {stale}
             onreconcile={reconcile}
+            onshowfile={showFile}
+            onrefs={(paths) => (referenced = paths)}
           />
         {/if}
       </div>
@@ -547,13 +744,18 @@
           <kbd>j</kbd><kbd>k</kbd><kbd>gg</kbd><kbd>G</kbd> vim · <kbd>?</kbd> help
         </span>
       {/if}
-      {#if doc}<span>doc #{doc.id} → sqlite</span>{/if}
+      {#if doc}
+        <span>
+          doc #{doc.id} → sqlite{files.length > 1 ? ` · ${files.length} files` : ""}
+        </span>
+      {/if}
     </div>
   {/if}
 
   {#if showFiles}
     <FilePalette
       {project}
+      adding={doc ? doc.title : null}
       onpick={(f) => {
         showFiles = false;
         load(f.path);
@@ -631,6 +833,77 @@
   }
   .home {
     flex: none;
+  }
+  .count {
+    font-size: 10.5px;
+    color: var(--fg-faint);
+    border-left: 1px solid var(--line);
+    padding-left: 10px;
+  }
+
+  /* The left pane's own column: strip, note, then the code. */
+  .codewrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    transition: opacity 0.13s ease;
+  }
+  .codewrap.swapping {
+    opacity: 0;
+  }
+
+  /* Names where you landed after a file swap. Without it a scroll-driven jump
+     across files just looks like the code changed under you. */
+  .swapbadge {
+    position: absolute;
+    z-index: 20;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 4px 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--read-ink);
+    background: var(--read);
+    border-radius: 999px;
+    pointer-events: none;
+    animation: badge 1.1s ease forwards;
+  }
+  @keyframes badge {
+    0% { opacity: 0; transform: translate(-50%, -4px); }
+    14% { opacity: 1; transform: translate(-50%, 0); }
+    72% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
+  .filenote {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 10px;
+    font-size: 11px;
+    color: var(--priv);
+    background: color-mix(in srgb, var(--priv) 9%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .filenote .spacer {
+    flex: 1;
+  }
+  .filenote button {
+    padding: 2px 8px;
+    font-size: 11px;
+    color: var(--fg-dim);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .filenote button:hover {
+    color: var(--fg);
+    border-color: var(--priv);
   }
   .branch {
     font-family: var(--mono);

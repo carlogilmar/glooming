@@ -130,6 +130,8 @@ export interface DocSummary {
   sourceSha: string;
   createdAt: string;
   updatedAt: string;
+  /** Files this reading covers. 1 for a doc about a single file. */
+  fileCount: number;
 }
 
 export interface Doc extends DocSummary {
@@ -147,6 +149,37 @@ export interface OpenedFile {
   branch: string | null;
   hasGit: boolean;
   existing: DocSummary[];
+}
+
+/**
+ * One file of a reading, as the UI needs it.
+ *
+ * `source` is what to show: disk when the file is readable, the snapshot when it
+ * is not — which is what lets a reading survive one of its files being deleted.
+ */
+export interface ReadingFile {
+  path: string;
+  filename: string;
+  lang: string | null;
+  source: string;
+  sourceSha: string;
+  /** sha of the snapshot taken when this file joined the reading. */
+  snapshotSha: string;
+  /** This file has changed on disk since it was read. Per-file, deliberately. */
+  stale: boolean;
+  /** Not on disk any more; `source` is the snapshot. */
+  missing: boolean;
+  outline: Outline | null;
+  hasGit: boolean;
+  branch: string | null;
+  /** The file the doc was seeded from. Cannot be removed from the reading. */
+  origin: boolean;
+}
+
+/** A whole reading: the note, and every file it covers. */
+export interface Reading {
+  doc: Doc;
+  files: ReadingFile[];
 }
 
 export interface BlameLine {
@@ -199,6 +232,22 @@ export const deleteDoc = (id: number) => invoke<void>("delete_doc", { id });
 
 export const reconcileDoc = (id: number, outline: Outline, source: string) =>
   invoke<Doc>("reconcile_doc", { id, outline, source });
+
+// ---- the files a reading covers --------------------------------------------
+// Every one of these returns the whole reading, so the UI replaces its state
+// rather than patching it — the same one-payload habit as `open_file`.
+
+export const openReading = (id: number) => invoke<Reading>("open_reading", { id });
+
+/** Adding a file seeds nothing. It contributes source, and vocabulary. */
+export const addDocFile = (id: number, path: string) =>
+  invoke<Reading>("add_doc_file", { id, path });
+
+export const removeDocFile = (id: number, path: string) =>
+  invoke<Reading>("remove_doc_file", { id, path });
+
+export const resnapshotDocFile = (id: number, path: string) =>
+  invoke<Reading>("resnapshot_doc_file", { id, path });
 
 // ---- projects --------------------------------------------------------------
 

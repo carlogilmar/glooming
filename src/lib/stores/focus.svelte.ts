@@ -41,6 +41,15 @@ class FocusStore {
    * legible instead of a cut.
    */
   leaving = $state<Span[]>([]);
+  /**
+   * Which file of the reading the selection is in.
+   *
+   * Only the crossfade consults it, but that one use matters: fading an outgoing
+   * range under an incoming one is what makes a jump read as a connection, and
+   * across two different files there is nothing shared to fade between. Doing it
+   * anyway reads as a glitch, so the file swap is the transition instead.
+   */
+  path = $state<string | null>(null);
   private leaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   get active(): boolean {
@@ -99,12 +108,25 @@ class FocusStore {
    * onto a step you have already seen must show it again — and it stashes the
    * outgoing ranges for the crossfade.
    */
-  step(sig: string, ranges: Span[], spec: Span | null = null, doc: Span | null = null) {
-    if (this.ranges.length && sig !== this.sig) {
+  step(
+    sig: string,
+    ranges: Span[],
+    spec: Span | null = null,
+    doc: Span | null = null,
+    path: string | null = null,
+  ) {
+    const crossedFile = !!path && !!this.path && path !== this.path;
+    if (crossedFile) {
+      // Lines from the file you just left have no meaning over the one you
+      // arrived in, so they go immediately rather than lingering.
+      if (this.leaveTimer) clearTimeout(this.leaveTimer);
+      this.leaving = [];
+    } else if (this.ranges.length && sig !== this.sig) {
       this.leaving = this.ranges;
       if (this.leaveTimer) clearTimeout(this.leaveTimer);
       this.leaveTimer = setTimeout(() => (this.leaving = []), 620);
     }
+    if (path) this.path = path;
     this.select(sig, ranges, [], spec, doc);
   }
 
@@ -112,6 +134,7 @@ class FocusStore {
   rest() {
     if (this.leaveTimer) clearTimeout(this.leaveTimer);
     this.leaving = [];
+    this.path = null;
     this.clearFunction();
   }
 
@@ -188,6 +211,7 @@ class FocusStore {
   clear() {
     if (this.leaveTimer) clearTimeout(this.leaveTimer);
     this.leaving = [];
+    this.path = null;
     this.clearFunction();
     this.cursorLine = null;
   }

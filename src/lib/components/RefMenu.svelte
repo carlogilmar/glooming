@@ -8,18 +8,25 @@
   // the one fiddly part: there is no API for it, so a hidden div copies the
   // textarea's own metrics, is filled with the text up to the caret, and a span
   // at the end reports where that lands.
-  import { displaySig } from "$lib/select";
-  import type { FnInfo, ModuleInfo } from "$lib/ipc";
+  import type { VocabEntry } from "$lib/fileset";
 
   let {
-    module = null,
+    entries = [],
     query = "",
     x = 0,
     y = 0,
     onpick,
     onclose,
   }: {
-    module: ModuleInfo | null;
+    /**
+     * Everything referenceable in the reading, in strip order.
+     *
+     * This is the one thing adding a file to a reading changes — no seeding, no
+     * new block, no edit to your prose, just a wider vocabulary. Which means the
+     * menu has to say *where* each function lives, and insert a qualified name
+     * when it is somewhere else.
+     */
+    entries: VocabEntry[];
     query: string;
     x: number;
     y: number;
@@ -46,13 +53,44 @@
     return 1000;
   }
 
-  const hits = $derived.by(() => {
-    const fns = module?.functions ?? [];
-    return fns
-      .map((f: FnInfo) => ({ f, sig: displaySig(f), s: score(displaySig(f), query) }))
-      .filter((h) => h.s !== null)
-      .sort((a, b) => a.s! - b.s! || a.sig.localeCompare(b.sig))
-      .slice(0, 8);
+  /**
+   * Matched, then ranked local-first.
+   *
+   * Writing about the file you are looking at is the common case, and its
+   * functions insert bare — so they belong at the top even when a function in
+   * another file scores a slightly better substring hit. Beyond that the score
+   * decides, and the module name is part of what you can match against, so
+   * `billing.to_c` narrows the way you'd expect.
+   */
+  const hits = $derived.by(() =>
+    entries
+      .map((e) => ({
+        e,
+        s: Math.min(
+          score(e.sig, query) ?? Infinity,
+          score(`${e.module}.${e.sig}`, query) ?? Infinity,
+        ),
+      }))
+      .filter((h) => h.s !== Infinity)
+      .sort(
+        (a, b) =>
+          Number(b.e.local) - Number(a.e.local) ||
+          a.s - b.s ||
+          a.e.sig.localeCompare(b.e.sig),
+      )
+      .slice(0, 9),
+  );
+
+  /** Rows in order, with a header wherever the module changes. */
+  const rows = $derived.by(() => {
+    const out: { hit: (typeof hits)[number]; i: number; head: string | null }[] = [];
+    let seen: string | null = null;
+    hits.forEach((hit, i) => {
+      const key = hit.e.module;
+      out.push({ hit, i, head: key === seen ? null : key });
+      seen = key;
+    });
+    return out;
   });
 
   $effect(() => {
@@ -74,7 +112,7 @@
     }
     if (e.key === "Enter" || e.key === "Tab") {
       const hit = hits[cursor];
-      if (hit) onpick(`\`${hit.sig}\``);
+      if (hit) onpick(`\`${hit.e.insert}\``);
       else onclose();
       return true;
     }
@@ -96,22 +134,34 @@
   {#if !hits.length}
     <p class="none">no function matches “{query}”</p>
   {:else}
-    {#each hits as hit, i (hit.sig)}
+    {#each rows as row (row.hit.e.path + row.hit.e.sig)}
+      {#if row.head}
+        <!-- Grouped by module rather than by file: a qualified reference names a
+             module, so that is the label you are actually choosing between. -->
+        <div class="grp">
+          <span>{row.head}</span>
+          <span class="spacer"></span>
+          <span class="in">{row.hit.e.filename}</span>
+        </div>
+      {/if}
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
       <div
         class="hit"
-        class:on={i === cursor}
+        class:on={row.i === cursor}
         onmousedown={(e) => {
           // mousedown, not click: the textarea must not lose its caret first.
           e.preventDefault();
-          onpick(`\`${hit.sig}\``);
+          onpick(`\`${row.hit.e.insert}\``);
         }}
-        onmouseenter={() => (cursor = i)}
+        onmouseenter={() => (cursor = row.i)}
       >
-        <span class="dot" class:priv={hit.f.visibility === "private"}></span>
-        <span class="sig">{hit.sig}</span>
+        <span class="dot" class:priv={row.hit.e.visibility === "private"}></span>
+        <span class="sig">{row.hit.e.sig}</span>
         <span class="spacer"></span>
-        <span class="ln">{hit.f.line}</span>
+        {#if !row.hit.e.local}
+          <span class="away" title="inserts {row.hit.e.insert}">qualified</span>
+        {/if}
+        <span class="ln">{row.hit.e.line}</span>
       </div>
     {/each}
   {/if}
@@ -129,6 +179,35 @@
     border: 1px solid var(--line);
     border-radius: 8px;
     box-shadow: 0 12px 32px rgba(10, 12, 16, 0.24);
+  }
+  /* Sticky, so you never lose track of which module you are scrolling through. */
+  .grp {
+    position: sticky;
+    top: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 11px 3px;
+    background: var(--bg-inset);
+    border-bottom: 1px solid var(--line-soft);
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.02em;
+    color: var(--fg-dim);
+  }
+  .grp .spacer {
+    flex: 1;
+  }
+  .grp .in {
+    color: var(--fg-faint);
+  }
+  .away {
+    flex: none;
+    font-size: 9px;
+    padding: 0 4px;
+    border-radius: 3px;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
   }
   .none {
     margin: 0;

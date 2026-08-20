@@ -4,8 +4,13 @@ use super::models::{Doc, DocSummary};
 use crate::error::{AppError, AppResult};
 use sqlx::SqlitePool;
 
+// The file count comes along as a subquery rather than a second round trip: the
+// library lists a *reading*, and "accounts.ex" is a misleading name for one that
+// covers four files.
 const SUMMARY_COLS: &str = "id, path, filename, lang, title, branch, label, \
-                            source_sha, created_at, updated_at";
+                            source_sha, created_at, updated_at, \
+                            (SELECT COUNT(*) FROM doc_files df WHERE df.doc_id = docs.id) \
+                              AS file_count";
 
 pub fn now() -> String {
     time::OffsetDateTime::now_utc()
@@ -118,9 +123,21 @@ pub async fn delete(pool: &SqlitePool, id: i64) -> AppResult<()> {
     Ok(())
 }
 
+/// Readings that already cover this path.
+///
+/// Matches on the reading's *set*, not just its origin: during a review you open
+/// billing.ex on Tuesday as part of a reading of accounts.ex, and on Wednesday
+/// you open billing.ex first. Offering only docs whose `path` is billing.ex
+/// would hide the reading you actually want and quietly start a duplicate.
 pub async fn for_path(pool: &SqlitePool, path: &str) -> AppResult<Vec<DocSummary>> {
-    let sql = format!("SELECT {SUMMARY_COLS} FROM docs WHERE path = ? ORDER BY updated_at DESC");
+    let sql = format!(
+        "SELECT {SUMMARY_COLS} FROM docs
+          WHERE path = ?
+             OR id IN (SELECT doc_id FROM doc_files WHERE path = ?)
+          ORDER BY updated_at DESC"
+    );
     Ok(sqlx::query_as::<_, DocSummary>(&sql)
+        .bind(path)
         .bind(path)
         .fetch_all(pool)
         .await?)
@@ -201,6 +218,23 @@ mod tests {
         assert_eq!(found[0].title, "First");
     }
 
+    /// A file that joined a reading later is still a way back into it.
+    #[tokio::test]
+    async fn finds_a_reading_by_any_of_its_files() {
+        let pool = test_pool().await;
+        let doc = seed(&pool, "/a/accounts.ex", "Signup flow").await;
+        crate::db::doc_files::add(
+            &pool, doc.id, "/a/billing.ex", "billing.ex", "elixir", "def b", "sb",
+        )
+        .await
+        .unwrap();
+
+        let found = for_path(&pool, "/a/billing.ex").await.unwrap();
+        assert_eq!(found.len(), 1, "the reading that covers it");
+        assert_eq!(found[0].title, "Signup flow");
+        assert_eq!(found[0].path, "/a/accounts.ex", "reported by its origin");
+    }
+
     #[tokio::test]
     async fn search_matches_title_and_branch() {
         let pool = test_pool().await;
@@ -210,6 +244,25 @@ mod tests {
         assert_eq!(list(&pool, Some("Billing"), 50).await.unwrap().len(), 1);
         assert_eq!(list(&pool, Some("main"), 50).await.unwrap().len(), 2);
         assert_eq!(list(&pool, None, 50).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_summary_carries_its_file_count() {
+        let pool = test_pool().await;
+        let doc = seed(&pool, "/a/accounts.ex", "Signup flow").await;
+        crate::db::doc_files::add(
+            &pool, doc.id, "/a/accounts.ex", "accounts.ex", "elixir", "a", "sa",
+        )
+        .await
+        .unwrap();
+        crate::db::doc_files::add(
+            &pool, doc.id, "/a/billing.ex", "billing.ex", "elixir", "b", "sb",
+        )
+        .await
+        .unwrap();
+
+        let found = list(&pool, None, 50).await.unwrap();
+        assert_eq!(found[0].file_count, 2);
     }
 
     #[tokio::test]

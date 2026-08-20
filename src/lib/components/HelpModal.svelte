@@ -151,12 +151,12 @@
       ],
     },
     {
-      title: "Reading a file",
+      title: "Reading",
       note:
         "Write about the code and lgtm walks it for you. Any inline code naming a function in " +
-        "this file — `create_user/1` — becomes a reference, and `L30-34` points at plain lines. " +
-        "No new syntax, so the markdown still reads correctly pasted into a PR comment. " +
-        "Modules only: a config or a test suite is a directory, not a narrative.",
+        "the reading — `create_user/1`, or `MyApp.Billing.charge/2` for one in another file — " +
+        "becomes a reference, and `L30-34` points at plain lines. No new syntax, so the markdown " +
+        "still reads correctly pasted into a PR comment.",
       rows: [
         {
           action: "▷ Read",
@@ -174,8 +174,57 @@
         {
           action: "a struck-through reference",
           what:
-            "The function it names is gone from the file. It stays visible rather than quietly " +
+            "The function it names is gone from the reading. It stays visible rather than quietly " +
             "becoming plain text — you should see when code moves out from under your explanation",
+        },
+        {
+          action: "a reference with a left edge",
+          what:
+            "It points into another file of the reading. Clicking it, or scrolling onto it, swaps " +
+            "the code pane first — the pane dips and names where you landed, rather than " +
+            "crossfading line ranges between two files that share nothing",
+        },
+        {
+          action: "an unqualified name",
+          what:
+            "Means the file the prose is currently about: after `MyApp.Billing.charge/2`, a bare " +
+            "`L25-29` is still billing's. That depends only on the order of your prose, never on " +
+            "which tab happens to be open — so a reading walks the same path every time",
+        },
+      ],
+    },
+    {
+      title: "A reading of several files",
+      note:
+        "One note can cover more than one file, because a change worth reviewing usually does. " +
+        "There is no gesture for creating a group: with a reading open, opening a file joins it, " +
+        "and the files you open during a review are the set. Adding a file seeds nothing — your " +
+        "note stays yours — it just widens what you can reference.",
+      rows: [
+        {
+          action: "the file tabs",
+          what:
+            "Switcher and progress at once. A green dot means your note references that file, " +
+            "amber that it has changed on disk since you read it, and hollow that you opened it " +
+            "and never mentioned it — the same nudge an empty explanation slot is",
+        },
+        {
+          action: "× on a tab",
+          what:
+            "Removes a file you opened by accident. Its snapshot leaves the reading; your note " +
+            "and the file on disk are untouched. The file the reading started from has no × — " +
+            "delete the whole reading instead",
+        },
+        {
+          keys: ["/"],
+          what:
+            "While editing, offers every function in the reading, grouped by module. Functions in " +
+            "the file you are looking at insert bare; the rest insert module-qualified, so prose " +
+            "about one file never gets noisier than it needs to be",
+        },
+        {
+          action: "← Home, then open",
+          what: "The way to start a separate reading rather than adding to this one",
         },
       ],
     },
@@ -212,9 +261,9 @@
         {
           keys: ["⌘T"],
           what:
-            "Find a file by name in the open folder. Matches the whole path, so `web/proc` and " +
-            "`my_app/acc` both narrow — and pasting a full path works too, for anything outside " +
-            "the project",
+            "Find a file by name in the open folder — and with a reading open, add it to that " +
+            "reading. Matches the whole path, so `web/proc` and `my_app/acc` both narrow, and " +
+            "pasting a full path works too, for anything outside the project",
         },
         {
           action: "Open a folder…",
@@ -223,7 +272,12 @@
             "Build output and dependencies are never listed",
         },
         { keys: ["⌘O"], what: "Open a single file with the system picker" },
-        { keys: ["⌘K"], what: "Library: search, sort by recent / name / folder, ↑↓↵ to open" },
+        {
+          keys: ["⌘K"],
+          what:
+            "Library: search, sort by recent / name / folder, ↑↓↵ to open. A reading of several " +
+            "files shows a `+n` beside its first one",
+        },
         { keys: ["?"], what: "This help" },
       ],
     },

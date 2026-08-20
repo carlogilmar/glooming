@@ -12,6 +12,10 @@ next time.
 Not every file is a module: a config script and a test suite get blocks of their
 own, and anything unrecognised gets a blank page rather than empty ones.
 
+A reading is not always one file either. With a reading open, opening another
+file **joins it** — the files you open during a review are the set — and
+references may name any of them.
+
 Elixir is the only language so far. The architecture assumes more will follow.
 
 > The name is the goal: a file is done when you understand it well enough to
@@ -33,7 +37,8 @@ These are deliberate, and pushing back on them needs a real argument:
 |---|---|
 | Editing source code | lgtm reads. Your editor edits. The left pane is read-only, permanently. |
 | Git diffs, PR fetching, branch checkout | Cut during design. You read committed files; lgtm just opens a path. |
-| Multi-file projects, call graphs, cross-module navigation | One file at a time. v2 at the earliest. |
+| Call graphs, cross-module analysis, "who calls this" | A reading may cover several files, but lgtm never reasons *across* them. It parses each one and lets your prose do the joining. |
+| Groups you create and manage | There is no gesture for making one. You open files during a review and those files are the reading; the `×` on a tab undoes an accident. Anything more is a project manager, not a reading tool. |
 | Any AI/LLM involvement | The explanation is *yours*. Writing it is the point — generating it would defeat the tool. |
 | `import` in the reach block | It puts functions in scope unqualified, so a bare `cast(...)` can't be told from a local call. Showing it with zero call sites would read as a bug. |
 
@@ -99,6 +104,7 @@ mockup/surface.html            the surface block's visual contract
 mockup/kinds.html              config / test / fallback — the non-module kinds
 mockup/reading.html            scroll-driven reading, first cut
 mockup/authoring.html          read mode as shipped, plus the edge cases
+mockup/group.html              a reading across several files
 app-icon.png                   icon source (1024², RGBA); also copied to static/
 IMPLEMENTATION_PLAN.md         the reasoning behind every decision here
 README.md                      user-facing: clone, install, run, build
@@ -113,9 +119,10 @@ src/
       CodePane.svelte          source, line numbers, blame, focus, search, vim motions, font size
       DocPane.svelte           preview/edit/read, block styling, row wiring, treemap tooltip
       FontStepper.svelte       A− / A+, shared by both panes
-      FilePalette.svelte       ⌘T — find a file in the open folder
+      FileStrip.svelte         the reading's files: switcher, state, removal
+      FilePalette.svelte       ⌘T — find a file, or add one to the reading
       FnPalette.svelte         ⌘P — jump to a function by name
-      RefMenu.svelte           / — insert a reference while editing
+      RefMenu.svelte           / — insert a reference, from any file in the reading
       HelpModal.svelte         ? — what everything does
       Divider.svelte           draggable split, double-click reset
       Library.svelte           saved docs: search, sort, folder grouping, keyboard nav, delete
@@ -123,9 +130,10 @@ src/
       theme.svelte.ts          ported from Alexandria; lgtm defaults to LIGHT
       focus.svelte.ts          which function is selected — shared by BOTH panes
       fontSize.svelte.ts       a remembered, clamped font size; one per pane
+    fileset.ts                 the reading's file set: which file owns what
     markdownit.ts              markdown-it + the lgtm:* fence renderers
     lgtmBlock.ts               parses the functions block (mirrors reconcile.rs)
-    refs.ts                    recognises `create_user/1` / `L30-34` in prose
+    refs.ts                    references in prose, and which file each one means
     select.ts                  one signature → every span worth highlighting
     when.ts                    relative dates, shared so two views can't disagree
     treemap.ts                 parses + draws the treemap block
@@ -144,11 +152,13 @@ src-tauri/
     reconcile.rs               doc + re-parsed source → merged doc
     git.rs                     .git/HEAD read + lazy blame + log for stats
     db/{mod,models,docs}.rs    pool, serde shapes, doc CRUD
+    db/doc_files.rs            the files one reading covers
     commands/{files,docs}.rs   IPC surface (blame lives in files.rs)
     commands/projects.rs       open a folder, walk it for Elixir files
     db/projects.rs             remembered folders, most recent first
   migrations/0001_initial.sql
   migrations/0002_projects.sql
+  migrations/0003_doc_files.sql
   tests/pipeline.rs            end-to-end, pinned to the mockup
 ```
 
@@ -164,6 +174,104 @@ already has docs offers the existing one rather than starting a duplicate.
 `branch` and `label` are inert metadata — they exist so two readings of the
 same file are distinguishable. They never drive file loading.
 
+### A reading can cover several files
+
+A change worth reviewing rarely lives in one file, so a doc is one note over a
+**set** of files. The set accumulates: with a reading open, opening a file joins
+it. There is deliberately **no gesture for creating a group** — the files you
+open during a review *are* the group, and asking "same reading or a new one?"
+fifty times a day would cost more than the occasional stray file. A stray file
+is undone by the `×` on its tab; the way to start a separate reading is
+← Home, then open.
+
+**The file set lives in rows, not in the markdown.** This is the one place the
+"markdown IS the data" rule does not apply, and the reason is consistency, not
+convenience: a single-file doc's `path` has always been a column, so the note has
+never declared which file it was about. Putting a *set* of paths into the prose
+would be a new inconsistency rather than a preserved principle. Portability is
+already covered — the module-qualified references in the prose tell a reader
+which modules a reading covers, inline and in context, which beats a list at the
+top. An earlier design had an `lgtm:files` block; it was cut for exactly this,
+and with it went the question of what happens when the block and the DB disagree.
+
+`docs.path` stays the **origin**: the file the reading was seeded from, whose
+module owns `lgtm:functions`, what the library groups by, and the one file that
+cannot be removed. Everything else in `doc_files` joined later.
+
+**One snapshot per file, so staleness is per-file.** A single `docs.source` could
+only ever say "something changed". `docs.source` is still maintained for the
+origin, because the library and the chooser read it — `resnapshot_doc_file` and
+`reconcile_doc` both write to *both* places, or the strip keeps showing amber
+after a reconcile.
+
+**Adding a file seeds nothing.** No blocks, no headings, no edit to your prose.
+The only thing it changes is what `/` can offer you. That is the whole feature:
+by the second file the note is yours, and generating more of it would be writing
+your reading for you.
+
+**References answer "which file", and half of them don't say.** So they resolve
+in **document order**, each threading the current file forward:
+
+```markdown
+Then `MyApp.Billing.charge/2` builds the invoice.   → billing.ex
+`L25-29` is where it rounds.                        → still billing.ex
+```
+
+`refs.ts` is therefore a stateful resolver, reset once per render by a `md.render`
+override. Order-dependence is the point: it means an unqualified name resolves
+the way the sentence reads, and — this is what matters — it depends **only** on
+document order, never on which tab happens to be open. Keying off the current tab
+would make read mode walk a different path depending on where you were standing
+when you started scrolling. Search order for a bare name is *threaded file →
+origin → the rest in strip order*.
+
+Four forms, all still plain inline code:
+
+| Written | Means |
+|---|---|
+| `` `create_user/1` `` | the threaded file, then the origin, then the rest |
+| `` `MyApp.Billing.charge/2` `` | names its own module, and moves the thread |
+| `` `L25-29` `` | plain lines in the threaded file |
+| `` `billing.ex:25-29` `` | plain lines, said out loud about another file |
+
+**Blocks find their own file from the `module=` they already carried.** That
+attribute existed for readability; in a multi-file reading it becomes the thing
+that locates the right outline, so `lgtm:functions module=MyApp.Billing` keeps
+working while you are standing in accounts.ex. Every block renderer's output is
+tagged with `data-path` by one helper in `markdownit.ts` rather than by threading
+a path through six signatures — which is safe only because each of them returns a
+string starting with `<div`.
+
+**Crossing a file is a different transition from moving within one.** The 620ms
+crossfade — outgoing ranges lingering under incoming ones — is what makes a jump
+read as a connection instead of a cut. Across two different files there is
+nothing shared to fade between, so the same treatment reads as a glitch. The pane
+dips instead and a badge names where you landed, and `focus.step` takes a `path`
+so it can skip the crossfade. `focus.path` exists for that one decision.
+
+**CodePane is keyed on the path.** Switching file remounts it, deliberately:
+blame and a search belong to the file they were run against, and carrying either
+across a switch would attribute one file's authors to another.
+
+**The hollow dot is the finding.** A tab's dot is green when your prose
+references that file, amber when it has changed on disk, and hollow when you
+opened it and never mentioned it. Opening a file to check something and never
+coming back to it is the normal accident of a review, and the hollow dot is the
+same nudge an empty explanation slot is, one level up. `DocPane` reports the
+referenced paths by walking `code.ref[data-path]` after each render — the DOM
+already knows, so nothing is recomputed.
+
+**`for_path` matches the whole set, not just the origin.** You open billing.ex on
+Tuesday as part of a reading of accounts.ex, and on Wednesday you open billing.ex
+first. Matching only `docs.path` would hide that reading and quietly start a
+duplicate. Choosing it also lands you on the file you arrived by, not on the
+origin — you asked for that file; the reading is only how you are going to read
+it.
+
+The strip only appears at two files or more, and `vocabulary()` inserts bare
+names inside their own file, so **a single-file reading looks and behaves exactly
+as it always did**.
+
 ### The markdown IS the data
 
 This is the load-bearing principle for every `lgtm:*` block. Blocks are written
@@ -174,6 +282,10 @@ That buys three things: the doc is readable as plain text anywhere, it survives
 being pasted into a PR comment, and you can hand-edit anything you disagree
 with. The live `Outline` is consulted for exactly **one** thing — the line
 number a row or tile jumps to.
+
+The one deliberate exception is **which files a reading covers**, which lives in
+`doc_files` rather than in the prose — see above for why that is the consistent
+choice rather than a violation.
 
 A block whose body is empty renders as a short "re-seed this doc, or write
 `…` style rows here" hint, never as a blank box.
@@ -464,8 +576,10 @@ authors invisible.
 
 ### Reading: the doc drives the code
 
-`▷ Read` in the doc pane header, **modules only** — a config or a test suite is
-a directory, not a narrative, so there is nothing to walk.
+`▷ Read` in the doc pane header, shown when there is a module anywhere in the
+reading — a config or a test suite on its own is a directory, not a narrative, so
+there is nothing to walk. A reading of several files walks all of them, swapping
+the code pane where the prose crosses a boundary.
 
 The geometry scrollytelling wants was already here: the doc is the text, the
 code pane is the sticky graphic, and `focus` is the graphic's state. So this is
@@ -686,6 +800,18 @@ of a pane sits below its top. Fixed fractions fail silently at both ends and the
 failure looks like nothing at all. One `TRIGGER` constant drives the lead-in,
 the tail, the band position and the step test.
 
+**Adding a file to a reading must not re-snapshot it.** Opening the same file
+twice mid-review is completely normal, so `doc_files::add` is idempotent and
+returns the existing row. Re-snapshotting would silently discard the staleness
+you were about to be told about. `adding_twice_keeps_the_first_snapshot` pins it.
+
+**A mutation returns the whole reading.** `add_doc_file`, `remove_doc_file` and
+`resnapshot_doc_file` all return a `Reading`, so the UI replaces state rather
+than patching it — the same one-payload habit as `open_file`. The one thing the
+frontend must *not* adopt is the markdown: an autosave may be in flight, and
+taking the server's copy would lose the sentence you are mid-way through. Every
+call site saves `markdown` and puts it back.
+
 **`db` is `pub`** solely so `tests/pipeline.rs` can construct `FileHistory`.
 
 ## Testing
@@ -698,7 +824,7 @@ chain against `tests/fixtures/accounts.ex`, which is the exact file
 camelCase wire format. **If the parser drifts from the mockup, that test fails
 first.**
 
-There are no frontend tests, and `pnpm check` must be clean. That makes two
+There are no frontend tests, and `pnpm check` must be clean. That makes three
 habits load-bearing rather than optional:
 
 - **Dump the tree before writing a parser.** Every Elixir extraction in this
@@ -710,6 +836,19 @@ habits load-bearing rather than optional:
   had arithmetic bugs that a script caught in seconds and eyeballing would not
   have. The read-mode tail was silently short on any pane above ~500px; nothing
   looked broken, the last step just never fired.
+- **Probe frontend logic through `esbuild`, not the app.** There is no test
+  runner, but `src/lib` is plain TypeScript and bundles for node in one command:
+
+  ```bash
+  node_modules/.pnpm/node_modules/.bin/esbuild probe.ts --bundle \
+    --platform=node --format=esm --alias:'$lib=./src/lib' --outfile=probe.mjs
+  node probe.mjs
+  ```
+
+  That is how the reference resolver's threading and the rendered `data-path`
+  contract were checked — order-dependent resolution across four files is not
+  something to verify by clicking. Worth reaching for whenever the logic is
+  pure and the alternative is guessing.
 
 ## Conventions
 
