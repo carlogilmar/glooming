@@ -87,6 +87,7 @@ cargo test   --manifest-path src-tauri/Cargo.toml    # parser, seeder, reconcile
 cargo clippy --manifest-path src-tauri/Cargo.toml
 
 python3 scripts/motion-audit.py   # every animation has a reduced-motion rule
+python3 scripts/effect-audit.py   # no $effect reads and writes the same $state
 ```
 
 ## Building the macOS app
@@ -178,11 +179,10 @@ Leaving the arity off means *every* arity: `get_user` selects `get_user/1` and
 you mean exactly one.
 
 While editing, `/` offers every function in the reading grouped by module, and the
-footer shows the exact text you are about to get. Once a reading covers more than
-one module every reference is module-qualified — including the file it started
-from, so a note never mixes `Accounts.create_user` with a bare `charge` and leaves
-you working out which file each belongs to. A reading of one module stays bare,
-since its title already names the module.
+footer shows the exact text you are about to get. **Every reference it inserts is
+module-qualified**, from the first file onward — a one-file reading becomes a
+multi-file one the moment you open another, and the references you already wrote
+have to still mean what they said.
 
 A module is written by its **last segment**: `SingleTarget.foo`, not
 `ImpactPipeline.Shared.AlertImpact.SingleTarget.foo` — the prefix is the same for

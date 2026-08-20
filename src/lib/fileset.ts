@@ -248,11 +248,6 @@ export interface VocabEntry {
   line: number;
   visibility: "public" | "private";
   /**
-   * This function's module is the reading's home module, so a bare name is
-   * unambiguous. Decided by module, never by which tab is open.
-   */
-  home: boolean;
-  /**
    * This function is in the file currently on screen. Used only to rank the
    * menu — you are usually writing about what you are looking at — and never to
    * decide what gets inserted.
@@ -267,24 +262,25 @@ export interface VocabEntry {
  * block and no edit to your prose — an added file simply widens what `/` can
  * offer you, which is exactly what a review needs and no more.
  *
- * **Once a reading covers more than one module, every reference names its module.**
- * Not just the ones from other files — all of them. A note that says
- * `MyApp.Accounts.create_user` in one paragraph and a bare `charge` in the next
- * makes you work out which file each belongs to, and the whole point of the
- * qualified form is not having to. Uniform reads better than minimal here, and it
- * means every reference in a multi-file note is unambiguous standing on its own —
- * which matters most where the markdown ends up pasted into a PR comment, with no
- * file strip next to it to explain itself.
+ * **Every reference names its module. Always.** Not only the ones from other
+ * files, and not only once a reading covers several — every one, from the first
+ * file onward.
  *
- * A reading of **one** module stays bare. There is nothing to disambiguate, the
- * doc's title already is the module name, and repeating it down twenty paragraphs
- * is noise.
+ * A one-file reading becoming a multi-file reading is the normal case, not an
+ * edge one: you open accounts.ex, insert six bare references, then open
+ * billing.ex — and now those six are resolved by *search order* rather than by
+ * what they say. That is precisely the argument `seed.rs` already follows for the
+ * references it generates, and an inserted reference is no more revisited than a
+ * seeded one. Qualifying only above two modules made the two disagree.
  *
- * The discriminator is the *module count*, never the tab that happens to be open.
- * An earlier version keyed off the open tab, so looking at billing.ex and picking
+ * It also means a note is unambiguous standing on its own, which matters most
+ * where the markdown gets pasted into a PR comment with no file strip beside it
+ * to explain itself.
+ *
+ * The label is the module's own name, never the tab that happens to be open. An
+ * earlier version keyed off the open tab, so looking at billing.ex and picking
  * `charge/2` inserted a bare name: the same keystroke produced different text
- * depending on where you were standing, and it emitted references whose meaning
- * depended on prose order you cannot see while typing.
+ * depending on where you were standing.
  *
  * What gets inserted carries **no arity**: `MyApp.Billing.to_cents`, not
  * `MyApp.Billing.to_cents/1`. An arity is a narrowing to one member of a family
@@ -292,15 +288,10 @@ export interface VocabEntry {
  * in a sentence.
  */
 export function vocabulary(files: ReadingFile[], currentPath: string | null): VocabEntry[] {
-  const home = moduleOf(origin(files))?.name ?? null;
-  // More than one module in the reading means a bare name could belong to any of
-  // them, so from that point on every reference says which.
-  const qualifyAll = modulesIn(files).length > 1;
   const labels = moduleLabels(files);
   const out: VocabEntry[] = [];
   for (const file of files) {
     for (const module of file.outline?.modules ?? []) {
-      const isHome = !!home && module.name === home;
       // The module's own name, not the path to it — `SingleTarget.foo`.
       const label = labels.get(module.name) ?? module.name;
       for (const fn of module.functions) {
@@ -310,14 +301,13 @@ export function vocabulary(files: ReadingFile[], currentPath: string | null): Vo
           // Name-only, because an arity is a narrowing you rarely want: `/1..2`
           // was never readable in prose, and sibling arities are one function to
           // a reader anyway. Type the arity by hand when you mean exactly one.
-          insert: isHome && !qualifyAll ? fn.name : `${label}.${fn.name}`,
+          insert: `${label}.${fn.name}`,
           module: module.name,
           label,
           path: file.path,
           filename: file.filename,
           line: fn.line,
           visibility: fn.visibility,
-          home: isHome,
           nearby: file.path === currentPath,
         });
       }

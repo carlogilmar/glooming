@@ -106,6 +106,7 @@ mockup/authoring.html          read mode as shipped, plus the edge cases
 mockup/group.html              a reading across several files
 mockup/motion.html             the animation contract, replayable
 scripts/motion-audit.py        every animation vs its reduced-motion rule
+scripts/effect-audit.py        $effects that read and write the same $state
 app-icon.png                   icon source (1024², RGBA); also copied to static/
 IMPLEMENTATION_PLAN.md         the reasoning behind every decision here
 README.md                      user-facing: clone, install, run, build
@@ -289,24 +290,32 @@ removing a file makes its references go quiet rather than break loudly — that 
 has its own signals (the `×` spells out what it does, and the strip shows the
 set), whereas a struck-through `String.trim` has none and just looks like a bug.
 
-**Once a reading covers more than one module, every reference names its module** —
-not just the ones from other files. A note saying `MyApp.Accounts.create_user` in
-one paragraph and a bare `charge` in the next makes you work out which file each
-belongs to, and not having to is the entire point of the qualified form. Uniform
-beats minimal here, and it means every reference in a multi-file note stands on
-its own — which matters most where the markdown gets pasted into a PR comment,
-with no file strip beside it to explain itself. A reading of **one** module stays
-bare: there is nothing to disambiguate, the doc's title already *is* the module
-name, and repeating it down twenty paragraphs is noise.
+**Every reference the `/` menu inserts names its module. Always** — from the
+first file onward, not only once a reading covers several.
 
-The discriminator is the **module count**, never the open tab. An earlier version
-keyed off the tab, so looking at billing.ex and picking `charge/2` inserted a bare
-name: **the same keystroke produced different text depending on where you were
-standing**, and it emitted references whose meaning depended on prose order you
-cannot see while typing. The tab still *ranks* the menu, because you are usually
+That rule was arrived at twice, and the second time corrected an inconsistency.
+`seed.rs` already qualifies the references it generates on the grounds that
+**generated text is written once and never revisited**, so it has to stay correct
+as the reading grows. An inserted reference is no more revisited than a seeded
+one: you open accounts.ex, insert six bare references, then open billing.ex — and
+those six are now resolved by *search order* rather than by what they say.
+Qualifying only above two modules made the seeder and the menu disagree about the
+same durability argument.
+
+It is also what makes a note stand on its own where it matters most: pasted into a
+PR comment, with no file strip beside it to explain itself.
+
+The label is the module's own name, **never the tab that happens to be open**. An
+earlier version keyed off the tab, so looking at billing.ex and picking `charge/2`
+inserted a bare name: the same keystroke produced different text depending on
+where you were standing. The tab still *ranks* the menu, because you are usually
 writing about what you are looking at — that is a preference, not a meaning. The
 footer spells out the exact text `↵` will insert, since the row shows a bare
 signature and what lands is neither bare nor arity-bearing.
+
+A bare name still *resolves* (threaded file → origin → the rest), because prose
+you typed yourself may well be loose and old docs are full of it. It is simply not
+something the menu will ever produce.
 
 **Blocks find their own file from the `module=` they already carried.** That
 attribute existed for readability; in a multi-file reading it becomes the thing
@@ -1023,6 +1032,28 @@ than patching it — the same one-payload habit as `open_file`. The one thing th
 frontend must *not* adopt is the markdown: an autosave may be in flight, and
 taking the server's copy would lose the sentence you are mid-way through. Every
 call site saves `markdown` and puts it back.
+
+**An `$effect` must never read and write the same `$state`.** The write
+re-triggers the effect, which writes again — the main thread is pinned and the
+window stops responding to anything. This shipped: the file strip's "dot earns its
+colour" effect read `seen` and `earned` while assigning both, and because the
+strip only mounts once a reading has **two** files, the app froze the moment a
+second file was added. Nothing was mistyped, so `pnpm check` was clean throughout.
+
+The rule it leaves behind: inside an effect, read reactive state or write it,
+never both. Bookkeeping that only the effect itself consults — a "previous value"
+— should be a plain `let`, not `$state`. Only what the template renders needs to
+be reactive.
+
+Only *synchronous* access counts: state touched inside a `.then()`, a `setTimeout`
+or an event listener is not a tracked dependency and cannot loop, which is why the
+`recentProjects` effect in `+page.svelte` is correct despite looking similar.
+
+`scripts/effect-audit.py` catches it, and knows that difference:
+
+```bash
+python3 scripts/effect-audit.py    # exits non-zero on a read-write loop
+```
 
 **`db` is `pub`** solely so `tests/pipeline.rs` can construct `FileHistory`.
 

@@ -43,21 +43,41 @@
    * against the previous set rather than the current one, because the animation
    * is about the transition, not the state.
    */
-  let seen = $state<Set<string>>(new Set());
+  /**
+   * The previous set is **deliberately not `$state`**.
+   *
+   * It is bookkeeping, not something the template renders — and an effect that
+   * both reads and writes the same `$state` re-triggers itself forever. This was
+   * that bug: the strip only mounts once a reading has two files, so adding a
+   * second file pinned the main thread and the whole window stopped responding.
+   * `svelte-check` cannot see it; nothing is mistyped.
+   *
+   * The rule this leaves behind: inside an effect, read reactive state or write
+   * it, never both. `earned` is written here and read only by the template.
+   */
+  let seen: Set<string> | null = null;
+  let earnTimer: ReturnType<typeof setTimeout> | null = null;
   let earned = $state<Set<string>>(new Set());
 
   $effect(() => {
-    const now = referenced;
-    const fresh = [...now].filter((p) => !seen.has(p));
-    // First paint of an already-written note is not an achievement: seed the
-    // baseline silently, and only celebrate what changes afterwards.
-    const baseline = seen.size === 0 && !earned.size;
+    const now = referenced; // the only reactive read in here
+    const before = seen;
     seen = new Set(now);
-    if (baseline || !fresh.length) return;
 
-    earned = new Set([...earned, ...fresh]);
-    const off = setTimeout(() => (earned = new Set()), 900);
-    return () => clearTimeout(off);
+    // First paint of an already-written note is not an achievement: seed the
+    // baseline silently, and only celebrate what changes after it.
+    if (before === null) return;
+
+    const fresh = [...now].filter((p) => !before.has(p));
+    if (!fresh.length) return;
+
+    earned = new Set(fresh);
+    if (earnTimer) clearTimeout(earnTimer);
+    earnTimer = setTimeout(() => (earned = new Set()), 900);
+  });
+
+  $effect(() => () => {
+    if (earnTimer) clearTimeout(earnTimer);
   });
 
   type State = "stale" | "missing" | "written" | "unread";

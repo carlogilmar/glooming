@@ -239,9 +239,10 @@
         {
           keys: ["/"],
           what:
-            "While editing, offers every function in the reading, grouped by module. Once a " +
-            "reading covers more than one module every reference is module-qualified, so a note " +
-            "never mixes qualified and bare names. The footer shows the exact text ↵ will give you",
+            "While editing, offers every function in the reading, grouped by module. Every " +
+            "reference it inserts is module-qualified — a one-file reading becomes a multi-file " +
+            "one as soon as you open another, and what you already wrote has to still mean it. " +
+            "The footer shows the exact text ↵ will give you",
         },
         {
           action: "← Home, then open",
