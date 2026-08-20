@@ -763,6 +763,32 @@ where you are; it just stops hiding the author colours or the matches you asked
 for. Without this, turning on blame with a function selected leaves 68% of the
 authors invisible.
 
+### Lists are rows
+
+A reading is usually a numbered list of steps, so **a list item is a row**, not a
+line of prose with a bullet in front of it — it is the unit read mode walks, and
+it should look like a unit. Ordinary markdown throughout; there is nothing new to
+type, and the text still reads correctly pasted into a PR comment.
+
+- The marker sits in the gutter the row's own left padding leaves, so a wrapped
+  second line aligns with the first instead of tucking under the number.
+- **Both marker offsets are in `em`.** `calc(2.5px + 0.825em)` centres the bullet
+  on the first line, and `line-height: 2.01` on a `0.82em` number gives it the
+  same `1.65em` line box the content has. The doc font is adjustable, so a
+  constant here is only correct at 14px — the same trap `caretXY` avoids.
+- **Depth shows in the marker, not only the indent**: filled square, hollow
+  circle, then a dash. Three levels is more than any reading needs.
+- Hover lifts the row. The reference inside stays the click target — making the
+  whole row clickable would take text selection away from a surface you edit.
+
+**Read mode marks the row, not just the block.** In a loose list the step is the
+inner `<p>`, so without this the number in the gutter stayed bright while the text
+beside it dimmed. The enclosing `li` gets `.steprow`, and `markNow` — one helper,
+because scrolling and clicking both set this and were already required never to
+disagree — puts `.now` on the block and on its row. Dimming then lives on the row
+with `li.steprow .step { opacity: 1 }` beside it, or the two multiply to 0.2 and
+the text nearly vanishes.
+
 ### Reading: the doc drives the code
 
 `▷ Read` in the doc pane header, shown when there is a module anywhere in the
@@ -784,9 +810,24 @@ ordinary inline code.
 
 Four rules, each of which replaced something that read worse:
 
-- **One step per paragraph.** The first reference in a block is its step; later
-  mentions stay clickable but don't re-trigger. Without this a paragraph naming
-  three functions fires three code scrolls inside ~60px of scrolling.
+- **One step per block, and the block is the innermost one that owns the
+  reference.** The first reference a block owns is its step; later mentions stay
+  clickable but don't re-trigger, or a paragraph naming three functions fires
+  three code scrolls inside ~60px.
+
+  "Innermost" is load-bearing, and it took two ordinary markdown shapes to find
+  out. A **loose** list — blank lines between items — wraps each item's text in a
+  `<p>`, so `li` *and* `p` both matched: a three-item list became **six** steps
+  and every second scroll did nothing. A **nested** list has the same problem from
+  the other direction, the parent `li` containing the child's reference. Taking
+  the last carrier in document order that contains a reference fixes both, and
+  handles them together: a parent keeps whatever it holds directly and the child
+  keeps its own. Verified against all five shapes in a synthetic-tree probe.
+
+  The consequence in the DOM: `.mention` now means "not this block's step" rather
+  than "not the first reference", and the scroll handler reads
+  `code.ref[data-line]:not(.mention)`. A reference is a mention from outside and
+  a lead from inside.
 - **A lead-in *and* a tail, both measured in JS.** The trigger sits 38% down the
   pane, which on a tall window is *below* the first paragraph or two at rest —
   so the reading would open at step 2, and how far in depended on the monitor.
@@ -1049,7 +1090,10 @@ Only *synchronous* access counts: state touched inside a `.then()`, a `setTimeou
 or an event listener is not a tracked dependency and cannot loop, which is why the
 `recentProjects` effect in `+page.svelte` is correct despite looking similar.
 
-`scripts/effect-audit.py` catches it, and knows that difference:
+`scripts/effect-audit.py` catches it, and knows that difference. It also strips
+comments before matching — a comment using a state variable's own name read as a
+dependency and flagged a correct effect, and a check that cries wolf is one people
+learn to ignore:
 
 ```bash
 python3 scripts/effect-audit.py    # exits non-zero on a read-write loop

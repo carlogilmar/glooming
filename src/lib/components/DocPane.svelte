@@ -542,6 +542,20 @@
     bandTop = H * TRIGGER + (paneTop - (pane?.getBoundingClientRect().top ?? paneTop));
   }
 
+  /**
+   * Mark step `i` as current — on the block, and on the row that contains it.
+   *
+   * One helper because two call sites set this (scrolling and clicking), and they
+   * were already required never to disagree about which reference is current.
+   */
+  function markNow(i: number) {
+    for (const el of container?.querySelectorAll(".now") ?? []) el.classList.remove("now");
+    const block = steps[i];
+    if (!block) return;
+    block.classList.add("now");
+    block.closest("li")?.classList.add("now");
+  }
+
   function stepAt(): number {
     const line = triggerY();
     let hit = -1;
@@ -566,10 +580,12 @@
       if (i < 0) {
         focus.rest();
         activeRef = null;
-        for (const p of steps) p.classList.remove("now");
+        markNow(-1);
         return;
       }
-      const ref = steps[i].querySelector<HTMLElement>("code.ref[data-line]");
+      // `:not(.mention)` is the block's own step — a nested block's reference is
+      // a mention from out here, and its own lead from in there.
+      const ref = steps[i].querySelector<HTMLElement>("code.ref[data-line]:not(.mention)");
       if (!ref) return;
       const start = parseInt(ref.dataset.line ?? "0", 10);
       const end = parseInt(ref.dataset.end ?? "0", 10) || start;
@@ -587,10 +603,10 @@
         })();
       }
 
-      // Only the paragraph is marked here. The chip is marked by the selection
+      // Only the block is marked here. The chip is marked by the selection
       // effect, keyed on focus.sig — one mechanism, so scrolling and clicking
       // can never disagree about which reference is current.
-      steps.forEach((p, n) => p.classList.toggle("now", n === i));
+      markNow(i);
 
       // And the band takes one flash, so the hand-over is something you *see*
       // happen rather than a line you infer. Only on an actual step change —
@@ -629,7 +645,7 @@
     body.scrollTo({ top: body.scrollTop + delta + 2, behavior: "smooth" });
 
     activeStep = i;
-    steps.forEach((p, n) => p.classList.toggle("now", n === i));
+    markNow(i);
   }
 
   function toggleReading() {
@@ -706,18 +722,53 @@
       steps = [];
       return;
     }
-    const found: HTMLElement[] = [];
+    // Every block that carries a reference — but a reference can sit inside more
+    // than one of them, and only the INNERMOST may own it as a step.
+    //
+    // Two shapes make that happen, and both are ordinary markdown:
+    //
+    //   a *loose* list      `<li><p>ref</p></li>`  — li and p both match
+    //   a *nested* list     `<li>ref<ul><li>ref</li></ul></li>`
+    //
+    // Left alone, a loose three-item list becomes six steps and every second
+    // scroll does nothing. Taking the innermost owner fixes that, and handles
+    // nesting properly at the same time: a parent keeps whatever reference it
+    // holds directly, and the child keeps its own.
+    const SEL = "code.ref[data-line]";
+    const blocks = [...container.querySelectorAll<HTMLElement>("p, li, blockquote")];
+    const carriers = blocks.filter((b) => b.querySelector(SEL));
+    const allRefs = [...container.querySelectorAll<HTMLElement>(`.doc ${SEL}`)];
+
+    // Carriers come out in document order, so for any reference the LAST carrier
+    // containing it is the innermost one.
+    const owner = new Map<HTMLElement, HTMLElement>();
+    for (const r of allRefs) {
+      const chain = carriers.filter((b) => b.contains(r));
+      if (chain.length) owner.set(r, chain[chain.length - 1]);
+    }
+
+    // The first reference a block owns is its step; the rest stay clickable.
+    const lead = new Map<HTMLElement, HTMLElement>();
+    for (const r of allRefs) {
+      const own = owner.get(r);
+      if (own && !lead.has(own)) lead.set(own, r);
+    }
+
     let n = 0;
-    for (const block of container.querySelectorAll<HTMLElement>("p, li, blockquote")) {
-      const refs = block.querySelectorAll<HTMLElement>("code.ref[data-line]");
-      if (!refs.length) continue;
-      block.classList.add("step");
-      refs.forEach((r, i) => {
-        r.classList.toggle("mention", i > 0);
-        // A stable per-render index, so duplicates of one name stay distinct.
-        r.dataset.ref = String(n++);
-      });
-      found.push(block);
+    for (const r of allRefs) {
+      r.classList.toggle("mention", lead.get(owner.get(r) as HTMLElement) !== r);
+      // A stable per-render index, so duplicates of one name stay distinct.
+      r.dataset.ref = String(n++);
+    }
+
+    const found = carriers.filter((b) => lead.has(b));
+    for (const b of found) {
+      b.classList.add("step");
+      // In a loose list the step is the inner <p>, but the *row* is the <li>.
+      // Marking it lets the row dim and highlight as one thing — otherwise the
+      // number in the gutter stays bright while the text beside it fades.
+      const row = b.closest("li");
+      if (row && row !== b) row.classList.add("steprow");
     }
     steps = found;
     activeRef = null;
@@ -1076,6 +1127,97 @@
     line-height: 1.7;
     margin: 0 0 14px;
   }
+  /* ---- lists ----
+     A reading is usually a numbered list of steps, and a step is the unit read
+     mode walks — so a list item is a **row**, not a line of prose with a bullet
+     in front of it. Ordinary markdown, styled: nothing new to type, and the same
+     text still reads correctly pasted into a PR comment.
+
+     The marker lives in the gutter the row's own left padding leaves, so a
+     wrapped second line aligns with the first rather than tucking under the
+     number. */
+  :global(.doc ul),
+  :global(.doc ol) {
+    margin: 0 0 14px;
+    padding: 0;
+    list-style: none;
+    counter-reset: step;
+  }
+  :global(.doc li) {
+    position: relative;
+    padding: 5px 10px 5px 34px;
+    margin: 1px 0;
+    border-radius: 7px;
+    border-left: 2px solid transparent;
+    color: var(--fg-dim);
+    line-height: 1.65;
+    transition: background 0.12s ease;
+  }
+  :global(.doc li:hover) {
+    background: color-mix(in srgb, var(--fg) 4%, transparent);
+  }
+  /* A loose list wraps each item's text in a paragraph. It must not bring the
+     paragraph's own margins into the row. */
+  :global(.doc li > p) {
+    margin: 0;
+  }
+  :global(.doc li > p + p) {
+    margin-top: 8px;
+  }
+  :global(.doc li > ul),
+  :global(.doc li > ol) {
+    margin: 4px 0 0;
+  }
+
+  :global(.doc ol > li) {
+    counter-increment: step;
+  }
+  :global(.doc ol > li::before) {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: 5px; /* the row's own padding-top */
+    width: 24px;
+    text-align: right;
+    font-family: var(--mono);
+    font-size: 0.82em;
+    font-weight: 600;
+    /* 0.82em × 2.01 = 1.65em of the row — the same line box the content has, so
+       the number's baseline sits with the text's at every doc font size instead
+       of drifting the moment the stepper is nudged. */
+    line-height: 2.01;
+    color: var(--fg-faint);
+  }
+
+  /* Depth carries in the marker as well as the indent, so a sub-point still
+     reads as one at a glance when the indent is only 34px. Filled square, then
+     hollow circle, then a dash — three levels is more than any reading needs. */
+  :global(.doc ul > li::before) {
+    content: "";
+    position: absolute;
+    left: 13px;
+    /* Centred on the first line: 5px padding + half a 1.65em line box, less half
+       the dot. In `em` so it tracks the font size rather than being a constant
+       that is only right at 14px. */
+    top: calc(2.5px + 0.825em);
+    width: 5px;
+    height: 5px;
+    border-radius: 1.5px;
+    background: var(--fg-faint);
+  }
+  :global(.doc ul ul > li::before) {
+    background: transparent;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1.5px var(--fg-faint);
+  }
+  :global(.doc ul ul ul > li::before) {
+    width: 6px;
+    height: 1.5px;
+    border-radius: 0;
+    background: var(--fg-faint);
+    box-shadow: none;
+  }
+
   :global(.doc blockquote) {
     margin: 0 0 20px;
     padding: 0 0 0 14px;
@@ -2354,6 +2496,26 @@
   }
   :global(.doc.reading .step:not(.now)) {
     opacity: 0.45;
+  }
+  /* When the step is a paragraph inside a list item, the ROW carries the
+     dimming — and the block inside it must not dim again, or the two multiply
+     to 0.2 and the text goes almost invisible. */
+  :global(.doc.reading li.steprow:not(.now)) {
+    opacity: 0.45;
+  }
+  :global(.doc.reading li.steprow .step) {
+    opacity: 1;
+  }
+  /* The current step, as a row. Covers both shapes: a tight list item is itself
+     the step, a loose one only contains it. */
+  :global(.doc.reading li.step.now),
+  :global(.doc.reading li.steprow.now) {
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+    border-left-color: var(--accent);
+  }
+  :global(.doc.reading li.step.now::before),
+  :global(.doc.reading li.steprow.now::before) {
+    color: var(--accent);
   }
   :global(.reading-lead),
   :global(.reading-tail) {

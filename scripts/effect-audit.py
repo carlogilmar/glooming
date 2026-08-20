@@ -16,6 +16,27 @@ false positive here to a frozen UI.
 """
 import os, re, sys
 
+def strip_comments(src):
+    """Blank out // and /* */ comments, preserving length so spans stay valid."""
+    out, i, n = [], 0, len(src)
+    while i < n:
+        two = src[i:i + 2]
+        if two == '//':
+            j = src.find('\n', i)
+            j = n if j == -1 else j
+            out.append(' ' * (j - i))
+            i = j
+        elif two == '/*':
+            j = src.find('*/', i + 2)
+            j = n if j == -1 else j + 2
+            out.append(''.join(c if c == '\n' else ' ' for c in src[i:j]))
+            i = j
+        else:
+            out.append(src[i])
+            i += 1
+    return ''.join(out)
+
+
 def match_block(s, open_at):
     """From the '(' of `$effect(`, return the span of the whole call."""
     i, d = open_at, 0
@@ -73,8 +94,11 @@ for root, _, fs in os.walk('src'):
 
         for m in re.finditer(r'\$effect\s*\(', s):
             a, b = match_block(s, m.end() - 1)
-            body = s[a:b]
             line = s[:m.start()].count('\n') + 1
+            # Comments are stripped, or any comment that happens to use a state
+            # variable's name reads as a dependency. That produced a false
+            # positive on the word "steps" inside a sentence about steps.
+            body = strip_comments(s[a:b])
 
             spans = deferred_spans(body)
             sync = lambda at: not any(a <= at < b for a, b in spans)
