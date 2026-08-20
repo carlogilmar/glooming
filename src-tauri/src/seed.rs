@@ -63,19 +63,21 @@ pub fn seed_markdown(
         _ => out.push_str("> _one-line summary…_\n\n"),
     }
 
-    // How big is this, what is in it, what shape is it, what does it touch —
-    // and only then the block you write in. The directory comes before the
-    // pictures: names are what you orient by, and the treemap and reach diagram
-    // both read better once you already know what the names are.
+    // How big is this, what is in it, what does it touch — and only then the
+    // block you write in. The directory comes before the picture: names are what
+    // you orient by, and the reach diagram reads better once you already know
+    // what the names are.
+    //
+    // No `lgtm:treemap`. It is still a block — `treemap_block` below writes one
+    // and the renderer draws it — but it is not seeded. Function sizes answer a
+    // question you ask *occasionally* ("is anything in here disproportionate?"),
+    // and a generated section you scroll past every time is not paying for the
+    // space it takes above the part you actually write in.
     out.push_str(&stats_block(module, source, history));
     out.push('\n');
 
     out.push_str("## Surface\n\n");
     out.push_str(&surface_block(module));
-    out.push('\n');
-
-    out.push_str("## Shape\n\n");
-    out.push_str(&treemap_block(module));
     out.push('\n');
 
     if !module.deps.is_empty() {
@@ -84,15 +86,32 @@ pub fn seed_markdown(
         out.push('\n');
     }
 
-    // The functions block comes last: everything above it is generated, and
-    // this is the one you write in.
+    // No `lgtm:functions` either. It was a second listing of the same names the
+    // surface block already gives you, and its one unique offering — a prose slot
+    // per function — turned out to be the wrong shape: an explanation follows the
+    // path through a module, not its alphabetical index. So Explain is now just a
+    // heading and a blank page.
     out.push_str("## Explain\n\n");
-    out.push_str(&functions_block(module));
-
-    out.push_str("\n## Notes\n\n");
-    out.push_str(&private_notes(module));
+    out.push_str(NOTES_INVITE);
     out
 }
+
+/// What the Explain section says on a doc nobody has written in yet.
+///
+/// It used to be a generated list of every private helper, each an inline
+/// reference — which existed so `▷ Read` did something on a file you had not
+/// written a word about. `/` does that job now, and better: you reference the
+/// functions your explanation actually reaches, in the order your prose takes
+/// them, rather than scrolling a machine-made list of every helper in source
+/// order. A list of things you did not choose was never really a reading.
+///
+/// So this is an invitation and nothing more. One italic paragraph, and it names
+/// the two keys that turn an empty note into a reading — because with nothing
+/// generated here, `▷ Read` stays hidden until the first reference exists, and
+/// that is worth saying rather than leaving to be discovered.
+const NOTES_INVITE: &str = "_The code is on the left — write what you make of it here. \
+     Press `/` while editing to reference any function in this reading; once your prose \
+     names one, `▷ Read` will walk the code in the order you wrote it._\n";
 
 /// A config script. No functions, so no surface, treemap or reach — those
 /// blocks would all be empty, and an empty block reads as broken.
@@ -110,7 +129,8 @@ fn seed_config(
     out.push('\n');
     out.push_str("## Settings\n\n");
     out.push_str(&settings_block(&config, filename));
-    out.push_str("\n## Notes\n\n");
+    out.push_str("\n## Explain\n\n");
+    out.push_str(PLAIN_INVITE);
     out
 }
 
@@ -124,7 +144,8 @@ fn seed_test(outline: &Outline, source: &str, history: &FileHistory) -> String {
     out.push('\n');
     out.push_str("## Tests\n\n");
     out.push_str(&tests_block(&tests));
-    out.push_str("\n## Notes\n\n");
+    out.push_str("\n## Explain\n\n");
+    out.push_str(PLAIN_INVITE);
     out
 }
 
@@ -149,9 +170,14 @@ fn seed_plain(source: &str, history: &FileHistory, filename: &str) -> String {
         "\n_No module, config or test suite recognised in this file — nothing structural to \
          show. The code is on the left; write whatever you need here._\n",
     );
-    out.push_str("\n## Notes\n\n");
+    out.push_str("\n## Explain\n\n");
+    out.push_str(PLAIN_INVITE);
     out
 }
+
+/// The same invitation for the kinds that have no functions to reference, so `/`
+/// and `▷ Read` are not promised where they do nothing.
+const PLAIN_INVITE: &str = "_The code is on the left — write what you make of it here._\n";
 
 /// The shared tail of every stats block: the git facts, when there are any.
 fn stats_lines(rows: &[(&str, String)], history: &FileHistory) -> String {
@@ -372,6 +398,11 @@ fn date_only(iso: &str) -> &str {
 
 /// The ```lgtm:treemap block: one `sig : lines visibility` row per function,
 /// mirroring Alexandria's `label: value flags` treemap syntax.
+///
+/// **No longer part of seeding** — see `seed_markdown`. Kept because it is the
+/// canonical way to write one, and because a block whose only producer is a
+/// hand-typed guess drifts away from its renderer. Pinned by
+/// `the_treemap_is_still_a_block_even_though_it_is_not_seeded`.
 pub fn treemap_block(module: &ModuleInfo) -> String {
     let mut out = format!("```{TREEMAP_TAG}\n");
 
@@ -473,10 +504,11 @@ pub fn surface_block(module: &ModuleInfo) -> String {
 
 /// The ```lgtm:functions block: **the public surface only**.
 ///
-/// Private helpers moved out to a prose list under Notes, where each one is an
-/// inline reference — which means a freshly seeded doc already has a reading to
-/// scroll through, instead of you having to write one before the feature does
-/// anything.
+/// **No longer part of seeding** — see `seed_markdown`. Kept, tested, rendered and
+/// reconciled, because it is still the right shape when you *want* a slot per
+/// function; it is just not what a doc should open with. Private helpers are
+/// deliberately absent: the block carries what the module *offers*, and they are
+/// one `/` away when your explanation needs to reach one.
 pub fn functions_block(module: &ModuleInfo) -> String {
     let mut out = format!("```{BLOCK_TAG} module={}\n", module.name);
 
@@ -512,33 +544,6 @@ pub fn functions_block(module: &ModuleInfo) -> String {
     out
 }
 
-/// The private helpers as a prose list.
-///
-/// Written as ordinary markdown with inline references, so it is a **reading**:
-/// each item is a step, and the em dash is the gap you write into. In source
-/// order, because that is the order the implementation reads.
-pub fn private_notes(module: &ModuleInfo) -> String {
-    let mut privates: Vec<_> = module
-        .functions
-        .iter()
-        .filter(|f| f.visibility == Visibility::Private)
-        .collect();
-    if privates.is_empty() {
-        return String::new();
-    }
-    privates.sort_by_key(|f| f.line);
-
-    let mut out = String::from("Private helpers, in source order:\n\n");
-    for f in privates {
-        let sig = display_sig(f);
-        // An existing @doc becomes the starting prose; otherwise an open gap.
-        let prose = f.doc.as_deref().unwrap_or("").replace('\n', " ");
-        out.push_str(&format!("- `{sig}` — {prose}\n"));
-    }
-    out.push('\n');
-    out
-}
-
 /// `create_user/1`, or `search/1..2` when the definition has default arguments.
 fn display_sig(f: &crate::parse::FnInfo) -> String {
     if f.min_arity < f.arity {
@@ -567,14 +572,21 @@ mod tests {
 end
 "#;
 
-    /// Just the ```lgtm:functions block, so assertions about the table aren't
-    /// confused by the treemap listing the same names.
+    /// The ```lgtm:functions block on its own. Seeding no longer writes one, so
+    /// this takes the generator's output directly — several blocks list every
+    /// function name, and an assertion that isn't scoped finds the wrong row.
     fn functions_block_of(md: &str) -> String {
         md.split("```lgtm:functions")
             .nth(1)
             .and_then(|b| b.split("```").next())
             .expect("functions block")
             .to_string()
+    }
+
+    /// The generated table, for the tests that are about the table itself.
+    fn table() -> String {
+        let outline = elixir::parse(SAMPLE).expect("parse");
+        functions_block_of(&functions_block(outline.modules.first().expect("module")))
     }
 
     fn seeded() -> String {
@@ -598,23 +610,23 @@ end
         assert!(md.contains("> Reads and writes for the users table."));
     }
 
+    /// The surface block is the only listing now, and it still splits by
+    /// visibility with public first.
     #[test]
     fn groups_public_and_private() {
         let md = seeded();
         let pub_at = md.find("public:").expect("public group");
         let priv_at = md.find("private:").expect("private group");
         assert!(pub_at < priv_at, "public comes first");
-        assert!(md.contains("normalize/1"));
+        assert!(md.contains("normalize/1"), "privates are listed:\n{md}");
     }
 
     #[test]
     fn carries_existing_docs_as_prose_and_leaves_the_rest_blank() {
-        let md = seeded();
-        assert!(md.contains("create_user/1"));
-        assert!(md.contains("Creates a user."));
+        let table = table();
+        assert!(table.contains("create_user/1"));
+        assert!(table.contains("Creates a user."));
         // get_user!/1 has no @doc, so its explanation is an empty slot.
-        // Scope to the functions block — the treemap also lists every name.
-        let table = functions_block_of(&md);
         let line = table
             .lines()
             .find(|l| l.contains("get_user!/1"))
@@ -629,23 +641,22 @@ end
 
     #[test]
     fn is_a_well_formed_fence() {
-        let md = seeded();
-        assert!(md.contains("```lgtm:functions module=MyApp.Accounts"));
-        // stats, treemap, surface, functions — the sample reaches nothing
-        // outside itself, so deps is absent and four blocks remain.
-        assert_eq!(md.matches("```").count(), 8, "every block opened and closed");
+        // stats and surface. The sample reaches nothing outside itself so deps is
+        // absent, and neither the treemap nor the functions table is seeded.
+        assert_eq!(seeded().matches("```").count(), 4, "every block opened and closed");
+        assert!(table().contains("create_user/1"), "the generator still writes one");
     }
 
+    /// Facts, then the directory, then a blank page. Two blocks, and everything
+    /// after them is yours.
     #[test]
-    fn seeds_the_treemap_alongside_the_table() {
+    fn seeds_the_facts_then_the_directory_then_gets_out_of_the_way() {
         let md = seeded();
-        assert!(md.contains("```lgtm:treemap"));
-        // Its body carries the sizes as text — the markdown IS the data.
-        assert!(md.contains("```lgtm:treemap\n  "), "{md}");
-        // Facts, then the directory, then the pictures, then where you write.
         assert!(md.find("lgtm:stats").unwrap() < md.find("lgtm:surface").unwrap());
-        assert!(md.find("lgtm:surface").unwrap() < md.find("lgtm:treemap").unwrap());
-        assert!(md.find("lgtm:treemap").unwrap() < md.find("lgtm:functions").unwrap());
+        assert!(md.find("lgtm:surface").unwrap() < md.find("## Explain").unwrap());
+        for absent in ["lgtm:treemap", "lgtm:functions"] {
+            assert!(!md.contains(absent), "{absent} is not seeded:\n{md}");
+        }
     }
 
     #[test]
@@ -675,8 +686,7 @@ end
 
     #[test]
     fn the_table_is_alphabetical_within_each_group() {
-        let md = seeded();
-        let table = functions_block_of(&md);
+        let table = table();
         let rows: Vec<&str> = table
             .lines()
             .filter(|l| l.trim_start().starts_with("- "))
@@ -753,9 +763,13 @@ end
         assert!(!md.contains("T09:00:00"), "timestamps trimmed");
     }
 
+    /// The generator is still exercised even though seeding no longer calls it —
+    /// a block whose only producer is a hand-typed guess drifts from its renderer.
     #[test]
     fn the_treemap_block_carries_its_sizes_as_text() {
-        let md = seeded();
+        let outline = elixir::parse(SAMPLE).expect("parse");
+        let module = outline.modules.first().expect("module");
+        let md = treemap_block(module);
         let block = md
             .split("```lgtm:treemap\n")
             .nth(1)
@@ -915,7 +929,8 @@ end
         assert!(md.contains("nothing structural to"), "{md}");
         // Size still reported; nothing structural claimed.
         assert!(md.contains("lines: 2"), "{md}");
-        assert!(md.contains("## Notes"), "{md}");
+        // The section you write in is called what it is for, in every kind.
+        assert!(md.contains("## Explain"), "{md}");
         for absent in ["lgtm:surface", "lgtm:treemap", "lgtm:deps", "lgtm:functions", "lgtm:tests"] {
             assert!(!md.contains(absent), "{absent} must be absent:\n{md}");
         }

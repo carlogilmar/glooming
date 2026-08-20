@@ -154,7 +154,7 @@
       title: "Reading",
       note:
         "Write about the code and lgtm walks it for you. Any inline code naming a function in " +
-        "the reading — `create_user/1`, or `MyApp.Billing.charge/2` for one in another file — " +
+        "the reading — `create_user`, or `Billing.charge` for one in another module — " +
         "becomes a reference, and `L30-34` points at plain lines. No new syntax, so the markdown " +
         "still reads correctly pasted into a PR comment.",
       rows: [
@@ -183,6 +183,27 @@
             "It points into another file of the reading. Clicking it, or scrolling onto it, swaps " +
             "the code pane first — the pane dips and names where you landed, rather than " +
             "crossfading line ranges between two files that share nothing",
+        },
+        {
+          action: "a module is its last segment",
+          what:
+            "`SingleTarget.foo`, not the whole path to it — the prefix is the same for every " +
+            "module in the reading. Any longer piece of the path still works, and two modules " +
+            "sharing a last segment both keep their full names rather than becoming ambiguous",
+        },
+        {
+          action: "the arity is optional",
+          what:
+            "`get_user` means every arity of it — they are one function to a reader, and both " +
+            "get highlighted. Write `get_user/2` when you mean exactly that one. This is what " +
+            "`/` inserts, because `search/1..2` was never readable in a sentence",
+        },
+        {
+          action: "`attrs`, `String.trim`",
+          what:
+            "Left as ordinary prose, not struck through. A bare word that names no function, and " +
+            "a module that isn't one of your files, are things you write about code — not broken " +
+            "references to it. Anything explicit still strikes through when it goes missing",
         },
         {
           action: "an unqualified name",
@@ -218,9 +239,9 @@
         {
           keys: ["/"],
           what:
-            "While editing, offers every function in the reading, grouped by module. Functions in " +
-            "the file you are looking at insert bare; the rest insert module-qualified, so prose " +
-            "about one file never gets noisier than it needs to be",
+            "While editing, offers every function in the reading, grouped by module. Once a " +
+            "reading covers more than one module every reference is module-qualified, so a note " +
+            "never mixes qualified and bare names. The footer shows the exact text ↵ will give you",
         },
         {
           action: "← Home, then open",

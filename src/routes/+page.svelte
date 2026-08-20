@@ -146,14 +146,18 @@
     currentPath = want ?? originOf(r.files)?.path ?? null;
   }
 
-  // The welcome screen is the only place these are shown, so only load them
-  // while it's up.
-  $effect(() => {
-    if (files.length) return;
+  const loadRecents = () =>
     ipc
       .listDocs(undefined, 6)
       .then((r) => (recents = r))
       .catch(() => (recents = []));
+
+  // The welcome screen is the only place these are shown, so only load them
+  // while it's up. Deleting from the library has to say so explicitly — it
+  // changes the same query without touching any state this effect reads.
+  $effect(() => {
+    if (files.length) return;
+    loadRecents();
   });
 
   // ---- opening ------------------------------------------------------------
@@ -384,6 +388,33 @@
   }
 
   /** Re-read every file in the reading from disk, and re-check staleness. */
+  /**
+   * A reading was deleted in the library.
+   *
+   * The recents list is a cached query and the query's answer just changed, so it
+   * is reloaded. And if the deleted reading is the one on screen, it has to go:
+   * leaving it open means the next autosave writes to a row that no longer
+   * exists, which surfaces as a "not found" banner several seconds later with no
+   * obvious cause.
+   */
+  function onDocDeleted(id: number) {
+    loadRecents();
+    if (doc?.id !== id) return;
+
+    // Cleared without saving, deliberately — there is nothing left to save to,
+    // and `doc` goes first so the autosave effect sees no doc rather than an
+    // empty one.
+    if (timer) clearTimeout(timer);
+    focus.clear();
+    doc = null;
+    markdown = "";
+    files = [];
+    currentPath = null;
+    chooser = null;
+    dirty = false;
+    referenced = new Set();
+  }
+
   async function reparseNow() {
     if (doc) {
       const pending = markdown;
@@ -789,6 +820,7 @@
         showLibrary = false;
         openExisting(d);
       }}
+      ondelete={onDocDeleted}
       onclose={() => (showLibrary = false)}
     />
   {/if}

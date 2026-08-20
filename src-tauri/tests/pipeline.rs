@@ -69,60 +69,100 @@ fn normalize_reports_both_clauses() {
     assert_eq!(n.line, 30);
 }
 
+/// A fresh doc gives you the facts and then gets out of the way.
+///
+/// Two generated blocks — how big is this, what is in it — and a blank page. The
+/// `lgtm:functions` table used to sit between them and your writing; it was a
+/// second listing of the names `lgtm:surface` already gives you, and its one
+/// unique offering, a prose slot per function, is the wrong shape for an
+/// explanation. Explanations follow the path through a module. An alphabetical
+/// index does not.
 #[test]
-fn the_seeded_doc_is_ready_to_write_into() {
+fn the_seeded_doc_gives_you_the_facts_and_a_blank_page() {
     let md = seed::seed_markdown(&outline(), FIXTURE, &FileHistory::default(), "accounts.ex");
 
     assert!(md.starts_with("# MyApp.Accounts\n"));
     assert!(md.contains("Reads and writes for the `users` table."));
-    assert!(md.contains("```lgtm:functions module=MyApp.Accounts"));
-    assert!(md.contains("public:") && md.contains("private:"));
 
-    // @doc text becomes starting prose…
-    assert!(md.contains("Creates a user from raw attrs."));
-
-    // …and everything undocumented is an empty slot waiting for you.
-    let table = md
-        .split("```lgtm:functions")
+    // The directory is still complete: every function, both visibilities.
+    let surface = md
+        .split("```lgtm:surface")
         .nth(1)
         .and_then(|b| b.split("```").next())
-        .expect("functions block");
-    let empty = table
-        .lines()
-        .filter(|l| l.trim_start().starts_with("- ") && l.trim_end().ends_with(':'))
-        .count();
-    assert_eq!(empty, 1, "only get_user!/1 lacks a @doc:\n{table}");
+        .expect("surface block");
+    for sig in ["create_user/1", "get_user/1", "get_user!/1", "normalize/1", "changeset/2"] {
+        assert!(surface.contains(sig), "{sig} missing from the directory:\n{surface}");
+    }
 
-    // The block is the PUBLIC surface; private helpers live in prose.
-    assert!(!table.contains("normalize/1"), "private stays out:\n{table}");
-    assert!(!table.contains("private:"), "no private group:\n{table}");
+    // And nothing is written for you.
+    for absent in ["lgtm:functions", "lgtm:treemap"] {
+        assert!(!md.contains(absent), "{absent} is not seeded:\n{md}");
+    }
 }
 
-/// A freshly seeded doc already has something to read: the private helpers are
-/// a prose list of inline references, so `▷ Read` does something on a file you
-/// have not written a word about yet.
+/// A freshly seeded doc invites you to write, and nothing more.
+///
+/// The Notes section used to carry a generated list of every private helper as
+/// inline references, so `▷ Read` did something before you had written a word.
+/// `/` replaced that: you reference what your explanation reaches, in the order
+/// your prose takes it, instead of scrolling a machine-made list of every helper
+/// in source order. A list of things you did not choose was never a reading.
 #[test]
-fn the_seed_ships_a_reading_to_scroll() {
+fn the_seed_invites_you_to_write_rather_than_writing_for_you() {
     let md = seed::seed_markdown(&outline(), FIXTURE, &FileHistory::default(), "accounts.ex");
-    let notes = md.split("## Notes").nth(1).expect("notes section");
+    let notes = md.split("## Explain").nth(1).expect("explain section");
 
-    assert!(notes.contains("Private helpers, in source order:"), "{notes}");
-    // Inline references — the same backticks that drive a reading.
-    assert!(notes.contains("- `normalize/1` —"), "{notes}");
-    assert!(notes.contains("- `changeset/2` —"), "{notes}");
-    // Source order, since that is the order the implementation reads.
     assert!(
-        notes.find("normalize/1").unwrap() < notes.find("changeset/2").unwrap(),
-        "{notes}"
+        !notes.contains("Private helpers"),
+        "no generated list:\n{notes}"
     );
-    // Public functions are not repeated here.
-    assert!(!notes.contains("create_user/1"), "{notes}");
+    // Not an empty heading either — an empty section reads as something missing.
+    assert!(notes.contains("write what you make of it here"), "{notes}");
+    // It names the two keys, because with nothing generated here `▷ Read` stays
+    // hidden until the first reference exists.
+    assert!(notes.contains("`/`") && notes.contains("▷ Read"), "{notes}");
+    // And it does not invent references of its own.
+    assert!(!notes.contains("normalize/1"), "{notes}");
+    assert!(!notes.contains("changeset/2"), "{notes}");
 }
 
-/// A module with nothing private has no list to write, and must not leave an
-/// orphan heading behind.
+/// The shape section is gone from seeding — but `lgtm:treemap` is still a block.
+///
+/// Function sizes answer a question you ask occasionally, so a generated section
+/// above the part you write in was not paying for its space. The generator stays,
+/// because a block whose only producer is a hand-typed guess drifts away from its
+/// renderer.
 #[test]
-fn a_module_with_no_private_helpers_gets_no_list() {
+fn the_treemap_is_still_a_block_even_though_it_is_not_seeded() {
+    let outline = outline();
+    let md = seed::seed_markdown(&outline, FIXTURE, &FileHistory::default(), "accounts.ex");
+    assert!(!md.contains("lgtm:treemap"), "not seeded:\n{md}");
+    assert!(!md.contains("## Shape"), "and no orphan heading:\n{md}");
+
+    let module = outline.modules.first().expect("module");
+    let block = seed::treemap_block(module);
+    assert!(block.starts_with("```lgtm:treemap"), "{block}");
+    assert!(block.contains("create_user/1"), "still writes rows:\n{block}");
+}
+
+/// What a fresh module doc is made of, in order. Pinned because everything above
+/// `## Explain` is generated, and every one of those sections is space taken from
+/// the part you write in.
+#[test]
+fn a_seeded_module_doc_has_exactly_these_sections() {
+    let md = seed::seed_markdown(&outline(), FIXTURE, &FileHistory::default(), "accounts.ex");
+    let headings: Vec<&str> = md
+        .lines()
+        .filter(|l| l.starts_with("## "))
+        .map(|l| l.trim_start_matches("## "))
+        .collect();
+    assert_eq!(headings, ["Surface", "Reach", "Explain"], "{md}");
+}
+
+/// A module with nothing private has no list to write — and now neither does one
+/// with private helpers. Either way the tail must not be an orphan heading.
+#[test]
+fn the_explain_section_is_never_left_empty() {
     let src = "defmodule MyApp.Pure do\n  def add(a, b), do: a + b\nend\n";
     let md = seed::seed_markdown(
         &parse::parse(src, "elixir").unwrap(),
@@ -131,9 +171,16 @@ fn a_module_with_no_private_helpers_gets_no_list() {
         "pure.ex",
     );
     assert!(!md.contains("Private helpers"), "{md}");
-    assert!(md.trim_end().ends_with("## Notes"), "clean tail:\n{md}");
+    assert!(!md.trim_end().ends_with("## Explain"), "not a bare heading:\n{md}");
+    assert!(md.contains("write what you make of it here"), "{md}");
 }
 
+/// Reconciliation still works, and is still the reason `lgtm:functions` exists.
+///
+/// The block is no longer seeded, so the doc is built here the way you would build
+/// one: take the generated table, fill in some slots, then change the file. That
+/// is a better test than it was — it exercises the reconciler against a block,
+/// rather than against whatever the seeder happened to emit.
 #[test]
 fn a_later_edit_to_the_file_never_costs_you_prose() {
     // You write explanations. Signatures are padded to the widest in their
@@ -151,12 +198,15 @@ fn a_later_edit_to_the_file_never_costs_you_prose() {
             .join("\n")
     }
 
-    let written = explain(
-        &seed::seed_markdown(&outline(), FIXTURE, &FileHistory::default(), "accounts.ex"),
-        "create_user/1",
-        " Entry point. Validates, then inserts.",
+    let outline = outline();
+    let module = outline.modules.first().expect("module");
+    let doc = format!(
+        "# MyApp.Accounts\n\n## Explain\n\n{}",
+        seed::functions_block(module)
     );
-    // Both public — the block is the public surface now.
+
+    let written = explain(&doc, "create_user/1", " Entry point. Validates, then inserts.");
+    // Both public — the block is the public surface.
     let written = explain(&written, "get_user/1", " The bang-free half of the pair.");
     assert!(written.contains("The bang-free half of the pair."), "setup:\n{written}");
 
@@ -177,6 +227,16 @@ fn a_later_edit_to_the_file_never_costs_you_prose() {
     assert!(merged.contains("delete_user/1"));
     // The deleted one is struck through, not erased.
     assert!(merged.contains("~~get_user!/1~~"), "{merged}");
+}
+
+/// A seeded doc has no `lgtm:functions`, so reconciling one is a no-op on the
+/// prose. Worth pinning: it is the same guarantee a config doc has, and it means
+/// the reconcile path cannot quietly rewrite a doc that has no table.
+#[test]
+fn reconciling_a_seeded_doc_leaves_it_alone() {
+    let md = seed::seed_markdown(&outline(), FIXTURE, &FileHistory::default(), "accounts.ex");
+    let merged = lgtm_lib::reconcile::reconcile_markdown(&md, &outline());
+    assert_eq!(merged, md, "nothing to reconcile, nothing changed");
 }
 
 /// The frontend reads `endLine` and `minArity`. Rust's field names are snake
@@ -234,4 +294,3 @@ fn reconciling_a_config_doc_changes_nothing() {
         "a doc with no functions block is passed through verbatim"
     );
 }
-

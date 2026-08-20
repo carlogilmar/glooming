@@ -265,6 +265,25 @@ mod tests {
         assert_eq!(found[0].file_count, 2);
     }
 
+    /// Saving into a reading that has been deleted must fail loudly.
+    ///
+    /// It is why the library tells the shell what it deleted: leaving the reading
+    /// open means the next autosave lands here, and the error surfaces seconds
+    /// later with nothing on screen to connect it to the delete.
+    #[tokio::test]
+    async fn saving_to_a_deleted_doc_is_an_error_not_a_silent_no_op() {
+        let pool = test_pool().await;
+        let doc = seed(&pool, "/a/accounts.ex", "MyApp.Accounts").await;
+        delete(&pool, doc.id).await.unwrap();
+
+        assert!(
+            update(&pool, doc.id, Some("# written after the delete"), None, None, None)
+                .await
+                .is_err(),
+            "an UPDATE matching no rows must not report success"
+        );
+    }
+
     #[tokio::test]
     async fn deletes() {
         let pool = test_pool().await;

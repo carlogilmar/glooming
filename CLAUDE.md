@@ -3,8 +3,7 @@
 A desktop tool for **reading code deeply**. You open one source file; the window
 splits with the source on the left and your explanation on the right. lgtm
 parses the file and seeds the explanation with what it found — its size and
-history, its surface, a treemap of function sizes, what it reaches outside
-itself — and you fill in the prose. Clicking anything in the explanation focuses
+history, its surface, what it reaches outside itself — and you fill in the prose. Clicking anything in the explanation focuses
 it in the code, and with `▷ Read` on, **scrolling the explanation walks the
 code in the order your prose takes it**. The explanation is saved and comes back
 next time.
@@ -225,14 +224,87 @@ would make read mode walk a different path depending on where you were standing
 when you started scrolling. Search order for a bare name is *threaded file →
 origin → the rest in strip order*.
 
-Four forms, all still plain inline code:
+**The arity is optional, and the `/` menu leaves it out.** A reference without one
+means *every* arity, which is already how selection thinks: the focus store tints
+sibling arities as "related" on the grounds that they are one function to a
+reader. So `get_user` selects `get_user/1` and `get_user/2` together, `get_user/1`
+is the narrowing, and `search/1..2` — never a readable thing to have in the middle
+of a sentence — is retired as a reference form.
+
+A name-only reference therefore carries **several spans, not one**. The chip
+holds `data-ranges="20-22,28-29"`, because two arities can sit either side of an
+unrelated function and one enclosing `min..max` range would light that function up
+too. `data-line` / `data-end` remain the scroll target and the line count.
 
 | Written | Means |
 |---|---|
-| `` `create_user/1` `` | the threaded file, then the origin, then the rest |
-| `` `MyApp.Billing.charge/2` `` | names its own module, and moves the thread |
+| `` `Billing.to_cents` `` | every arity; names its own module, and moves the thread |
+| `` `Billing.to_cents/1` `` | the same, narrowed to one arity |
+| `` `to_cents` `` | every arity, in the threaded module |
+| `` `to_cents/1` `` | the same, narrowed |
 | `` `L25-29` `` | plain lines in the threaded file |
 | `` `billing.ex:25-29` `` | plain lines, said out loud about another file |
+
+**A module is named by its last segment.** `ImpactPipeline.Shared.AlertImpact.SingleTarget.foo`
+is unreadable mid-sentence, and the prefix is identical for every module in the
+reading — so it carries no information exactly where it costs the most. The last
+segment *is* the module's name; everything before it is where the file lives.
+
+`findModule` resolves an exact name first, then any **dot-boundary** suffix, so
+`SingleTarget`, `AlertImpact.SingleTarget` and the full path all reach the same
+module and you can write as much of it as you feel like. The dot is what stops
+`Target` matching `SingleTarget`.
+
+**Shortened only where the short form is unique.** Two files whose modules both
+end in `.Worker` would give `Worker.run` two meanings, so `moduleLabels` leaves
+*those* fully qualified and shortens everything else. Ambiguity here is rare;
+resolving it silently the wrong way would not be.
+
+The same rule applies wherever a module name is **printed** — block headers, the
+reach diagram's boundary and its outside labels — with the full name on a
+`title`/`<title>`. The `module=` in the block *text* stays the full name: that is
+what locates the file, and shortening it there would break the mapping. In the
+reach diagram the kind label's offset is computed from the *drawn* width, not the
+full name's, or it lands in the middle of nowhere.
+
+**Two forms are allowed to fail silently, and both have to be.** Making the arity
+optional widened what *looks* like a reference straight into ordinary prose, so
+`resolveRef` returns `null` — plain inline code, no strikethrough — rather than
+`"dangling"` in exactly two cases:
+
+- **A bare name that resolves to nothing.** Prose about Elixir is full of
+  lowercase words in backticks that are not functions: `attrs`, `opts`, `conn`,
+  `config`, `path`. Striking them through would ruin half of what you write.
+- **A qualified name whose module is not in the reading.** `String.trim`,
+  `Enum.map`, `GenServer.call` are prose about code outside the reading, not
+  broken links into it. Before the arity became optional these did not match at
+  all; afterwards every mention of the standard library struck itself through.
+  `knowsModule` is the gate.
+
+Everything explicit still dangles visibly: a missing function in a module you *do*
+have, and anything carrying an arity. The trade on the second rule is that
+removing a file makes its references go quiet rather than break loudly — that case
+has its own signals (the `×` spells out what it does, and the strip shows the
+set), whereas a struck-through `String.trim` has none and just looks like a bug.
+
+**Once a reading covers more than one module, every reference names its module** —
+not just the ones from other files. A note saying `MyApp.Accounts.create_user` in
+one paragraph and a bare `charge` in the next makes you work out which file each
+belongs to, and not having to is the entire point of the qualified form. Uniform
+beats minimal here, and it means every reference in a multi-file note stands on
+its own — which matters most where the markdown gets pasted into a PR comment,
+with no file strip beside it to explain itself. A reading of **one** module stays
+bare: there is nothing to disambiguate, the doc's title already *is* the module
+name, and repeating it down twenty paragraphs is noise.
+
+The discriminator is the **module count**, never the open tab. An earlier version
+keyed off the tab, so looking at billing.ex and picking `charge/2` inserted a bare
+name: **the same keystroke produced different text depending on where you were
+standing**, and it emitted references whose meaning depended on prose order you
+cannot see while typing. The tab still *ranks* the menu, because you are usually
+writing about what you are looking at — that is a preference, not a meaning. The
+footer spells out the exact text `↵` will insert, since the row shows a bare
+signature and what lands is neither bare nor arity-bearing.
 
 **Blocks find their own file from the `module=` they already carried.** That
 attribute existed for readability; in a multi-file reading it becomes the thing
@@ -257,7 +329,7 @@ across a switch would attribute one file's authors to another.
 references that file, amber when it has changed on disk, and hollow when you
 opened it and never mentioned it. Opening a file to check something and never
 coming back to it is the normal accident of a review, and the hollow dot is the
-same nudge an empty explanation slot is, one level up. `DocPane` reports the
+file-level version of an Explain section still showing its invitation. `DocPane` reports the
 referenced paths by walking `code.ref[data-path]` after each render — the DOM
 already knows, so nothing is recomputed.
 
@@ -297,7 +369,7 @@ shape say nothing about another:
 
 | Kind | Detected by | Blocks |
 |---|---|---|
-| `Module` | `defmodule` with `def`s | stats, surface, treemap, deps, functions |
+| `Module` | `defmodule` with `def`s | stats, surface, deps |
 | `Config` | `import Config` / any `config` call | stats, **settings** |
 | `Test` | `use …Case` in a module body | stats, **tests** |
 | `Plain` | anything else | stats only, plus a note saying why |
@@ -343,22 +415,28 @@ the same as "provides nothing"** — and the UI shows `+?` rather than guessing.
 
 ### Every block at a glance
 
-| Tag | File kind | Renderer | Reconciled? |
-|---|---|---|---|
-| `lgtm:stats` | all | `stats.ts` — key-agnostic, formats whatever keys it finds | no |
-| `lgtm:surface` | module | `surface.ts` — two scrolling columns, sorted by name | no |
-| `lgtm:treemap` | module | `treemap.ts` — squarified, top 3 labelled | no |
-| `lgtm:deps` | module | `deps.ts` — the boundary, omitted when nothing is reached | no |
-| `lgtm:functions` | module | `markdownit.ts` — the public surface, **where you write** | **yes** |
-| `lgtm:settings` | config | `settings.ts` — grouped by app, env vs literal | no |
-| `lgtm:tests` | test | `tests.ts` — describes, setups, assertion strips | no |
+| Tag | File kind | Renderer | Seeded? | Reconciled? |
+|---|---|---|---|---|
+| `lgtm:stats` | all | `stats.ts` — key-agnostic, formats whatever keys it finds | yes | no |
+| `lgtm:surface` | module | `surface.ts` — two scrolling columns, sorted by name | yes | no |
+| `lgtm:treemap` | module | `treemap.ts` — squarified, top 3 labelled | **no** — write it when you want it | no |
+| `lgtm:functions` | module | `markdownit.ts` — a prose slot per function | **no** — write it when you want it | **yes** |
+| `lgtm:deps` | module | `deps.ts` — the boundary, omitted when nothing is reached | when it reaches something | no |
+| `lgtm:settings` | config | `settings.ts` — grouped by app, env vs literal | yes | no |
+| `lgtm:tests` | test | `tests.ts` — describes, setups, assertion strips | yes | no |
 
 `lgtm:stats` serving four file kinds is why it renders whatever keys the text
 carries instead of expecting a fixed set — one renderer, no per-kind variants.
 
-### The five module blocks
+### The module blocks
+
+A seeded module doc is **two generated blocks and a blank page**:
 
 ````markdown
+# MyApp.Accounts
+
+> Reads and writes for the `users` table.
+
 ```lgtm:stats
 lines: 42
 code: 33
@@ -370,17 +448,7 @@ created: 2025-02-14
 updated: 2026-08-10
 ```
 
-```lgtm:treemap
-  changeset/2   : 6 private
-  create_user/1 : 6 public
-  normalize/1   : 4 private
-```
-
-```lgtm:deps module=MyApp.Accounts
-  MyApp.Repo : app
-    insert/1 : create_user/1
-    get/2    : get_user/1
-```
+## Surface
 
 ```lgtm:surface module=MyApp.Accounts
 public:
@@ -390,75 +458,85 @@ private:
   normalize/1   : 30 2 clauses
 ```
 
-```lgtm:functions module=MyApp.Accounts
-public:
-  - create_user/1 : Entry point. Validates, then inserts.
-  - get_user!/1   :
+## Reach
+
+```lgtm:deps module=MyApp.Accounts
+  MyApp.Repo : app
+    insert/1 : create_user/1
+    get/2    : get_user/1
 ```
+
+## Explain
+
+_The code is on the left — write what you make of it here. Press `/` while
+editing to reference any function in this reading; once your prose names one,
+`▷ Read` will walk the code in the order you wrote it._
 ````
 
-…and under `## Notes`, the private helpers as **prose**:
+Seed order is **stats → surface → deps**, under the headings *(none)* → Surface →
+Reach → Explain: how big is this, what's in it, what does it touch, and then get
+out of the way. `lgtm:deps` is omitted entirely when a module reaches nothing.
+Pinned exactly by `a_seeded_module_doc_has_exactly_these_sections`.
 
-```markdown
-Private helpers, in source order:
+The directory comes **before** the picture on purpose: names are what you orient
+by, and the reach diagram reads better once you already know what the names are.
 
-- `normalize/1` —
-- `changeset/2` —
-```
+**Two blocks are renderable, reconcilable and deliberately not seeded.** Both were
+seeded once and both were cut for the same reason — a generated section above the
+part you write in has to earn that space every single time you open a file:
 
-Seed order is **stats → surface → treemap → deps → functions**, under the
-headings *(none)* → Surface → Shape → Reach → Explain: how big is this, what's
-in it, what shape is it, what does it touch, and only then the block you write
-in. `lgtm:deps` is omitted entirely when a module reaches nothing.
+- `lgtm:treemap`. Function sizes answer a question you ask *occasionally*: "is
+  anything in here disproportionate?"
+- `lgtm:functions`. It was a **second listing of the names `lgtm:surface` already
+  gives you**, and its one unique offering — a prose slot per function — turned
+  out to be the wrong shape. An explanation follows the path through a module.
+  An alphabetical index does not.
 
-The directory comes **before** the pictures on purpose: names are what you
-orient by, and both the treemap and the reach diagram read better once you
-already know what the names are.
+Both generators (`treemap_block`, `functions_block`) stay, stay `pub`, and stay
+tested against their own output rather than against the seeder's, because a block
+whose only producer is a hand-typed guess drifts away from its renderer. Write
+either fence yourself when you want it, and `lgtm:functions` still reconciles.
 
-**`lgtm:functions` is the public surface; private helpers are prose.** The block
-carries what the module *offers*; the helpers go under Notes as a list of inline
-references. That is not just tidiness — it means a freshly seeded doc **already
-has a reading**, so `▷ Read` does something on a file you haven't written a word
-about. The em dash after each name is the gap you write into.
+**Reconciliation is therefore a no-op on a fresh doc**, and that is the real cost
+of the above. `reconcile_markdown` touches `lgtm:functions` and nothing else, so a
+seeded doc passes through unchanged — pinned by
+`reconciling_a_seeded_doc_leaves_it_alone`. What replaces it is the dangling
+reference: `` `Accounts.normalize/1` `` in your prose strikes through when
+`normalize/1` is deleted, which puts the signal *where you wrote about it* instead
+of in a table. The gap that remains is the other direction — **nothing tells you a
+function was added**, because no seeded block is regenerated. Re-seed for that.
+The "Code changed — reconcile" button still re-snapshots, so it clears staleness;
+it just has no table to merge.
 
-The trade: prose isn't reconciled, so a new private helper won't appear in that
-list on its own (re-seed for that), and a deleted one renders struck through
-rather than being removed. Nothing is lost silently either way.
+**Private helpers are not seeded anywhere.** They are in `lgtm:surface` (it is a
+directory, so it lists everything) and one `/` away when your explanation needs to
+reach one. Notes used to carry a **generated list of every private helper** as
+inline references, specifically so `▷ Read` did something on a file you had not
+written a word about. `/` does that job better: you reference the functions your
+explanation actually reaches, in the order your prose takes them. **A list of
+things you did not choose was never really a reading.**
 
-Reconcile's rule is **never add a group the block doesn't have, never drop one
-it does** — older docs still carrying a `private:` section keep it and keep it
-maintained, because dropping it would take their prose with it. Pinned by
-`group_tests`.
+Two consequences worth stating rather than leaving to be discovered:
 
-**`lgtm:surface` and `lgtm:functions` are not redundant.** Surface is the
-*directory* — sorted by name, two scrolling columns, for getting somewhere.
-Functions is where *you write*; its rows carry your prose and its gaps are the
-nudge. Only `lgtm:functions` is reconciled, and only it should ever be.
+- **`▷ Read` stays hidden until you write the first reference** (the button is
+  gated on `steps.length`). The invitation text names both `/` and `▷ Read` for
+  exactly this reason — otherwise it reads as a missing feature rather than a
+  hidden one.
+- **A function's `@doc` is no longer copied into the doc.** It used to become the
+  starting prose of its row in `lgtm:functions`. It is still right there in the
+  code pane, styled as prose — and not duplicating what the source already says
+  is the better default.
 
-**Surface is sorted in exactly one place — `seed.rs`.** The renderer preserves
-the order the text gives it. An earlier version sorted in both, and they
-disagreed: Rust orders by `(name, arity)` giving `get_user/1, get_user!/1`,
-while JS `localeCompare` on the full signature reorders punctuation and gave
-`get_user_by_email/1, get_user!/1, get_user/1` — so the text and the picture
-showed different orders. One sorter also means a row you move by hand stays put.
-
-Everything after the **first** colon is prose, so explanations may contain
-colons and backticks freely. An empty explanation is legal and renders as a
-ghost `explain…` placeholder — **those gaps are the entire nudge of the tool**.
-A malformed block degrades to a plain code fence; it must never lose writing.
-
-Rendering is a `md.renderer.rules.fence` override in `markdownit.ts`, the same
-approach Alexandria uses for mermaid. New block types register against the same
-hook — that's why the `lgtm:` prefix exists.
-
-**The functions grammar is parsed in two places** (`lgtmBlock.ts` for rendering,
-`reconcile.rs` for merging). They must agree. That duplication is why the
-grammar is kept this simple.
+**Every seed ends with `## Explain` and an invitation**, never a bare heading — an
+empty section reads as something missing. The config, test and plain seeds get a
+shorter invitation that does not promise `/` or `▷ Read`, since neither does
+anything without functions to reference.
 
 ### The treemap
 
-Function sizes as area — the one view the table can't give you: *is anything in
-here disproportionate?* Squarified `d3-hierarchy` layout, drawn to an SVG string
+**Not seeded** — see above; you write the fence when you want it. Function sizes
+as area, the one view the table can't give you: *is anything in here
+disproportionate?* Squarified `d3-hierarchy` layout, drawn to an SVG string
 during the synchronous markdown pass.
 
 Deliberate choices, each of which replaced something that read worse:
@@ -539,8 +617,9 @@ follows a function across a `def`↔`defp` change. A rename reads as a delete
 plus an add — the old prose survives struck through rather than silently
 re-attaching to a function it wasn't written about.
 
-Only `lgtm:functions` is reconciled. The stats, treemap and deps blocks are
-left alone; re-seed the doc if you want them refreshed.
+Only `lgtm:functions` is reconciled — and it is no longer seeded, so on most docs
+reconciliation does nothing at all. The stats, surface and deps blocks are left
+alone; re-seed the doc if you want them refreshed.
 
 If you touch this file, the tests in it are the specification.
 
@@ -585,8 +664,9 @@ The geometry scrollytelling wants was already here: the doc is the text, the
 code pane is the sticky graphic, and `focus` is the graphic's state. So this is
 one wire — doc scroll position → focus — not a rewrite.
 
-**There is no new syntax.** Inline code naming a function in this file becomes a
-reference (`refs.ts`), and `L30-34` points at plain lines. That keeps the
+**There is no new syntax.** Inline code naming a function in the reading becomes a
+reference (`refs.ts`) — with or without an arity, bare or module-qualified — and
+`L30-34` points at plain lines. That keeps the
 markdown portable: paste a reading into a PR comment and it still reads
 correctly, which inventing `{{create_user/1}}` would have destroyed. Anything
 that doesn't look like a signature — `` `nil` ``, `` `{:ok, user}` `` — stays
@@ -649,6 +729,13 @@ Four rules, each of which replaced something that read worse:
   height, padding, width, wrap — since any drift puts the menu somewhere
   unrelated to what you are typing. Those declarations are shared between
   `.mirror` and `.raw` in one rule for exactly that reason.
+- **The menu flips above the caret when it will not fit below.** Near the end of
+  a long note there is no room underneath, and the pane's `overflow: auto` clips
+  whatever hangs past it — the menu rendered every time and was visible never.
+  Flipping is done by anchoring `bottom` instead of `top`, so the menu's height
+  never has to be measured; it only flips when there is genuinely more room the
+  other way, or a short pane would bounce it into even less. `x` is clamped for
+  the same reason at the right-hand edge.
 - **The crossfade.** The outgoing ranges linger 620ms (`focus.leaving`) while
   the incoming ones arrive. That overlap is what makes a jump read as a
   connection instead of a cut, and it is the whole reason the feature feels like
@@ -704,6 +791,16 @@ branch, three orderings (Recent / Name / Folder), sticky folder-group headers,
 and `↑`/`↓`/`↵` keyboard navigation that crosses group boundaries in visual
 order.
 
+**Deleting reports back.** `Library` refreshes its own list, but the welcome
+screen's recents is a *cached query over the same table* and nothing it reads
+changes when a row goes away — so deleted readings kept appearing under "pick up
+where you left off". The `ondelete` callback exists for that, and it also closes
+the reading if the deleted one is the one on screen: leaving it open means the
+next autosave writes to a row that no longer exists, and the failure surfaces as
+a "not found" banner seconds later with nothing to connect it to. Pinned by
+`saving_to_a_deleted_doc_is_an_error_not_a_silent_no_op` — an UPDATE matching no
+rows must not report success.
+
 **Deleting asks first.** The row turns amber and states exactly what is lost
 (the markdown and the source snapshot), that it cannot be undone, and — in
 green — that the source file on disk is untouched. The `×` only appears on the
@@ -740,8 +837,8 @@ preserves the text's order — because two sorters did disagree there (Rust orde
 by `(name, arity)`, JS `localeCompare` reorders punctuation). If you add a
 sorted block, pick one of these two shapes deliberately.
 
-**Tests must scope assertions to one block.** Four blocks list every function
-name, so `md.lines().find(|l| l.contains("get_user!/1"))` finds the treemap row,
+**Tests must scope assertions to one block.** Several blocks list every function
+name, so `md.lines().find(|l| l.contains("get_user!/1"))` finds the surface row,
 not the table row. Split on the fence first — see `functions_block_of` in
 `seed.rs`'s tests and `block_of` in `kind_tests`.
 
@@ -799,6 +896,20 @@ it at rest, and at the other end the last step can only fire if `(1 - TRIGGER)`
 of a pane sits below its top. Fixed fractions fail silently at both ends and the
 failure looks like nothing at all. One `TRIGGER` constant drives the lead-in,
 the tail, the band position and the step test.
+
+**`overflow-x: auto` clips vertically too.** The file strip scrolls sideways when
+a reading has many tabs, and the remove confirmation was an absolutely-positioned
+popover *inside* it. Per the CSS Overflow spec, `visible` on one axis computes to
+`auto` when the other is not `visible` — so the strip clips at its own 32px and a
+popover starting 37px down never appears. It rendered correctly every time and was
+never once visible, which is the worst kind of bug: nothing to see, nothing in the
+console. The confirmation is now a row *below* the strip, outside the scroll
+container. Anything positioned relative to a tab has the same problem.
+
+**Don't nest a button inside a button.** The tab's `×` was a `<span role="button">`
+inside the `<button class="tab">`, which is invalid HTML and needs
+`stopPropagation` to behave. It is now a sibling button positioned over the tab's
+right edge — valid, and the propagation question disappears.
 
 **Adding a file to a reading must not re-snapshot it.** Opening the same file
 twice mid-review is completely normal, so `doc_files::add` is idempotent and

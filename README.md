@@ -24,13 +24,15 @@ rarely lives in one file.
 - **Two panes, one selection.** Click a function in your explanation and the
   code pane scrolls to it, highlights every clause of it, tints its `@spec` in
   its own colour, and dims the rest of the file to 32% so nothing else competes.
-- **Seeds the explanation for you.** Opening a file writes a starter doc: file
-  stats, a treemap of function sizes, and every public and private function with
-  an empty slot beside it. **Those empty slots are the point** — they show you
-  what you haven't understood yet.
-- **Never loses your writing.** When the file changes, lgtm merges rather than
-  regenerates: prose stays keyed to `name/arity`, new functions append, deleted
-  ones are struck through *but keep their explanation*.
+- **Gives you the facts, then gets out of the way.** Opening a file writes a
+  starter doc: file stats, a directory of every function with its line number, and
+  a diagram of what the module reaches outside itself. Then a heading and a blank
+  page. **Nothing is written for you** — the explanation is the part you came to
+  do, and generating a first draft of it would only give you something to skim.
+- **Tells you when the code moves.** Each file carries a snapshot of how it was
+  when you read it, so a changed file is flagged per file, not vaguely. A
+  reference in your prose to a function that has since been deleted renders struck
+  through rather than quietly becoming plain text.
 - **Reads, never writes.** The left pane is read-only, permanently. lgtm never
   modifies your source.
 - **One note, several files.** During a review you open file after file, and
@@ -149,23 +151,47 @@ opened it and never mentioned it. The `×` removes a file you opened by accident
 its snapshot leaves the reading, and neither your note nor the file on disk is
 touched. To start a separate reading instead, go ← Home first.
 
-References name a file when they need to and inherit one when they don't:
+References name a module when they need to and inherit one when they don't, and
+**the arity is optional**:
 
 ```markdown
-`create_user/1` validates, then hands off.
+`create_user` validates, then hands off.
 
-Then `MyApp.Billing.charge/2` builds the invoice. `L25-29` is where it rounds.
+Then `Billing.charge` builds the invoice. `L25-29` is where it rounds.
 ```
 
 The `L25-29` is billing's, because the sentence before it was — references resolve
 in the order your prose takes, not by whichever tab is open. `billing.ex:25-29`
-says it outright when you would rather be explicit. While editing, `/` offers
-every function in the reading grouped by module, inserting bare names inside their
-own file and module-qualified ones elsewhere.
+says it outright when you would rather be explicit.
+
+Leaving the arity off means *every* arity: `get_user` selects `get_user/1` and
+`get_user/2` together, which is usually what you meant. Write `get_user/2` when
+you mean exactly one.
+
+While editing, `/` offers every function in the reading grouped by module, and the
+footer shows the exact text you are about to get. Once a reading covers more than
+one module every reference is module-qualified — including the file it started
+from, so a note never mixes `Accounts.create_user` with a bare `charge` and leaves
+you working out which file each belongs to. A reading of one module stays bare,
+since its title already names the module.
+
+A module is written by its **last segment**: `SingleTarget.foo`, not
+`ImpactPipeline.Shared.AlertImpact.SingleTarget.foo` — the prefix is the same for
+every module in the reading, so it says nothing where it costs the most. Any
+longer piece of the path still resolves if you prefer to write it, and if two
+modules in a reading share a last segment, both keep their full names rather than
+becoming ambiguous.
+
+Two things deliberately stay plain prose rather than becoming broken references:
+a bare word that names no function (so `attrs` and `opts` are safe), and a
+qualified name from a module outside the reading (so `String.trim` is too).
+Anything explicit — a missing function in one of *your* modules, or any reference
+carrying an arity — still renders struck through, because code moving out from
+under your explanation is worth being told about.
 
 ### The doc is plain markdown
 
-Your explanation is a normal markdown file with five extra fenced blocks. The
+Your explanation is a normal markdown file with a few extra fenced blocks. The
 values live **in the text** — the file is the data, not a cache of one — so it
 stays readable anywhere and you can edit anything you disagree with.
 
@@ -189,32 +215,29 @@ private:
   normalize/1   : 30 2 clauses
 ```
 
-```lgtm:treemap
-  changeset/2   : 6 private
-  create_user/1 : 6 public
-  normalize/1   : 4 private
-```
-
 ```lgtm:deps module=MyApp.Accounts
   MyApp.Repo : app
     insert/1 : create_user/1
     get/2    : get_user/1
 ```
 
-```lgtm:functions module=MyApp.Accounts
-public:
-  - create_user/1 : Entry point. Validates, then inserts.
-  - get_user!/1   :
-private:
-  - normalize/1   : Trims and downcases the email.
-```
 ````
 
-They're seeded in that order — **how big is this, what's in it, what shape is
-it, what does it touch**, and only then the block you write in. The first four
-are generated and clicking anything in them focuses that function in the code;
-`lgtm:functions` is yours, and it's the only one that gets reconciled when the
-file changes.
+They're seeded in that order — **how big is this, what's in it, what does it
+touch** — and then a `## Explain` heading with nothing under it. All three are
+click targets: anything in them focuses that function in the code.
+
+Two more blocks render but aren't seeded, because a generated section above the
+part you write in has to earn that space every time you open a file:
+
+- **`lgtm:treemap`** draws function sizes as area. It answers a question you ask
+  occasionally — "is anything in here disproportionate?"
+- **`lgtm:functions`** gives every function a prose slot of its own, and is the
+  one block that gets *reconciled* when the file changes: your prose stays keyed
+  to `name/arity`, new functions append, deleted ones are struck through but keep
+  what you wrote.
+
+Write either fence yourself when you want it.
 
 Everything after the **first** colon is prose, so explanations may contain
 colons and backticks freely. An empty explanation renders as a ghost `explain…`

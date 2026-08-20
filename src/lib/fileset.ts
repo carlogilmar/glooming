@@ -42,6 +42,76 @@ export function fileForModule(files: ReadingFile[], module: string): ReadingFile
   return files.find((f) => f.outline?.modules?.some((m) => m.name === module)) ?? null;
 }
 
+/** `ImpactPipeline.Shared.AlertImpact.SingleTarget` → `SingleTarget`. */
+export function shortModule(name: string): string {
+  const i = name.lastIndexOf(".");
+  return i === -1 ? name : name.slice(i + 1);
+}
+
+/**
+ * How each module should be *written* in this reading.
+ *
+ * The last segment is the module's name; everything before it is where the file
+ * lives. `ImpactPipeline.Shared.AlertImpact.SingleTarget.foo` in the middle of a
+ * sentence is unreadable, and the prefix is the same for every module in the
+ * reading anyway — so it carries no information exactly where it costs the most.
+ *
+ * **Shortened only where the short form is unique.** Two files whose modules both
+ * end in `.Worker` would give `Worker.run` two meanings, so those keep their full
+ * names. Ambiguity is rare; silently resolving it the wrong way would not be.
+ */
+export function moduleLabels(files: ReadingFile[]): Map<string, string> {
+  const all = modulesIn(files);
+  const taken = new Map<string, number>();
+  for (const m of all) {
+    const short = shortModule(m);
+    taken.set(short, (taken.get(short) ?? 0) + 1);
+  }
+  const out = new Map<string, string>();
+  for (const m of all) {
+    const short = shortModule(m);
+    out.set(m, taken.get(short) === 1 ? short : m);
+  }
+  return out;
+}
+
+/**
+ * Find a module by whatever the prose called it.
+ *
+ * Exact name first, then any dot-boundary suffix — so `SingleTarget`,
+ * `AlertImpact.SingleTarget` and the full path all reach the same module, and
+ * writing as much of it as you feel like is enough. The dot in the suffix test is
+ * what stops `Target` matching `SingleTarget`.
+ */
+export function findModule(
+  files: ReadingFile[],
+  given: string,
+): { file: ReadingFile; module: ModuleInfo } | null {
+  for (const file of files) {
+    for (const m of file.outline?.modules ?? []) {
+      if (m.name === given) return { file, module: m };
+    }
+  }
+  for (const file of files) {
+    for (const m of file.outline?.modules ?? []) {
+      if (m.name.endsWith(`.${given}`)) return { file, module: m };
+    }
+  }
+  return null;
+}
+
+/**
+ * Is this module one of the reading's own?
+ *
+ * The gate on whether a qualified reference may render as broken. `String.trim`
+ * and `Enum.map` are things you write in prose about Elixir, and once the arity
+ * became optional they started matching the qualified form — so without this,
+ * every mention of the standard library struck itself through.
+ */
+export function knowsModule(files: ReadingFile[], module: string): boolean {
+  return !!findModule(files, module);
+}
+
 export function moduleForName(files: ReadingFile[], module: string): ModuleInfo | null {
   for (const f of files) {
     const hit = f.outline?.modules?.find((m) => m.name === module);
@@ -85,6 +155,18 @@ function inModule(module: ModuleInfo, name: string, arity: number): FnInfo | nul
   return module.functions.find((f) => f.name === name && f.arity === arity) ?? null;
 }
 
+/**
+ * Every arity of `name` in a module.
+ *
+ * A reference without an arity means the whole family, which is how the focus
+ * store has always thought about it: sibling arities are one function to a
+ * reader, even though the BEAM treats them as separate. So `get_user` selects
+ * both `get_user/1` and `get_user/2`, and `get_user/1` is the narrowing.
+ */
+function allInModule(module: ModuleInfo, name: string): FnInfo[] {
+  return module.functions.filter((f) => f.name === name);
+}
+
 /** Find `name/arity` anywhere in the reading, in `searchOrder`. */
 export function findFn(
   files: ReadingFile[],
@@ -108,14 +190,37 @@ export function findQualified(
   name: string,
   arity: number,
 ): Hit | null {
-  for (const file of files) {
-    for (const m of file.outline?.modules ?? []) {
-      if (m.name !== module) continue;
-      const fn = inModule(m, name, arity);
-      if (fn) return { file, module: m, fn };
+  const at = findModule(files, module);
+  if (!at) return null;
+  const fn = inModule(at.module, name, arity);
+  return fn ? { file: at.file, module: at.module, fn } : null;
+}
+
+/** Every arity of a bare `name`, searched in `searchOrder`. */
+export function findByName(
+  files: ReadingFile[],
+  from: string | null,
+  name: string,
+): { file: ReadingFile; module: ModuleInfo; fns: FnInfo[] } | null {
+  for (const file of searchOrder(files, from)) {
+    for (const module of file.outline?.modules ?? []) {
+      const fns = allInModule(module, name);
+      if (fns.length) return { file, module, fns };
     }
   }
   return null;
+}
+
+/** Every arity of `Module.name`, which names its own file. */
+export function findQualifiedByName(
+  files: ReadingFile[],
+  module: string,
+  name: string,
+): { file: ReadingFile; module: ModuleInfo; fns: FnInfo[] } | null {
+  const at = findModule(files, module);
+  if (!at) return null;
+  const fns = allInModule(at.module, name);
+  return fns.length ? { file: at.file, module: at.module, fns } : null;
 }
 
 /** A file named by its basename, for `billing.ex:30-34`. */
@@ -131,17 +236,28 @@ export function findByFilename(files: ReadingFile[], name: string): ReadingFile 
 // ---- the `/` menu's vocabulary ---------------------------------------------
 
 export interface VocabEntry {
-  /** What gets inserted: bare inside its own file, qualified across files. */
+  /** What gets inserted: bare for the home module, qualified for any other. */
   insert: string;
   /** `create_user/1` — what you scan for. */
   sig: string;
   module: string;
+  /** How the module is written in prose here — usually just its own name. */
+  label: string;
   path: string;
   filename: string;
   line: number;
   visibility: "public" | "private";
-  /** True when this function lives in the file you are looking at. */
-  local: boolean;
+  /**
+   * This function's module is the reading's home module, so a bare name is
+   * unambiguous. Decided by module, never by which tab is open.
+   */
+  home: boolean;
+  /**
+   * This function is in the file currently on screen. Used only to rank the
+   * menu — you are usually writing about what you are looking at — and never to
+   * decide what gets inserted.
+   */
+  nearby: boolean;
 }
 
 /**
@@ -151,31 +267,74 @@ export interface VocabEntry {
  * block and no edit to your prose — an added file simply widens what `/` can
  * offer you, which is exactly what a review needs and no more.
  *
- * Insertion is qualified only when it has to be: prose about the file you are in
- * reads better as `to_cents/1` than `MyApp.Billing.to_cents/1`, and a single-file
- * reading should look exactly as it always did.
+ * **Once a reading covers more than one module, every reference names its module.**
+ * Not just the ones from other files — all of them. A note that says
+ * `MyApp.Accounts.create_user` in one paragraph and a bare `charge` in the next
+ * makes you work out which file each belongs to, and the whole point of the
+ * qualified form is not having to. Uniform reads better than minimal here, and it
+ * means every reference in a multi-file note is unambiguous standing on its own —
+ * which matters most where the markdown ends up pasted into a PR comment, with no
+ * file strip next to it to explain itself.
+ *
+ * A reading of **one** module stays bare. There is nothing to disambiguate, the
+ * doc's title already is the module name, and repeating it down twenty paragraphs
+ * is noise.
+ *
+ * The discriminator is the *module count*, never the tab that happens to be open.
+ * An earlier version keyed off the open tab, so looking at billing.ex and picking
+ * `charge/2` inserted a bare name: the same keystroke produced different text
+ * depending on where you were standing, and it emitted references whose meaning
+ * depended on prose order you cannot see while typing.
+ *
+ * What gets inserted carries **no arity**: `MyApp.Billing.to_cents`, not
+ * `MyApp.Billing.to_cents/1`. An arity is a narrowing to one member of a family
+ * you usually mean all of, and `search/1..2` was never a readable thing to have
+ * in a sentence.
  */
 export function vocabulary(files: ReadingFile[], currentPath: string | null): VocabEntry[] {
+  const home = moduleOf(origin(files))?.name ?? null;
+  // More than one module in the reading means a bare name could belong to any of
+  // them, so from that point on every reference says which.
+  const qualifyAll = modulesIn(files).length > 1;
+  const labels = moduleLabels(files);
   const out: VocabEntry[] = [];
   for (const file of files) {
-    const local = file.path === currentPath;
     for (const module of file.outline?.modules ?? []) {
+      const isHome = !!home && module.name === home;
+      // The module's own name, not the path to it — `SingleTarget.foo`.
+      const label = labels.get(module.name) ?? module.name;
       for (const fn of module.functions) {
         const sig = displaySig(fn);
         out.push({
           sig,
-          insert: local ? sig : `${module.name}.${sig}`,
+          // Name-only, because an arity is a narrowing you rarely want: `/1..2`
+          // was never readable in prose, and sibling arities are one function to
+          // a reader anyway. Type the arity by hand when you mean exactly one.
+          insert: isHome && !qualifyAll ? fn.name : `${label}.${fn.name}`,
           module: module.name,
+          label,
           path: file.path,
           filename: file.filename,
           line: fn.line,
           visibility: fn.visibility,
-          local,
+          home: isHome,
+          nearby: file.path === currentPath,
         });
       }
     }
   }
   return out;
+}
+
+/** Every distinct module in the reading, in strip order. */
+export function modulesIn(files: ReadingFile[]): string[] {
+  const seen: string[] = [];
+  for (const f of files) {
+    for (const m of f.outline?.modules ?? []) {
+      if (!seen.includes(m.name)) seen.push(m.name);
+    }
+  }
+  return seen;
 }
 
 /** Is there anything at all to reference? Gates read mode and the `/` menu. */

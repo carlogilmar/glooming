@@ -5,7 +5,20 @@
   import { listDocs, deleteDoc, type DocSummary } from "$lib/ipc";
   import { when } from "$lib/when";
 
-  let { onopen, onclose }: { onopen: (d: DocSummary) => void; onclose: () => void } = $props();
+  let {
+    onopen,
+    onclose,
+    ondelete,
+  }: {
+    onopen: (d: DocSummary) => void;
+    onclose: () => void;
+    /**
+     * A reading was deleted. The library refreshes itself, but anything else
+     * holding a list of docs — the welcome screen's recents, the reading that is
+     * currently open — has no way to know the row went away.
+     */
+    ondelete?: (id: number) => void;
+  } = $props();
 
   type Sort = "recent" | "name" | "folder";
 
@@ -87,6 +100,7 @@
     await deleteDoc(doc.id);
     confirming = null;
     refresh();
+    ondelete?.(doc.id);
   }
 
   function onKey(e: KeyboardEvent) {

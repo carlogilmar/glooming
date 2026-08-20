@@ -52,80 +52,85 @@
   const unreferenced = $derived(files.filter((f) => stateOf(f) === "unread").length);
 </script>
 
-<div class="strip" role="tablist" aria-label="Files in this reading">
-  {#each files as f (f.path)}
-    {@const st = stateOf(f)}
-    <div class="tabwrap">
-      <button
-        class="tab {st}"
-        class:on={f.path === current}
-        role="tab"
-        aria-selected={f.path === current}
-        title="{f.path} · {WHY[st]}"
-        onclick={() => {
-          confirming = null;
-          onswitch?.(f.path);
-        }}
-      >
-        <i></i>
-        <span class="name">{f.filename}</span>
+<div class="files">
+  <div class="strip" role="tablist" aria-label="Files in this reading">
+    {#each files as f (f.path)}
+      {@const st = stateOf(f)}
+      <div class="tabwrap">
+        <button
+          class="tab {st}"
+          class:on={f.path === current}
+          class:removable={!f.origin}
+          role="tab"
+          aria-selected={f.path === current}
+          title="{f.path} · {WHY[st]}"
+          onclick={() => {
+            confirming = null;
+            onswitch?.(f.path);
+          }}
+        >
+          <i></i>
+          <span class="name">{f.filename}</span>
+        </button>
+
         {#if !f.origin}
-          <!-- Only on the tab you are pointing at, so a destructive control is
-               never sitting under an idle cursor. -->
-          <span
+          <!-- A sibling button rather than one nested inside the tab: nested
+               interactive elements are invalid, and it means no stopPropagation
+               to get right. Only visible on the tab you are pointing at, so a
+               destructive control is never sitting under an idle cursor. -->
+          <button
             class="x"
-            role="button"
-            tabindex="-1"
+            aria-label="Remove {f.filename} from this reading"
             title="Remove from this reading"
-            onclick={(e) => {
-              e.stopPropagation();
-              confirming = confirming === f.path ? null : f.path;
-            }}
-            onkeydown={(e) => {
-              if (e.key === "Enter") {
-                e.stopPropagation();
-                confirming = f.path;
-              }
-            }}>×</span
+            onclick={() => (confirming = confirming === f.path ? null : f.path)}>×</button
           >
         {/if}
-      </button>
+      </div>
+    {/each}
 
-      {#if confirming === f.path}
-        <!-- What is lost is small and worth saying exactly: the snapshot goes,
-             the note does not, and the file on disk was never touched. -->
-        <div class="confirm">
-          <b>Remove {f.filename}?</b>
-          <span>Its snapshot leaves this reading. Your note is untouched, and so is the file on disk.</span>
-          <div class="row">
-            <button
-              class="go"
-              onclick={() => {
-                confirming = null;
-                onremove?.(f.path);
-              }}>Remove</button
-            >
-            <button onclick={() => (confirming = null)}>Keep</button>
-          </div>
-        </div>
-      {/if}
+    <button class="add" title="Add a file to this reading (⌘T)" onclick={() => onadd?.()}>+</button>
+
+    <span class="spacer"></span>
+
+    {#if unreferenced}
+      <span class="note" title="Files you opened but never referenced">
+        {unreferenced} unreferenced
+      </span>
+    {/if}
+  </div>
+
+  {#if confirming}
+    <!-- A row below the strip, NOT a popover inside it. The strip scrolls
+         sideways when there are many tabs, and `overflow-x: auto` forces
+         `overflow-y` from visible to auto — so anything absolutely positioned
+         below a tab is clipped by the strip's own 32px. It rendered every time
+         and was never once visible. -->
+    <div class="confirm">
+      <b>Remove {confirming.split("/").pop()}?</b>
+      <span>
+        Its snapshot leaves this reading. Your note is untouched, and so is the
+        file on disk.
+      </span>
+      <span class="spacer"></span>
+      <button
+        class="go"
+        onclick={() => {
+          const path = confirming!;
+          confirming = null;
+          onremove?.(path);
+        }}>Remove</button
+      >
+      <button onclick={() => (confirming = null)}>Keep</button>
     </div>
-  {/each}
-
-  <button class="add" title="Add a file to this reading (⌘T)" onclick={() => onadd?.()}>+</button>
-
-  <span class="spacer"></span>
-
-  {#if unreferenced}
-    <span class="note" title="Files you opened but never referenced">
-      {unreferenced} unreferenced
-    </span>
   {/if}
 </div>
 
 <style>
-  .strip {
+  .files {
     flex: none;
+  }
+
+  .strip {
     display: flex;
     align-items: center;
     gap: 3px;
@@ -145,6 +150,8 @@
   .tabwrap {
     position: relative;
     flex: none;
+    display: flex;
+    align-items: center;
   }
 
   .tab {
@@ -196,29 +203,38 @@
   .tab.missing .name {
     text-decoration: line-through;
   }
+  /* Room for the × that sits on top of the tab's right edge. */
+  .tab.removable {
+    padding-right: 22px;
+  }
 
   .x {
+    position: absolute;
+    right: 4px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 13px;
-    height: 13px;
-    margin-right: -2px;
+    width: 14px;
+    height: 14px;
+    padding: 0;
+    border: none;
+    background: transparent;
     border-radius: 4px;
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1;
     color: var(--fg-faint);
+    cursor: pointer;
     opacity: 0;
     transition: opacity 0.12s;
   }
-  .tab:hover .x,
-  .tab:focus-visible .x {
+  .tabwrap:hover .x,
+  .x:focus-visible {
     opacity: 0.75;
   }
   .x:hover {
     opacity: 1;
     color: var(--priv);
-    background: color-mix(in srgb, var(--priv) 14%, transparent);
+    background: color-mix(in srgb, var(--priv) 16%, transparent);
   }
 
   .add {
@@ -247,41 +263,28 @@
   }
 
   .confirm {
-    position: absolute;
-    z-index: 40;
-    top: calc(100% + 5px);
-    left: 0;
-    width: 258px;
     display: flex;
-    flex-direction: column;
-    gap: 5px;
-    padding: 9px 10px;
-    background: var(--bg);
-    border: 1px solid var(--priv);
-    border-radius: 8px;
-    box-shadow: 0 8px 24px rgba(16, 24, 40, 0.16);
-    text-align: left;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: color-mix(in srgb, var(--priv) 9%, transparent);
+    border-bottom: 1px solid var(--line);
   }
   .confirm b {
-    font-size: 12px;
-    color: var(--fg);
+    flex: none;
+    font-size: 11.5px;
+    color: var(--priv);
   }
-  .confirm span {
+  .confirm > span {
     font-size: 11px;
-    line-height: 1.45;
     color: var(--fg-dim);
-  }
-  .confirm .row {
-    display: flex;
-    gap: 6px;
-    margin-top: 2px;
   }
   .confirm button {
-    flex: 1;
-    padding: 4px 8px;
+    flex: none;
+    padding: 3px 9px;
     font-size: 11px;
     color: var(--fg-dim);
-    background: var(--bg-inset);
+    background: var(--bg);
     border: 1px solid var(--line);
     border-radius: 5px;
     cursor: pointer;

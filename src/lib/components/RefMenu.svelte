@@ -15,6 +15,7 @@
     query = "",
     x = 0,
     y = 0,
+    flip = false,
     onpick,
     onclose,
   }: {
@@ -29,7 +30,13 @@
     entries: VocabEntry[];
     query: string;
     x: number;
+    /**
+     * Vertical anchor. Measured from the top of the pane normally, and from the
+     * *bottom* when `flip` is set — which is how the menu opens upward near the
+     * end of a note without its height ever being measured.
+     */
     y: number;
+    flip: boolean;
     onpick: (text: string) => void;
     onclose: () => void;
   } = $props();
@@ -54,12 +61,13 @@
   }
 
   /**
-   * Matched, then ranked local-first.
+   * Matched, then ranked by the file you are looking at.
    *
-   * Writing about the file you are looking at is the common case, and its
-   * functions insert bare — so they belong at the top even when a function in
-   * another file scores a slightly better substring hit. Beyond that the score
-   * decides, and the module name is part of what you can match against, so
+   * You are usually writing about what is on screen, so its functions come first
+   * even when one elsewhere scores a slightly better substring hit. That is the
+   * *only* thing the open tab decides here — what gets **inserted** is settled by
+   * module, so the same keystroke always produces the same text. Beyond that the
+   * score decides, and the module name is part of what you can match against, so
    * `billing.to_c` narrows the way you'd expect.
    */
   const hits = $derived.by(() =>
@@ -74,7 +82,7 @@
       .filter((h) => h.s !== Infinity)
       .sort(
         (a, b) =>
-          Number(b.e.local) - Number(a.e.local) ||
+          Number(b.e.nearby) - Number(a.e.nearby) ||
           a.s - b.s ||
           a.e.sig.localeCompare(b.e.sig),
       )
@@ -130,7 +138,13 @@
   }
 </script>
 
-<div class="refmenu" style:left="{x}px" style:top="{y}px" bind:this={listEl}>
+<div
+  class="refmenu"
+  style:left="{x}px"
+  style:top={flip ? "auto" : `${y}px`}
+  style:bottom={flip ? `${y}px` : "auto"}
+  bind:this={listEl}
+>
   {#if !hits.length}
     <p class="none">no function matches “{query}”</p>
   {:else}
@@ -138,8 +152,8 @@
       {#if row.head}
         <!-- Grouped by module rather than by file: a qualified reference names a
              module, so that is the label you are actually choosing between. -->
-        <div class="grp">
-          <span>{row.head}</span>
+        <div class="grp" title={row.hit.e.module}>
+          <span>{row.hit.e.label}</span>
           <span class="spacer"></span>
           <span class="in">{row.hit.e.filename}</span>
         </div>
@@ -158,14 +172,22 @@
         <span class="dot" class:priv={row.hit.e.visibility === "private"}></span>
         <span class="sig">{row.hit.e.sig}</span>
         <span class="spacer"></span>
-        {#if !row.hit.e.local}
-          <span class="away" title="inserts {row.hit.e.insert}">qualified</span>
-        {/if}
         <span class="ln">{row.hit.e.line}</span>
       </div>
     {/each}
   {/if}
-  <footer><kbd>↑</kbd><kbd>↓</kbd> <kbd>↵</kbd> insert · <kbd>esc</kbd></footer>
+  <!-- Spells out the text you are about to get. The row shows a bare signature
+       for scanning, but what lands in your prose is module-qualified and carries
+       no arity — different enough that leaving you to infer it was the bug. -->
+  <footer>
+    <kbd>↑</kbd><kbd>↓</kbd>
+    {#if hits[cursor]}
+      <kbd>↵</kbd> inserts <code>`{hits[cursor].e.insert}`</code>
+    {:else}
+      <kbd>↵</kbd> insert
+    {/if}
+    · <kbd>esc</kbd>
+  </footer>
 </div>
 
 <style>
@@ -201,13 +223,10 @@
   .grp .in {
     color: var(--fg-faint);
   }
-  .away {
-    flex: none;
-    font-size: 9px;
-    padding: 0 4px;
-    border-radius: 3px;
+  footer code {
+    font-family: var(--mono);
+    font-size: 10px;
     color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
   }
   .none {
     margin: 0;

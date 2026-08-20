@@ -13,7 +13,7 @@ import { renderSurface } from "$lib/surface";
 import { renderSettings } from "$lib/settings";
 import { renderTests } from "$lib/tests";
 import { looksLikeRef, refResolver } from "$lib/refs";
-import { fileForModule, moduleOf, origin } from "$lib/fileset";
+import { fileForModule, moduleLabels, moduleOf, origin, shortModule } from "$lib/fileset";
 import type { ReadingFile } from "$lib/ipc";
 
 hljs.registerLanguage("elixir", elixir);
@@ -69,6 +69,16 @@ export function createMarkdownIt(
     const named = parseInfo(info).module;
     return (named ? fileForModule(files, named) : null) ?? home;
   };
+
+  /**
+   * How to *print* a module name. The `module=` in the block text stays the full
+   * name — it is what locates the file, and shortening it there would break that
+   * — but a deeply nested name eats a block header for no information, since
+   * every module in the reading shares the prefix.
+   */
+  const labels = moduleLabels(files);
+  const label = (full: string | undefined | null) =>
+    !full ? "" : (labels.get(full) ?? shortModule(full));
   const md = new MarkdownIt({
     html: false,
     linkify: true,
@@ -116,7 +126,7 @@ export function createMarkdownIt(
     if (info.startsWith(TESTS_TAG)) {
       try {
         return owned(
-          renderTests(token.content, outline?.tests?.module ?? ""),
+          renderTests(token.content, label(outline?.tests?.module)),
           home?.path ?? null,
         );
       } catch {
@@ -129,7 +139,7 @@ export function createMarkdownIt(
       try {
         const f = blockFile(info);
         return owned(
-          renderSurface(token.content, moduleOf(f)?.name ?? ""),
+          renderSurface(token.content, label(moduleOf(f)?.name)),
           f?.path ?? null,
         );
       } catch {
@@ -170,7 +180,7 @@ export function createMarkdownIt(
         block = withOutline(block, module.functions);
       }
       return owned(
-        renderFunctionsBlock(block.module ?? module?.name ?? "", block.entries, md),
+        renderFunctionsBlock(label(block.module ?? module?.name), block.entries, md),
         f?.path ?? null,
       );
     } catch {
@@ -219,11 +229,25 @@ export function createMarkdownIt(
       // one on screen: clicking it, or scrolling onto it in read mode, switches
       // the code pane first and then selects.
       const away = hit.path !== currentPath;
+      // Every span, because a reference with no arity selects the whole family
+      // and two arities can sit either side of an unrelated function — one
+      // min..max range would light that function up too. `data-line`/`data-end`
+      // stay as the scroll target and the line count.
+      const spans = hit.ranges.map((r) => `${r.start}-${r.end}`).join(",");
+
+      // Only say something when there is something to say. A reference with one
+      // arity in the file you are already looking at needs no explaining, and an
+      // empty `title` is a tooltip that opens onto nothing.
+      const notes: string[] = [];
+      if (hit.ranges.length > 1) notes.push(`${hit.ranges.length} arities`);
+      if (away) notes.push(`in ${hit.filename}`);
+      const title = notes.length ? ` title="${escapeHtml(notes.join(", "))}"` : "";
+
       return (
         `<code class="ref${away ? " away" : ""}" data-sig="${escapeHtml(hit.sig)}"` +
-        ` data-path="${escapeHtml(hit.path)}"` +
+        ` data-path="${escapeHtml(hit.path)}" data-ranges="${spans}"` +
         ` data-line="${hit.start}" data-end="${hit.end}" role="button" tabindex="0"` +
-        (away ? ` title="in ${escapeHtml(hit.filename)}"` : "") +
+        title +
         `>${escapeHtml(text)}</code>`
       );
     };

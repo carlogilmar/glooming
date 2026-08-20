@@ -16,6 +16,7 @@
 // always renders the same picture. No force simulation, no jitter.
 
 import type { ModuleInfo } from "$lib/ipc";
+import { shortModule } from "$lib/fileset";
 import { displaySig } from "$lib/select";
 
 export type DepKind = "app" | "lib" | "std";
@@ -160,7 +161,10 @@ export function renderDeps(body: string, module: ModuleInfo | null): string {
 
   parts.push(
     `<rect class="bound" x="${BOX.x}" y="${BOX.y}" width="${BOX.w}" height="${boxH}" rx="10"/>`,
-    `<text class="bound-label" x="${BOX.x + 14}" y="${BOX.y - 10}">${esc(module?.name ?? "")}</text>`,
+    // The module's own name. A nested one is mostly the path to the file, which
+    // the diagram has no room for and which says nothing you don't know.
+    `<text class="bound-label" x="${BOX.x + 14}" y="${BOX.y - 10}">` +
+      `<title>${esc(module?.name ?? "")}</title>${esc(shortModule(module?.name ?? ""))}</text>`,
   );
 
   // Edges first, so labels sit on top of them.
@@ -188,9 +192,14 @@ export function renderDeps(body: string, module: ModuleInfo | null): string {
   }
 
   for (const d of deps) {
+    // Shortened for the same reason as the boundary — and the kind label is
+    // offset from the *drawn* width, not the full name's, or it lands in the
+    // middle of nowhere.
+    const shown = shortModule(d.module);
     parts.push(
-      `<text class="mod-name ${d.kind}" x="${OUT_X}" y="${(d.y ?? 0) + 4}">${esc(d.module)}</text>`,
-      `<text class="mod-kind" x="${OUT_X + d.module.length * 7.3 + 12}" y="${(d.y ?? 0) + 4}">${KIND_LABEL[d.kind]}</text>`,
+      `<text class="mod-name ${d.kind}" x="${OUT_X}" y="${(d.y ?? 0) + 4}">` +
+        `<title>${esc(d.module)}</title>${esc(shown)}</text>`,
+      `<text class="mod-kind" x="${OUT_X + shown.length * 7.3 + 12}" y="${(d.y ?? 0) + 4}">${KIND_LABEL[d.kind]}</text>`,
     );
     for (const fn of d.functions) {
       parts.push(

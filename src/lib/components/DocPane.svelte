@@ -93,6 +93,18 @@
   let slashQuery = $state("");
   let menuX = $state(0);
   let menuY = $state(0);
+  /**
+   * Which edge `menuY` measures from.
+   *
+   * Near the bottom of a long note there is no room below the caret, and the
+   * menu was rendering off the end of the pane where `overflow: auto` clips it —
+   * present every time, visible never. Anchoring by the *bottom* edge flips it
+   * above the caret without anyone having to measure how tall it currently is.
+   */
+  let menuFlip = $state(false);
+
+  /** RefMenu's own `max-height`. Flip when the menu cannot fit below the caret. */
+  const MENU_MAX = 264;
 
   /**
    * Where the caret is, in pixels within the textarea.
@@ -102,8 +114,8 @@
    * reports its position. Fiddly, but the alternative is a menu that appears
    * somewhere unrelated to what you are typing.
    */
-  function caretXY(): { x: number; y: number } {
-    if (!editor || !mirror) return { x: 0, y: 0 };
+  function caretXY(): { x: number; y: number; flip: boolean } {
+    if (!editor || !mirror) return { x: 0, y: 0, flip: false };
     const before = editor.value.slice(0, editor.selectionStart);
     mirror.textContent = before;
     const marker = document.createElement("span");
@@ -112,11 +124,24 @@
     const m = marker.getBoundingClientRect();
     const box = editor.getBoundingClientRect();
     mirror.textContent = "";
+
+    const top = m.top - box.top - editor.scrollTop;
+    // Measured rather than assumed — a constant here would drift the moment the
+    // editor's font size changed.
+    const lineH = m.height || 22;
+    const H = editor.clientHeight;
+    const below = H - (top + lineH);
+    // Only flip when there is genuinely more room the other way, so a short pane
+    // doesn't bounce the menu upward into even less space.
+    const flip = below < MENU_MAX && top > below;
+
     return {
-      x: m.left - box.left - editor.scrollLeft,
-      // One line below the caret, measured rather than assumed — a constant
-      // here would drift the moment the editor's font size changed.
-      y: m.top - box.top - editor.scrollTop + (m.height || 22),
+      // Clamped, or a caret near the right edge puts a 268px menu off the side.
+      x: Math.max(0, Math.min(m.left - box.left - editor.scrollLeft, editor.clientWidth - 276)),
+      // Distance from the pane's bottom to the caret's top when flipped, so the
+      // menu grows upward from the line you are typing on.
+      y: flip ? H - top + 4 : top + lineH,
+      flip,
     };
   }
 
@@ -154,6 +179,7 @@
           const p = caretXY();
           menuX = p.x;
           menuY = p.y;
+          menuFlip = p.flip;
           slashAt = at;
           slashQuery = "";
         });
@@ -198,6 +224,9 @@
     const start = parseInt(row.dataset.line ?? "0", 10);
     if (start <= 0) return true;
     const end = parseInt(row.dataset.end ?? String(start), 10) || start;
+    // A reference with no arity selects every arity, so a chip may carry several
+    // spans. Anything without `data-ranges` — a settings or test row — is one.
+    const spans = rangesOf(row) ?? [{ start, end }];
 
     // A reference can point into any file of the reading, so the pane has to be
     // showing the right one before the span means anything.
@@ -211,9 +240,21 @@
     const sig = row.dataset.sig ?? `line ${start}`;
     // Crossing a file is a move, never a toggle: arriving somewhere new and
     // being handed an empty selection would read as the click failing.
-    if (crossed) focus.select(sig, [{ start, end }]);
-    else focus.set(sig, [{ start, end }]);
+    if (crossed) focus.select(sig, spans);
+    else focus.set(sig, spans);
     return true;
+  }
+
+  /** `12-17,24-26` → two spans. Null when the element carries none. */
+  function rangesOf(el: HTMLElement): { start: number; end: number }[] | null {
+    const raw = el.dataset.ranges;
+    if (!raw) return null;
+    const spans = raw
+      .split(",")
+      .map((part) => part.split("-").map((n) => parseInt(n, 10)))
+      .filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b))
+      .map(([a, b]) => ({ start: a, end: b }));
+    return spans.length ? spans : null;
   }
 
   async function select(target: HTMLElement) {
@@ -442,13 +483,14 @@
       if (start > 0) {
         activeRef = Number(ref.dataset.ref ?? -1);
         const path = ref.dataset.path ?? current;
+        const spans = rangesOf(ref) ?? [{ start, end }];
         // A reading crosses files, so a step may be a file swap and a selection.
         // The swap goes first — a span means nothing over the wrong source — and
         // `focus.step` is told the path so it can skip the crossfade, which has
         // nothing to fade between across two files.
         void (async () => {
           await switchIfNeeded(path);
-          focus.step(ref.dataset.sig ?? `line ${start}`, [{ start, end }], null, null, path);
+          focus.step(ref.dataset.sig ?? `line ${start}`, spans, null, null, path);
         })();
       }
 
@@ -689,6 +731,7 @@
             query={slashQuery}
             x={menuX}
             y={menuY}
+            flip={menuFlip}
             onpick={insertRef}
             onclose={closeMenu}
           />
