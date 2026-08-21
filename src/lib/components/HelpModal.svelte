@@ -47,12 +47,12 @@
         { keys: ["⌘R"], what: "Read mode on / off — scroll the note and the code follows your prose" },
         { keys: ["⌘E"], what: "Edit / preview the note. Entering edit leaves read mode; typing under a scroll-driven selection is chaos" },
         {
-          keys: ["⌥⇥"],
+          action: "the top of the note",
           what:
-            "Collapse or expand the explore drawer — what you navigate the current file by. A " +
-            "module shows its surface and what it reaches; a config script its settings, marked " +
-            "env or literal; a test suite its describes and the context each one starts with. " +
-            "Collapsed it is one strip that still carries the counts",
+            "What you navigate the current file by, above your writing in the same scroll: a " +
+            "module's surface and the boundary it reaches through; a config script's settings, " +
+            "marked env or literal; a suite's describes and the context each one starts with. " +
+            "It follows the file you are in — scroll down to write, up to look something up",
         },
         {
           keys: ["⌘⇧T"],

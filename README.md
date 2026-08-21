@@ -27,16 +27,20 @@ rarely lives in one file.
 - **Nothing is written for you.** Opening a file writes a title, the module's own
   `@moduledoc`, and a blank page. The explanation is the part you came to do, and a
   generated first draft would only give you something to skim.
-- **Explore beside the note.** A drawer above your writing shows what to navigate
-  the current file by, and it changes with the kind of file: a module's **surface**
-  and **reaches**, a config's **settings** (marked env, `env!`, secret or literal),
-  a suite's **describes** with the context each one accumulates. Collapsed it is
-  one strip that still carries the counts. `⌥⇥`.
+- **Explore above the note, in the same scroll.** What to navigate the current
+  file by sits over your writing, and it changes with the kind of file: a module's
+  **surface** — a two-column table of names and line numbers, six rows before it
+  scrolls — and its **reaches**, a config's **settings** (marked env, `env!`,
+  secret or literal), a suite's **describes** with the context each one
+  accumulates. One scrollbar: scroll down to write, up to look something up.
 - **Ten files is normal.** `⌘⇧T` lists the reading's files — filter, `↑↓↵` to
   switch, `×` to remove one you opened by accident. `⌘T` adds another.
+- **See the boundary.** Below the surface, the module is drawn as a closed shape
+  with lines only where a call leaves it. Functions that reach nothing stay quiet —
+  that silence is the finding.
 - **Follow a call across files.** When a reached module is also one of the files
-  you are reviewing, its entry in the reaches list is a jump: one click switches
-  file and focuses that function.
+  you are reviewing, clicking its function in the diagram switches file and
+  focuses it.
 - **Tells you when the code moves.** Each file carries a snapshot of how it was
   when you read it, so a changed file is flagged per file, not vaguely. A
   reference in your prose to a function that has since been deleted renders struck
@@ -296,7 +300,7 @@ IMPLEMENTATION_PLAN.md     the reasoning behind every decision
 CLAUDE.md                  the map, for humans and Claude sessions alike
 
 src/                       SvelteKit frontend
-  lib/components/          CodePane, DocPane, ExploreDrawer, FilesModal, Library
+  lib/components/          CodePane, DocPane, ExploreSections, FilesModal, Library
   lib/stores/              theme, focus (shared by both panes)
   lib/fileset.ts           the reading's file set: which file owns what
   lib/refs.ts              references in prose, and which file each one means

@@ -33,6 +33,11 @@
 
   --code-bg:   #ffffff;
   --doc-bg:    #faf9f5;
+  /* The doc pane's own raised surface — its header and section frames.
+     It cannot be `--bg-raised`: that is a *cool* near-white, and against warm
+     paper it reads as a colour mistake rather than a level. So the doc pane gets
+     its own step up, warm like the paper it sits on. */
+  --doc-raised: #f2efe6;
   --doc-fg:    #2c2a26;
   --doc-line:  #e7e3d9;
 
@@ -119,6 +124,7 @@
 
   --code-bg:   #14161a;
   --doc-bg:    #191b21;
+  --doc-raised: #21242c;
   --doc-fg:    #d9dce2;
   --doc-line:  #2b2f38;
 
@@ -164,6 +170,7 @@
   --doc-line:  #362f26;
   --sel:       #2c2620;
   --shadow:    none;
+  --doc-raised: #241f1a;
 }
 
 /* Read mode's button: gold, filled, so an active mode never looks like a

@@ -370,3 +370,27 @@ fn the_surface_order_is_pinned_for_the_drawer_to_match() {
         "public then private, each by (name, arity) — src/lib/explore.ts pins the same"
     );
 }
+
+/// The deps block, pinned as a literal.
+///
+/// `ReachOverlay` writes this same text in TypeScript — `seedDepsBlock` — because
+/// `renderDeps` parses block *text* and the diagram should not need a round trip
+/// to Rust to open. Two writers of one grammar, so both pin the same string: if
+/// either changes its padding or its order, one of the two fails.
+#[test]
+fn the_deps_block_is_pinned_for_the_overlay_to_match() {
+    let outline = outline();
+    let block = seed::deps_block(outline.modules.first().expect("module"));
+    assert_eq!(
+        block,
+        "```lgtm:deps module=MyApp.Accounts\n\
+           \x20 MyApp.User : app\n\
+           \x20   %User{} : create_user/1\n\
+         \x20 MyApp.Repo : app\n\
+         \x20   insert/1 : create_user/1\n\
+         \x20   get/2    : get_user/1\n\
+         \x20   get!/2   : get_user!/1\n\
+         ```\n",
+        "src/lib/explore.ts seedDepsBlock pins the same string"
+    );
+}

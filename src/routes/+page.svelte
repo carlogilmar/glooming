@@ -8,7 +8,7 @@
   import HelpModal from "$lib/components/HelpModal.svelte";
   import FilePalette from "$lib/components/FilePalette.svelte";
   import FilesModal from "$lib/components/FilesModal.svelte";
-  import ExploreDrawer from "$lib/components/ExploreDrawer.svelte";
+  import ExploreSections from "$lib/components/ExploreSections.svelte";
   import { byPath, origin as originOf } from "$lib/fileset";
   import { displaySig, locate } from "$lib/select";
   import { when } from "$lib/when";
@@ -32,16 +32,7 @@
   let referenced = $state<Set<string>>(new Set());
   /** The doc pane instance, so ⌘R and ⌘E can reach its mode toggles. */
   let docPane = $state<DocPane | null>(null);
-  /**
-   * The explore drawer: surface and reach for the file on screen.
-   *
-   * Its state lives here rather than in the component so it survives a file
-   * switch — collapsing it once should stay collapsed as you move through the
-   * reading, not reset on every tab.
-   */
-  let exploreOpen = $state(true);
-  let exploreHeight = $state(270);
-  /** Read mode takes the whole pane; the drawer stands down. */
+  /** Read mode takes the whole pane; the reference sections stand down. */
   let readingNow = $state(false);
   /** ⌘⇧T — the reading's own files: switch, add, remove. */
   let showReadingFiles = $state(false);
@@ -200,8 +191,8 @@
     else focus.gotoLine(line, (f?.source.split("\n").length ?? line) || line);
   }
 
-  /** Pick something in the drawer's surface: focus it in the code beside it. */
-  function selectFromDrawer(sig: string, line: number) {
+  /** Pick something in the reference sections: focus it in the code beside it. */
+  function selectFromExplore(sig: string, line: number) {
     const at = locate(sig, outline?.modules?.[0] ?? null);
     if (at) focus.select(sig, at.ranges, at.related, at.spec, at.doc);
     else focus.gotoLine(line, file?.source.split("\n").length ?? line);
@@ -644,13 +635,8 @@
       docPane?.toggleRead();
       return;
     }
-    // ⌥⇥ collapses the drawer. Not ⌘-anything: it is a panel, not an action, and
-    // the ⌘ row is already dense.
-    if (e.altKey && e.key === "Tab" && doc) {
-      e.preventDefault();
-      exploreOpen = !exploreOpen;
-      return;
-    }
+    // ⌘E flips preview/edit. A toggle rather than two bindings: you are always in
+    // one of the two, so there is nothing for a second key to say.
     if (meta && e.key.toLowerCase() === "e") {
       e.preventDefault();
       docPane?.toggleEdit();
@@ -675,6 +661,21 @@
     // motions are measured against.
   }
 </script>
+
+<!-- Surface and the boundary for whatever file is on screen, rendered at the top
+     of the note's own scroll container so the right pane is one column you scroll
+     down rather than two panes competing for height. -->
+{#snippet exploreSections()}
+  {#if file}
+    <ExploreSections
+      {file}
+      {files}
+      selected={focus.sig}
+      onselect={selectFromExplore}
+      onjump={jumpTo}
+    />
+  {/if}
+{/snippet}
 
 <svelte:window onkeydown={onKeydown} />
 
@@ -848,21 +849,6 @@
       <Divider bind:basis />
 
       <div class="pane grow">
-        <!-- Surface and reach for whatever file is on screen. Hidden in read
-             mode, and while the chooser is up — neither is a moment for
-             navigating. -->
-        {#if doc && !chooser && !readingNow && outline?.kind === "module"}
-          <ExploreDrawer
-            {file}
-            {files}
-            bind:open={exploreOpen}
-            bind:height={exploreHeight}
-            selected={focus.sig}
-            onselect={selectFromDrawer}
-            onjump={jumpTo}
-          />
-        {/if}
-
         {#if chooser}
           <div class="chooser">
             <h2>This file is already part of a reading</h2>
@@ -892,6 +878,7 @@
             onshowfile={showFile}
             onrefs={(paths) => (referenced = paths)}
             onreading={(on) => (readingNow = on)}
+            explore={exploreSections}
           />
         {/if}
       </div>
@@ -921,7 +908,7 @@
       {#if outline?.modules?.[0]?.functions.length}
         <span class="keys">
           <kbd>↑</kbd><kbd>↓</kbd> lines · <kbd>[</kbd><kbd>]</kbd> fns ·
-          <kbd>/</kbd> find · <kbd>⌥⇥</kbd> explore · <kbd>⌘⇧T</kbd> files ·
+          <kbd>↑</kbd><kbd>↓</kbd> lines · <kbd>/</kbd> find · <kbd>⌘⇧T</kbd> files ·
           <kbd>⌘R</kbd> read · <kbd>⌘E</kbd> edit · <kbd>?</kbd> help
         </span>
       {/if}

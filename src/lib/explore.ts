@@ -23,8 +23,18 @@ import { shortModule } from "$lib/fileset";
 
 export interface SurfaceRow {
   sig: string;
+  /** `create_user` — what you scan for. */
+  name: string;
+  /** `/1`, `/1..2` — dimmed beside the name, since the name is what you read. */
+  arity: string;
   line: number;
-  /** `default args`, `3 clauses` — whatever is worth spelling out. */
+  /**
+   * `default args`, `3 clauses`.
+   *
+   * No longer rendered as badges: at forty rows they turned a catalog you scan
+   * into a wall of annotations. Kept because they become the row's `title`, where
+   * they cost nothing until you ask.
+   */
   flags: string[];
 }
 
@@ -55,7 +65,15 @@ export function surfaceOf(module: ModuleInfo | null, kind: "public" | "private")
       const flags: string[] = [];
       if (f.minArity < f.arity) flags.push("default args");
       if (f.clauses > 1) flags.push(`${f.clauses} clauses`);
-      return { sig: displaySig(f), line: f.line, flags };
+      const sig = displaySig(f);
+      const slash = sig.indexOf("/");
+      return {
+        sig,
+        name: slash === -1 ? sig : sig.slice(0, slash),
+        arity: slash === -1 ? "" : sig.slice(slash),
+        line: f.line,
+        flags,
+      };
     });
 }
 
@@ -280,4 +298,28 @@ export function summariseFile(file: ReadingFile | null, reach: ReachLine[]): str
 
 function moduleOfFile(file: ReadingFile | null): ModuleInfo | null {
   return file?.outline?.modules?.[0] ?? null;
+}
+
+/**
+ * The outline written back out as a `lgtm:deps` block body.
+ *
+ * `renderDeps` takes block *text*, because in the note that is what it gets, and
+ * the drawer should not need a round trip to Rust just to open a diagram. So the
+ * live deps are serialised into the same grammar `seed.rs`'s `deps_block` writes.
+ *
+ * Two levels by indent, everything after the first colon is the value — the
+ * format is deliberately this simple precisely because it is parsed in more than
+ * one place. Padding matches the seeder so a diagram drawn from here and one
+ * drawn from a pasted block are the same picture.
+ */
+export function seedDepsBlock(module: ModuleInfo): string {
+  let out = `\`\`\`lgtm:deps module=${module.name}\n`;
+  for (const dep of module.deps) {
+    out += `  ${dep.module} : ${dep.kind}\n`;
+    const width = Math.max(0, ...dep.functions.map((f) => f.name.length));
+    for (const fn of dep.functions) {
+      out += `    ${fn.name.padEnd(width)} : ${fn.callers.join(", ")}\n`;
+    }
+  }
+  return out + "```\n";
 }

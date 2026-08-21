@@ -21,6 +21,7 @@
     onshowfile,
     onrefs,
     onreading,
+    explore,
     opened = 0,
   }: {
     markdown: string;
@@ -48,6 +49,21 @@
      * would eventually disagree with the button about which is on.
      */
     onreading?: (on: boolean) => void;
+    /**
+     * What you navigate the current file by, rendered at the top of this pane's
+     * scroll container.
+     *
+     * A snippet rather than a sibling component, because the whole point is that
+     * there is **one** scrollbar: surface, boundary, then your prose, in one
+     * column you scroll down. Two scroll regions in one pane means neither can be
+     * scrolled past, and a fixed-height band takes space from the thing this pane
+     * is actually for.
+     *
+     * It also keeps read mode measuring the element it has always measured — and
+     * the sections are hidden while reading, so the lead-in arithmetic sees the
+     * same geometry it did before they existed.
+     */
+    explore?: import("svelte").Snippet;
     /**
      * Bumped whenever a *different* reading is opened.
      *
@@ -970,6 +986,9 @@
         {/if}
       </div>
     {:else}
+      {#if explore && !reading}
+        {@render explore()}
+      {/if}
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
       <div
         class="doc"
@@ -1058,10 +1077,73 @@
      the app's own cool dark at a glance. Because only the neutrals are
      overridden, "current"/"public"/"private" keep meaning the same thing in both
      panes. */
+  /* A level above the paper, not the same paper.
+     This strip carries the note's name and every control that acts on it, and it
+     was the same colour as the prose underneath — so it read as the first line of
+     the document rather than as chrome. */
   .panehead {
-    background: var(--doc-bg);
+    background: var(--doc-raised);
     border-bottom-color: var(--doc-line);
     transition: background 0.3s ease;
+  }
+  /* The filename, which is what the strip is *about*. */
+  .panehead > span:not(.spacer):not(.note) {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--fg);
+  }
+  /* Controls that read as controls.
+     On the raised strip each one sits on the paper colour with a border of its
+     own — an inset chip on a raised bar. Before this they were transparent text
+     that happened to be clickable, which is fine in a toolbar and wrong here:
+     this strip is the only place the note's modes live.
+
+     `:not(.read):not(.warn)` because those two carry their own fill and would
+     lose it to a scoped selector. */
+  .panehead .btn:not(.read):not(.warn),
+  .panehead .toggle,
+  .panehead :global(.fontsize) {
+    background: var(--doc-bg);
+    border-color: var(--doc-line);
+    box-shadow: var(--shadow);
+  }
+  .panehead .btn:not(.read):not(.warn):hover:not(:disabled) {
+    background: var(--sel);
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    color: var(--accent);
+  }
+  /* Preview / Edit is the most-read fact in the strip, so the active half is
+     accent-tinted rather than one grey sitting next to another. */
+  .panehead .toggle button.on {
+    background: color-mix(in srgb, var(--accent) 13%, transparent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .panehead .toggle button:not(.on):hover {
+    color: var(--fg);
+  }
+  /* Read mode keeps its gold — it is the one control here that changes what
+     scrolling *does*, so it gets weight and, when on, a fill that lifts. */
+  .panehead .btn.read {
+    font-weight: 600;
+  }
+  .panehead .btn.read.on {
+    box-shadow: 0 1px 5px color-mix(in srgb, var(--read) 40%, transparent);
+  }
+  /* The only control here that reports a *problem*, so it is filled: the others
+     are things you may do, this is a thing you should. */
+  .panehead .warn {
+    background: color-mix(in srgb, var(--priv) 14%, transparent);
+    border-color: color-mix(in srgb, var(--priv) 55%, transparent);
+    font-weight: 600;
+  }
+  .panehead .warn:hover {
+    background: color-mix(in srgb, var(--priv) 22%, transparent);
+    border-color: var(--priv);
+    color: var(--priv);
+  }
+  .panehead .spacer + * {
+    margin-left: 2px;
   }
   .panebody {
     flex: 1;

@@ -125,7 +125,7 @@ src/
       CodePane.svelte          source, line numbers, blame, focus, search, vim motions, font size
       DocPane.svelte           preview/edit/read, block styling, row wiring, treemap tooltip
       FontStepper.svelte       A− / A+, shared by both panes
-      ExploreDrawer.svelte     what you navigate the current file by, per kind
+      ExploreSections.svelte   surface table + the boundary, above the note in one scroll
       FilesModal.svelte        ⌘⇧T — the reading's files: switch, add, remove
       FilePalette.svelte       ⌘T — find a file, or add one to the reading
       FnPalette.svelte         ⌘P — jump to a function by name
@@ -450,6 +450,38 @@ the same as "provides nothing"** — and the UI shows `+?` rather than guessing.
 `lgtm:stats` serving four file kinds is why it renders whatever keys the text
 carries instead of expecting a fixed set — one renderer, no per-kind variants.
 
+### The right pane is one column
+
+Surface, then the boundary diagram, then your note — **one scrollbar**, scroll
+down to write and up to look something up. `ExploreSections.svelte` is rendered as
+a *snippet* inside `DocPane`'s own scroll container, which is what makes it one
+region rather than two.
+
+This replaced a fixed-height drawer with its own scrollbar and a collapse toggle,
+and both parts of that were wrong:
+
+- **A band permanently taking 270px from the pane you write in** costs you the
+  thing that pane is for. Collapsing it was the workaround, which is the tell.
+- **Two scroll regions in one column means neither can be scrolled past.** Every
+  gesture needs you to first decide which one you are in.
+
+Being able to scroll away is also what makes the **diagram affordable inline**,
+and inline is the only place it does its job: it is a map you glance at while
+reading the file. Behind a button — which is where it briefly was — it is a thing
+you remember to open, which is to say a thing you don't.
+
+Two consequences:
+
+- The scroll container is still `DocPane`'s, so read mode measures the element it
+  always has. The sections are `display: none` while reading, so the lead-in sees
+  the same geometry it did before they existed — and if they were ever visible the
+  lead would compute to `0`, which is correct rather than broken: the sections have
+  already pushed the first step past the trigger.
+- **The cross-file jump moved onto the diagram.** Clicking an outside function
+  whose module is also under review switches file and focuses it. It used to live
+  in a separate reaches list; the picture can carry it, and the same fact in two
+  places is one place too many.
+
 ### The files modal replaced the tab strip
 
 `⌘⇧T`, or the file button in the app header. `FilesModal.svelte` — the Library
@@ -481,24 +513,24 @@ that; a ten-row list has room to spell it out.
 **A seeded module doc is a title, the moduledoc, and a blank page.** Not one
 fence. `a_seeded_module_doc_carries_no_blocks` pins it.
 
-Everything that used to be generated into it now lives in the **explore drawer**
-at the top of the right pane (`ExploreDrawer.svelte`), showing the surface and the
-reach of whatever file is on screen.
+Everything that used to be generated into it now lives **above** the note in the
+same scroll (`ExploreSections.svelte`), showing the surface and the reach of
+whatever file is on screen.
 
 That is not tidying. `lgtm:surface` and `lgtm:deps` are what you **navigate** by,
 and in the note they were pinned to a position in a narrative — so they only ever
 served the file the reading started from. Open a second file and it had none,
-which is exactly what made a multi-file reading uneven. Out in the drawer they
-follow the tab, so **every file behaves the same and nothing has to be seeded**.
+which is exactly what made a multi-file reading uneven. Up there they follow the
+tab, so **every file behaves the same and nothing has to be seeded**.
 
-`lgtm:stats` left for a different reason and does *not* appear in the drawer: size
-and history are not consulted while navigating, they are context you want
+`lgtm:stats` left for a different reason and is *not* up there: size and history
+are not consulted while navigating, they are context you want
 **recorded**. `/stats` puts them where your prose wants them, and they travel with
 the text into a PR comment.
 
-**The drawer is not a block.** It reads the live `Outline`; nothing in
+**These sections are not blocks.** They read the live `Outline`; nothing in
 `explore.ts` parses a fence. A block in the note is a snapshot of what the code
-was when you read it; the drawer is what the code is *now*. Both are useful and
+was when you read it; the sections are what the code is *now*. Both are useful and
 they are not the same thing, so "the markdown IS the data" does not apply out
 there.
 
@@ -507,28 +539,32 @@ there.
 `get_user/1, get_user!/1` in the seeder. `explore.ts` therefore sorts by
 `(name, arity)` explicitly, comparing the parts rather than `localeCompare` on the
 whole signature, and **both sides pin the same literal**:
-`the_surface_order_is_pinned_for_the_drawer_to_match` in Rust, and the same string
+`the_surface_order_is_pinned_for_the_drawer_to_match` in Rust (the name predates
+the drawer's removal), and the same string
 in the `explore.ts` probe. If either changes its mind, one of the two fails.
 
-**The reaches list is the cross-file navigator**, and it is the best thing to come
-out of this. A call landing in a module that is *also* under review is a **jump**:
-one click switches tab and focuses that function, which is what following a flow
+**The surface is a table, capped at six rows.** Two columns — the name, and the
+line it is on — with tabular figures so the digits stack, which is the whole
+reason it is a table and not a list. Past six rows the column scrolls, so a
+40-function module costs exactly what a 3-function one does (166px either way,
+measured) and the note sits at a constant offset. **No badges**: `default args`
+and `3 clauses` are true, but at forty rows they turn a catalog you scan into a
+wall of annotations — they moved to the row's `title`, and the arity in the name
+already hints at the first.
+
+**The diagram is inline, not behind a button.** An earlier version put it in an
+overlay reached by `⌥R`, on the argument that it needs 2.6–6.4× the room a list
+does. In one scrolling column that argument evaporates: room is free below the
+fold. A map you have to remember to open is a map you do not use.
+
+**Reach is the cross-file navigator**, and it is the best thing to come out of
+this. A call landing in a module that is *also* under review is a **jump**: one
+click switches file and focuses that function, which is what following a flow
 across files actually means. Calls landing outside the reading say so — and that
 marks the edge of what you are reviewing, which is worth seeing.
 
-**Collapsed, the drawer is one 29px strip that still carries the counts.** That is
-what makes it affordable: leaving it shut while you write costs almost nothing and
-you are still oriented. `⌥⇥` toggles it — not a `⌘` binding, because it is a panel
-rather than an action and the `⌘` row is already dense.
-
-**The height stops depending on the size of the file.** Each surface column
-scrolls internally, so a 65-function module costs exactly what a 3-function one
-does. Measured: three sections came to 320px, two come to 269, and the note keeps
-a 140px floor whatever the grip does — the grip's own 5px counts against that
-budget, which the first version of the clamp forgot.
-
-**Hidden in read mode.** `DocPane` reports the mode with `onreading` rather than
-sharing it, because the pane owns it and two owners would eventually disagree with
+**Hidden in read mode.** `DocPane` renders the sections as a snippet and reports
+the mode with `onreading` rather than sharing it, because the pane owns it and two owners would eventually disagree with
 the button. Read mode is being walked *through* something; a reference panel above
 it is noise.
 
@@ -536,7 +572,7 @@ it is noise.
 starts from module `setup_all` + module `setup` + its describe's `setup`, and a
 *named* callback (`setup :put_user`) is defined elsewhere in the file — so its keys
 cannot be read from the describe. `testsOf` therefore returns the keys it **can**
-see plus a separate `unknown` flag, and the drawer shows `:user +?`: here is what
+see plus a separate `unknown` flag, and the section shows `:user +?`: here is what
 I know, and there is more. An earlier version collapsed the whole list to null the
 moment anything was unreadable, which threw away the keys it *had* found — and it
 got the condition backwards as well, treating a named callback as readable. The
@@ -861,14 +897,14 @@ focus bar keeps the bright end of its pulse — and the trace hands direction ov
 to an **arrowhead** that is invisible the rest of the time. Honouring the setting
 by deleting the signal would be worse than ignoring it.
 
-**Nothing collapses with a transition.** The explore drawer used to animate its
-`height`, and there is no version of that which is right: collapsing a panel has
-to make the note below it move up, so `height` and `grid-template-rows: 0fr→1fr`
-both go through layout, and `transform` would leave a hole where the drawer was.
-The only composited option is to overlay the code — the design that was cut for
-covering the thing you are reading. And the toggle is `⌥⇥`: a keyboard shortcut
-gets no animation at any duration. So it is instant on both the key and the
-header, and only the caret turns, because a transform is free.
+**Nothing collapses with a transition.** The explore drawer — since replaced by
+one scrolling column — used to animate its `height`, and there is no version of
+that which is right: collapsing a panel has to make what is below it move up, so
+`height` and `grid-template-rows: 0fr→1fr` both go through layout, and `transform`
+would leave a hole. The only composited option is to overlay the code, which is
+the design that was cut for covering the thing you are reading. The audit finding
+outlived the panel: **the answer to "how should this collapse" was to not have a
+collapsible panel.**
 
 The same reasoning retired `transition: height` on read mode's lead/tail spacers.
 Their whole job is to be invisible, so animating them reflowed the doc for nobody.
@@ -1390,6 +1426,15 @@ habits load-bearing rather than optional:
 - **Prose is capped, pictures are not.** `.doc` fills its pane; only the text
   elements carry a `max-width` for a readable measure. Capping the whole doc
   left dead space beside every diagram, so widening the window bought nothing.
+- **The doc pane has three levels, not two.** `--doc-raised` is its header and
+  section frames — a step *up* from `--doc-bg`, and warm, because `--bg-raised` is
+  a cool near-white and against warm paper it reads as a colour mistake rather
+  than a level. All three surfaces define it (light, `.dark`, `.reading-surface`).
+  The header was the same colour as the prose under it, which made it read as the
+  document's first line rather than as chrome; its controls now sit on the paper
+  colour with borders of their own, so they read as controls. `.read` and `.warn`
+  are excluded from that rule by `:not()` — they carry their own fill and a
+  component-scoped selector would outrank it.
 - Design tokens live in `app.css`. Never hard-code a color in a component —
   both themes come from one place, and the two panes are deliberately different
   surfaces (`--code-bg` cool screen, `--doc-bg` warm paper).
