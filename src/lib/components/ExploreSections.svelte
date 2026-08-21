@@ -36,6 +36,29 @@
     onjump?: (path: string, line: number) => void;
   } = $props();
 
+  /**
+   * The directory arrives in order, once per file.
+   *
+   * Gated on the *path* rather than on render, for the same reason `.arriving` in
+   * `DocPane` is gated on the doc id: these sections re-render whenever anything
+   * upstream changes, and a stagger that re-cascades while you type is exactly
+   * the behaviour that gets animation switched off.
+   *
+   * `shown` is a plain `let`, not `$state` — it is bookkeeping only this effect
+   * consults, and reading *and* writing one `$state` inside an effect is an
+   * infinite loop.
+   */
+  let arriving = $state(false);
+  let shown = "";
+  $effect(() => {
+    const path = file?.path ?? "";
+    if (path === shown) return;
+    shown = path;
+    arriving = true;
+    const off = setTimeout(() => (arriving = false), 900);
+    return () => clearTimeout(off);
+  });
+
   const kind = $derived(file?.outline?.kind ?? "plain");
   const module = $derived(moduleOf(file));
   const pub = $derived(surfaceOf(module, "public"));
@@ -104,7 +127,7 @@
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="explore" onclick={onClick}>
+<div class="explore" class:arriving onclick={onClick}>
   <div class="head">
     <b>{file?.filename ?? ""}</b>
     <span class="kind">{kind}</span>
@@ -188,8 +211,9 @@
             <div class="list">
               <table>
                 <tbody>
-                  {#each rows as r (r.sig)}
+                  {#each rows as r, i (r.sig)}
                     <tr
+                      style:--i={Math.min(i, 12)}
                       class:sel={r.sig === selected}
                       data-line={r.line}
                       data-sig={r.sig}
@@ -552,6 +576,24 @@
   /* Where the reference material ends and your writing begins — the most
      important boundary on the page, so it is labelled rather than left as an
      unexplained hairline. */
+  /* The directory arrives in order — 16ms a row, capped at row 12. Two hundred
+     functions would otherwise cascade for 3.4s, and waiting on an animation to
+     look a name up is worse than no animation at all. Both columns share the
+     index, so public and private arrive together rather than in two waves.
+
+     Opacity only, no `translateY`: `transform` does not reliably apply to a
+     table row across engines, and a fade that works everywhere beats a slide
+     that works here. */
+  .arriving tbody tr {
+    animation: rowIn var(--fast) var(--ease-out) both;
+    animation-delay: calc(var(--i, 0) * 16ms);
+  }
+  @keyframes rowIn {
+    from {
+      opacity: 0;
+    }
+  }
+
   .rule {
     position: relative;
     height: 1px;
@@ -571,5 +613,13 @@
     text-transform: uppercase;
     letter-spacing: 0.1em;
     color: var(--fg-faint);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* The rows are already where they belong; the cascade was the only motion,
+       so there is nothing to preserve but the end state. */
+    .arriving tbody tr {
+      animation: none;
+    }
   }
 </style>

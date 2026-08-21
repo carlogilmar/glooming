@@ -427,8 +427,21 @@
   // code reading it. Without pinning, the view you clicked for disappears the
   // moment the pointer moves away.
 
-  function reachHost(): HTMLElement | null {
-    return container?.querySelector<HTMLElement>(".lgtm-deps") ?? null;
+  /**
+   * Every boundary diagram in the pane, not just the ones in your note.
+   *
+   * The reach sections above the note render the same `.lgtm-deps` markup, and
+   * they live *outside* `.doc` — so a query rooted at the note found the one
+   * place a diagram is now rarely written by hand and missed the one that is
+   * always there. The trace and the arrival ring rendered correctly every time
+   * and could never run.
+   *
+   * A list rather than the first hit, because a hand-written `/deps` block and
+   * the section's diagram can both be on screen, and lighting one while the
+   * other holds a stale selection is the two-mechanisms bug in miniature.
+   */
+  function reachHosts(): HTMLElement[] {
+    return [...(body?.querySelectorAll<HTMLElement>(".lgtm-deps") ?? [])];
   }
 
   function clearReach(host: HTMLElement) {
@@ -781,8 +794,7 @@
   let tip = $state<{ text: string; sub: string; x: number; y: number } | null>(null);
 
   function onMove(e: MouseEvent) {
-    const reach = reachHost();
-    if (reach) litReach(reach, e.target as HTMLElement);
+    for (const reach of reachHosts()) litReach(reach, e.target as HTMLElement);
 
     const tile = (e.target as HTMLElement).closest<HTMLElement>(".tm-tile[data-tip]");
     if (!tile) {
@@ -895,8 +907,7 @@
     for (const el of container.querySelectorAll<HTMLElement>(".doc code.ref[data-ref]")) {
       el.classList.toggle("active", focus.active && el.dataset.ref === String(activeRef));
     }
-    const host = reachHost();
-    if (host) litReach(host, null);
+    for (const host of reachHosts()) litReach(host, null);
   });
 </script>
 
@@ -949,11 +960,17 @@
     </div>
   </div>
 
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="panebody"
     style:--doc-font="{font.value}px"
     bind:this={body}
     onscroll={onDocScroll}
+    onmousemove={onMove}
+    onmouseleave={() => {
+      tip = null;
+      for (const reach of reachHosts()) litReach(reach, null);
+    }}
   >
     {#if editing}
       <div class="editwrap">
@@ -996,12 +1013,6 @@
         bind:this={container}
         onclick={onClick}
         onkeydown={onKey}
-        onmousemove={onMove}
-        onmouseleave={() => {
-          tip = null;
-          const reach = reachHost();
-          if (reach) litReach(reach, null);
-        }}
       >
         {@html html}
         {#if tip}

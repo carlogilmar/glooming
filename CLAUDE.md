@@ -844,9 +844,16 @@ a selection handing over feel like one tempo.
 
 Each animation carries information rather than decorating:
 
-- **The reach block traces outward.** A static boundary shows you *that*
-  `create_user/1` reaches `Repo.insert/1`, never that the call goes **out**. A
-  travelling `stroke-dashoffset` does. The far dot then takes one ring on arrival,
+- **The reach block traces outward**, wherever it is drawn. `reachHosts()` walks
+  the whole scroll container rather than the note, because the sections above the
+  note render the same `.lgtm-deps` markup and sit *outside* `.doc` — so the trace
+  and the arrival ring were rendered every time and could never run, which is the
+  `overflow-x` bug's exact shape in a different place. The pointer wiring moved up
+  to `.panebody` with it, and every host is lit, not the first: a hand-written
+  `/deps` block and a section's diagram can both be on screen.
+
+  A static boundary shows you *that* `create_user/1` reaches `Repo.insert/1`,
+  never that the call goes **out**. A travelling `stroke-dashoffset` does. The far dot then takes one ring on arrival,
   fired on a 260ms timer so it reads as the *consequence* of the dash getting
   there — both at once is the static picture again with extra noise. The ring is
   its own `<circle>` scaled by `transform` on a `fill-box` origin, because `r` is
@@ -863,7 +870,9 @@ Each animation carries information rather than decorating:
   current at once. So the outgoing chip loses its state in the same frame and only
   the **incoming** one animates: an underline wiping in from the left. Hover's
   border is suppressed on an active chip, or one word gets two underlines.
-- **The directory arrives in order.** `--i` per row in `surface.ts`, staggered
+- **The directory arrives in order.** `--i` per row — in `surface.ts` for the
+  block and on the surface table's `<tr>` in `ExploreSections`, which gates it on
+  the *path* so it plays once per file rather than on every render — staggered
   16ms in CSS, and **capped at row 12** — 200 functions would otherwise cascade
   for 3.4s, and waiting on an animation to look a name up is worse than no
   animation. Both columns share the index so they arrive together.
