@@ -657,10 +657,15 @@
       // happen rather than a line you infer. Only on an actual step change —
       // firing every scroll frame is noise, and noise is what gets animation
       // switched off.
+      //
+      // A transition, not keyframes: `.fire` snaps the opacity up in 40ms and
+      // comes straight off again, so the slow fall is what you watch. Scroll
+      // quickly and each step retargets from wherever the last one had faded to,
+      // instead of restarting at full brightness — which is what keyframes did,
+      // and why they needed a forced reflow to replay at all.
       if (bandEl) {
-        bandEl.classList.remove("fire");
-        void bandEl.offsetWidth;
         bandEl.classList.add("fire");
+        setTimeout(() => bandEl?.classList.remove("fire"), 40);
       }
     });
   }
@@ -1030,16 +1035,19 @@
     background: var(--read);
     opacity: 0;
   }
-  .band:global(.fire)::after {
-    animation: bandfire var(--ring) var(--ease) both;
+  /* A transition, not keyframes.
+     Keyframes restart from zero; a transition retargets from wherever it
+     currently is — and this fires on every read-mode step, so scrolling quickly
+     through a note restarted it over and over. The `remove → reflow → add` dance
+     that used to be needed to replay it was the symptom, not the fix.
+     `.fire` snaps the opacity up in 40ms and the class comes straight off, so the
+     slow fall below is what you actually see. */
+  .band::after {
+    transition: opacity var(--ring) var(--ease-out);
   }
-  @keyframes bandfire {
-    0% {
-      opacity: 0.85;
-    }
-    100% {
-      opacity: 0;
-    }
+  .band:global(.fire)::after {
+    opacity: 0.85;
+    transition-duration: 0.04s;
   }
   /* Read mode's surface is `.dark` for the semantic colours plus
      `.reading-surface` for a warm set of neutrals — both live in app.css, and
@@ -1603,8 +1611,9 @@
     :global(.doc.arriving .lgtm-surface .row) {
       animation: none;
     }
+    .band::after,
     .band:global(.fire)::after {
-      animation: none;
+      transition: none;
     }
     :global(.lgtm-deps svg.focusing .edge.lit) {
       stroke-dasharray: none;
@@ -1807,7 +1816,7 @@
     transform-origin: center;
   }
   :global(.lgtm-deps .arrival.hit) {
-    animation: arrive var(--ring) var(--ease) both;
+    animation: arrive var(--ring) var(--ease-out) both;
   }
   @keyframes arrive {
     0% {
@@ -2447,7 +2456,7 @@
     border-radius: 8px;
     border: 1.5px solid var(--accent);
     pointer-events: none;
-    animation: ring var(--ring) var(--ease) both;
+    animation: ring var(--ring) var(--ease-out) both;
   }
   @keyframes ring {
     0% {
@@ -2473,7 +2482,7 @@
      four seconds, and waiting on an animation to look a name up is worse than
      no animation at all. Both columns share the index so they arrive together. */
   :global(.doc.arriving .lgtm-surface .row) {
-    animation: rowin var(--fast) var(--ease) both;
+    animation: rowin var(--fast) var(--ease-out) both;
     animation-delay: calc(min(var(--i, 0), 12) * 16ms);
   }
   @keyframes rowin {
@@ -2529,7 +2538,7 @@
     transform-origin: left;
   }
   :global(.doc code.ref.active::after) {
-    animation: wipe var(--fast) var(--ease) forwards;
+    animation: wipe var(--fast) var(--ease-out) forwards;
   }
   @keyframes wipe {
     to {
@@ -2572,7 +2581,9 @@
   :global(.doc.reading p.step),
   :global(.doc.reading li.step),
   :global(.doc.reading blockquote.step) {
-    transition: opacity 0.35s ease;
+    /* 250ms, inside the 300ms UI budget. This fires on every step as you scroll,
+       and at 350ms the dim was still catching up with the next paragraph. */
+    transition: opacity 0.25s var(--ease-in-out);
   }
   :global(.doc.reading .step:not(.now)) {
     opacity: 0.45;
@@ -2597,9 +2608,12 @@
   :global(.doc.reading li.steprow.now::before) {
     color: var(--accent);
   }
+  /* These two exist only to push the first step below the trigger line and give
+     the last one room to reach it. Nothing should ever see them move, so
+     animating a layout property here bought nothing and cost a reflow of the
+     whole doc every time read mode was toggled. */
   :global(.reading-lead),
   :global(.reading-tail) {
     height: 0;
-    transition: height 0.2s ease;
   }
 </style>

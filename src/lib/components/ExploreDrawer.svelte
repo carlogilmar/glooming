@@ -277,16 +277,23 @@
 {/if}
 
 <style>
+  /* No height transition, and there is no version of one that would be right.
+     Collapsing this panel has to make the note below it move up, which is a size
+     change in normal flow — `height` and `grid-template-rows: 0fr→1fr` both go
+     through layout, and `transform` would leave a hole where the drawer was. The
+     only composited option is to overlay the code, which is the design we cut
+     because it covers the thing you are reading.
+
+     So the audit's first remedy applies rather than its third: **delete**. The
+     toggle is bound to `⌥⇥`, and a keyboard shortcut gets no animation at any
+     duration or curve — you press it to get the panel out of the way, not to
+     watch it leave. Collapsing is now instant, on both the key and the header. */
   .drawer {
     flex: none;
     display: flex;
     flex-direction: column;
     overflow: hidden;
     background: var(--bg);
-    transition: height 0.18s var(--ease);
-  }
-  .drawer.dragging {
-    transition: none;
   }
 
   .head {
@@ -311,7 +318,9 @@
     font-size: 8px;
     color: var(--fg-faint);
     width: 8px;
-    transition: transform 0.18s var(--ease);
+    /* The caret may still turn: it is a transform, so it is composited, and it is
+       the one thing that reads as "this opened" now the height snaps. */
+    transition: transform var(--fast) var(--ease-out);
   }
   .drawer.open .caret {
     transform: rotate(90deg);
@@ -584,9 +593,6 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .drawer {
-      transition: none;
-    }
     .caret {
       transition: none;
     }

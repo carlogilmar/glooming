@@ -75,7 +75,25 @@
   --fast:  0.18s;   /* transient: a thing arrived */
   --trace: 0.62s;   /* transient: a connection being drawn */
   --ring:  0.7s;    /* transient: one pulse, then nothing */
-  --ease:  cubic-bezier(0.2, 0.7, 0.3, 1);
+
+  /* ---- curves, by direction ------------------------------------------------
+     One curve was doing four jobs. Easing is chosen by what the motion *is*,
+     not by taste, so there is a token per direction:
+
+       entering or exiting   --ease-out      starts fast, feels responsive
+       moving on screen      --ease-in-out
+       a drawer or sheet     --ease-drawer   the iOS curve, heavier at the end
+       hover or colour       plain `ease`    a built-in is right here
+       constant motion       plain `linear`  marquees, the reach trace
+
+     `ease-in` is never correct for UI: it starts slow, delaying the exact
+     moment you are watching.
+
+     These three are copied verbatim from the animation audit catalog rather
+     than tuned by hand — a curve you invent is a curve nobody can check. */
+  --ease-out:    cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 /* Scoped to a CLASS, not to `html`, so a subtree can opt into the dark palette

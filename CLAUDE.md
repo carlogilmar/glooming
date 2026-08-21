@@ -107,6 +107,7 @@ mockup/group.html              a reading across several files
 mockup/motion.html             the animation contract, replayable
 mockup/explore.html            the explore drawer: surface + reach beside the note
 mockup/files.html              ten mixed-kind files: the files modal, and the drawer per kind
+mockup/motion-audit.html       every motion finding, before and after
 scripts/motion-audit.py        every animation vs its reduced-motion rule
 scripts/effect-audit.py        $effects that read and write the same $state
 scripts/component-audit.py     components imported but never rendered
@@ -770,6 +771,23 @@ If you touch this file, the tests in it are the specification.
 `mockup/motion.html` is the contract — standalone and replayable, with a reduced
 motion toggle, because a motion spec you cannot re-watch is not a spec.
 
+**Easing is chosen by direction, not by taste.** Three curves, copied verbatim
+from the animation-audit catalog rather than tuned by hand — a curve you invent is
+a curve nobody can check:
+
+| Token | | For |
+|---|---|---|
+| `--ease-out` | `cubic-bezier(0.23, 1, 0.32, 1)` | entering or exiting |
+| `--ease-in-out` | `cubic-bezier(0.77, 0, 0.175, 1)` | moving on screen |
+| `--ease-drawer` | `cubic-bezier(0.32, 0.72, 0, 1)` | a drawer or sheet |
+
+Plain `ease` is correct for hover and colour, and plain `linear` for constant
+motion like the reach trace — those are not oversights. **`ease-in` is never
+correct for UI**: it starts slow, delaying the exact moment you are watching.
+
+One `--ease` used to do all four jobs. Splitting it was the highest-leverage
+finding of the motion audit, because a token change improves every site at once.
+
 **Cadence is a design token, like a colour.** `2.1s` had already been typed out
 in four places by hand and a fifth copy was one edit from drifting, so it lives
 in `app.css` with the rest, in **two tiers**:
@@ -843,8 +861,38 @@ focus bar keeps the bright end of its pulse — and the trace hands direction ov
 to an **arrowhead** that is invisible the rest of the time. Honouring the setting
 by deleting the signal would be worse than ignoring it.
 
+**Nothing collapses with a transition.** The explore drawer used to animate its
+`height`, and there is no version of that which is right: collapsing a panel has
+to make the note below it move up, so `height` and `grid-template-rows: 0fr→1fr`
+both go through layout, and `transform` would leave a hole where the drawer was.
+The only composited option is to overlay the code — the design that was cut for
+covering the thing you are reading. And the toggle is `⌥⇥`: a keyboard shortcut
+gets no animation at any duration. So it is instant on both the key and the
+header, and only the caret turns, because a transform is free.
+
+The same reasoning retired `transition: height` on read mode's lead/tail spacers.
+Their whole job is to be invisible, so animating them reflowed the doc for nobody.
+
+**A flash on a repeating event is a transition, never keyframes.** Keyframes
+restart from zero; a transition retargets from wherever it is. Read mode's band
+fires on every step, so scrolling quickly used to restart it over and over — and
+the `remove → reflow → add` dance needed to replay it *was* the symptom. It now
+snaps the opacity up for 40ms and lets a slow transition carry it down.
+
+**Popovers scale from what spawned them.** The `/` menu grows out of the caret via
+`transform-origin`, flipping to `bottom left` when the menu flips above the line,
+or it would grow away from the thing that opened it. The files modal is the
+exception the rule names: a modal appears centred, so `transform-origin: center` is
+correct there. Both set a `mounted` class one frame after mount, because an element
+rendered already-open has no state to transition *from*.
+
 `scripts/motion-audit.py` enforces this, and it compares **selector text**, not
-just animation names. That is not pedantry: on its first run it found three rules
+just animation names. It also covers **transitions that move something** — added
+after three keyframe animations became transitions and silently left the audit's
+field of view. Opacity and colour transitions are exempt, since reduced motion
+keeps those, and an override counts if it *stops the movement*, whether by
+`transition: none` or by transitioning opacity alone. The second form is the better
+one: reduced motion means gentler, not nothing. That is not pedantry: on its first run it found three rules
 that were written, looked correct, and could never apply — each had a *shorter*
 selector than the rule it meant to override (`.edge.lit` against
 `svg.focusing .edge.lit`) and lost on specificity. It also found `hintIn` had

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Every animation must have an exactly-matching reduced-motion rule.
+"""Every animation — and every transition that MOVES something — must have an
+exactly-matching reduced-motion rule.
 
 Selector text is compared, not just the animation name — because a rule written
 with a shorter selector than the one it means to override loses on specificity
@@ -21,7 +22,15 @@ def rm_blocks(s):
 def selector_at(s, at):
     """The selector of the rule containing `at`, with comments stripped."""
     brace = s.rfind('{', 0, at)
-    starts = [s.rfind('}', 0, brace) + 1, s.rfind('{', 0, brace) + 1, s.rfind('*/', 0, brace) + 2]
+    starts = [
+        s.rfind('}', 0, brace) + 1,
+        s.rfind('{', 0, brace) + 1,
+        s.rfind('*/', 0, brace) + 2,
+        # In a .svelte file the markup above `<style>` is full of braces from
+        # Svelte expressions, so the first rule in the block would otherwise
+        # capture half a template as its selector.
+        s.rfind('<style>', 0, brace) + len('<style>'),
+    ]
     head = s[max(starts):brace]
     head = re.sub(r'/\*.*?\*/', ' ', head, flags=re.S)
     return ' '.join(head.split())
@@ -44,6 +53,32 @@ for root, _, fs in os.walk('src'):
                         covered.setdefault(p, set()).add(part.strip())
             elif name != 'none':
                 live.append((p, name, sel))
+
+        # Transitions count too, but only the ones that MOVE something. Reduced
+        # motion means "drop movement, keep opacity and colour" — so a fading
+        # scrim needs no rule, and a scaling popover does. Missed on the first
+        # pass, which mattered the moment three keyframe animations became
+        # transitions and left the audit's field of view.
+        for m in re.finditer(r'transition:\s*([^;]+);', s):
+            decl, sel = m.group(1), selector_at(s, m.start())
+            if inside(m.start()):
+                # An override covers the rule if it stops the MOVEMENT — either
+                # `transition: none`, or one that only transitions opacity or
+                # colour. The second form is the better override: reduced motion
+                # means gentler, not nothing, and an element that pops in with no
+                # transition at all is harder to follow than one that fades.
+                still_moves = re.search(
+                    r'\b(transform|height|width|top|left|right|bottom|margin|padding)\b', decl
+                )
+                if not still_moves:
+                    for part in sel.split(','):
+                        covered.setdefault(p, set()).add(part.strip())
+                continue
+            moves = re.search(
+                r'\b(transform|height|width|top|left|right|bottom|margin|padding)\b', decl
+            )
+            if moves:
+                live.append((p, 'transition:' + moves.group(1), sel))
         # `display: none` on a decorative ::after counts as neutralising it.
         for m in re.finditer(r'display:\s*none', s):
             if inside(m.start()):

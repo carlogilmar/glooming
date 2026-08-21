@@ -36,6 +36,13 @@
     onclose: () => void;
   } = $props();
 
+  /** One frame, so there is a state to transition from — see RefMenu. */
+  let mounted = $state(false);
+  $effect(() => {
+    const id = requestAnimationFrame(() => (mounted = true));
+    return () => cancelAnimationFrame(id);
+  });
+
   let query = $state("");
   let cursor = $state(0);
   let confirming = $state<string | null>(null);
@@ -148,7 +155,15 @@
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="scrim" onclick={(e) => e.target === e.currentTarget && onclose()}>
+<div
+  class="scrim"
+  class:mounted
+  onclick={(e) => e.target === e.currentTarget && onclose()}
+>
+  <!-- A modal appears centred, so `transform-origin: center` is right here — the
+       rule about scaling from a trigger is for popovers anchored to one. 200ms
+       sits at the bottom of the 200–500ms budget a modal is allowed, because this
+       one opens over work you were in the middle of. -->
   <div class="panel" role="dialog" aria-label="Files in this reading">
     <div class="top">
       <h2>Files in this reading</h2>
@@ -241,6 +256,8 @@
 
 <style>
   .scrim {
+    opacity: 0;
+    transition: opacity 0.2s var(--ease-out);
     position: fixed;
     inset: 0;
     z-index: 24;
@@ -250,7 +267,12 @@
     align-items: flex-start;
     padding-top: 9vh;
   }
+  .scrim.mounted {
+    opacity: 1;
+  }
   .panel {
+    transform: scale(0.97);
+    transition: transform 0.2s var(--ease-out);
     width: 620px;
     max-width: calc(100vw - 40px);
     max-height: 74vh;
@@ -262,6 +284,17 @@
     border-radius: 12px;
     box-shadow: 0 22px 60px rgba(10, 12, 16, 0.3);
   }
+  .scrim.mounted .panel {
+    transform: scale(1);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .panel,
+    .scrim.mounted .panel {
+      transform: none;
+      transition: none;
+    }
+  }
+
   .top {
     display: flex;
     align-items: center;

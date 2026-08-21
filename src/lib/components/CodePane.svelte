@@ -975,7 +975,7 @@
     text-transform: none;
     letter-spacing: 0;
     font-size: 10.5px;
-    animation: hintIn var(--fast) ease-out;
+    animation: hintIn var(--fast) var(--ease-out);
   }
 
   /* Floats over the code rather than sitting in the flow, so appearing and
@@ -998,7 +998,7 @@
     font-size: 11.5px;
     text-align: left;
     cursor: pointer;
-    animation: hintIn var(--fast) ease-out;
+    animation: hintIn var(--fast) var(--ease-out);
   }
   .sticky:hover {
     background: var(--bg-inset);
@@ -1380,7 +1380,7 @@
     color: var(--fg-dim);
     white-space: nowrap;
     cursor: pointer;
-    animation: hintIn var(--fast) ease-out;
+    animation: hintIn var(--fast) var(--ease-out);
   }
   .focushint:hover {
     color: var(--fg);

@@ -1089,7 +1089,7 @@
     position: relative;
     background: var(--pub);
     box-shadow: none;
-    animation: fill var(--fast) var(--ease) both;
+    animation: fill var(--fast) var(--ease-out) both;
   }
   .filebtn i.earned::after {
     content: "";
@@ -1097,14 +1097,18 @@
     inset: -3px;
     border-radius: 50%;
     border: 1.5px solid var(--pub);
-    animation: dotring var(--ring) var(--ease) both;
+    animation: dotring var(--ring) var(--ease-out) both;
   }
+  /* No scale. At 5px, `scale(0.4)` is a 2px dot popping to 5px — well past the
+     0.9–0.97 the physicality rule allows, and tuning it to 0.9 would make it
+     invisible, which is the tell that it was never the part doing the work. The
+     ring is. So the fill is now just the colour arriving. */
   @keyframes fill {
     from {
-      transform: scale(0.4);
+      opacity: 0.4;
     }
     to {
-      transform: scale(1);
+      opacity: 1;
     }
   }
   @keyframes dotring {
@@ -1134,7 +1138,8 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    transition: opacity 0.13s ease;
+    /* A crossfade between two files — something moving, not something arriving. */
+    transition: opacity 0.13s var(--ease-in-out);
   }
   .codewrap.swapping {
     opacity: 0;
@@ -1155,7 +1160,7 @@
     background: var(--read);
     border-radius: 999px;
     pointer-events: none;
-    animation: badge 1.1s var(--ease) forwards;
+    animation: badge 1.1s var(--ease-out) forwards;
   }
   @keyframes badge {
     0% { opacity: 0; transform: translate(-50%, -4px); }

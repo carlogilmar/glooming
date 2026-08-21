@@ -64,6 +64,19 @@
    */
   const slash = $derived(parseSlash(query));
 
+  /**
+   * Set one frame after mount so there is a state to transition *from*.
+   *
+   * The menu is created already open — Svelte renders it when `slashAt` is set —
+   * so without a first frame at `scale(.96)` the browser has nothing to animate
+   * between and the entrance is skipped entirely.
+   */
+  let mounted = $state(false);
+  $effect(() => {
+    const id = requestAnimationFrame(() => (mounted = true));
+    return () => cancelAnimationFrame(id);
+  });
+
   let cursor = $state(0);
   let listEl = $state<HTMLDivElement | null>(null);
 
@@ -207,11 +220,17 @@
   }
 </script>
 
+<!-- `transform-origin` is the corner nearest the caret, so the menu grows *out
+     of the place you are typing*. Centre would say it came from the middle of
+     itself, which is nowhere. When the menu flips above the caret the origin
+     flips with it, or it would grow away from the thing that spawned it. -->
 <div
   class="refmenu"
+  class:mounted
   style:left="{x}px"
   style:top={flip ? "auto" : `${y}px`}
   style:bottom={flip ? `${y}px` : "auto"}
+  style:transform-origin={flip ? "bottom left" : "top left"}
   bind:this={listEl}
 >
   {#each cmds as c, i (c.kind)}
@@ -313,6 +332,13 @@
 
 <style>
   .refmenu {
+    /* 140ms — inside the 125–200ms budget for a small popover. Anything slower
+       is in the way of typing, which is what you were doing when it opened. */
+    opacity: 0;
+    transform: scale(0.96);
+    transition:
+      opacity var(--fast) var(--ease-out),
+      transform var(--fast) var(--ease-out);
     position: absolute;
     z-index: 30;
     width: 268px;
@@ -379,6 +405,23 @@
     font-size: 9.5px;
     color: var(--fg-faint);
   }
+  .refmenu.mounted {
+    opacity: 1;
+    transform: scale(1);
+  }
+  /* Movement goes, the menu still arrives. Reduced motion means gentler, not
+     nothing — an element that pops in with no transition at all is harder to
+     follow than one that fades. */
+  @media (prefers-reduced-motion: reduce) {
+    .refmenu {
+      transform: none;
+      transition: opacity 0.1s var(--ease-out);
+    }
+    .refmenu.mounted {
+      transform: none;
+    }
+  }
+
   .none {
     margin: 0;
     padding: 12px 12px;
