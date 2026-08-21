@@ -41,9 +41,25 @@
     {
       title: "Navigating",
       rows: [
-        { keys: ["↑", "↓"], what: "Move the review cursor one line" },
+        { keys: ["↑", "↓"], what: "Move the review cursor one line. Also `j` / `k`, and `5j` for five" },
         { keys: ["[", "]"], what: "Previous / next function, selected whole. Does not wrap at either end" },
         { keys: ["⌘P"], what: "Jump to a function by name. Type a prefix, or an abbreviation like cu" },
+        { keys: ["⌘R"], what: "Read mode on / off — scroll the note and the code follows your prose" },
+        { keys: ["⌘E"], what: "Edit / preview the note. Entering edit leaves read mode; typing under a scroll-driven selection is chaos" },
+        {
+          keys: ["⌥⇥"],
+          what:
+            "Collapse or expand the explore drawer — what you navigate the current file by. A " +
+            "module shows its surface and what it reaches; a config script its settings, marked " +
+            "env or literal; a test suite its describes and the context each one starts with. " +
+            "Collapsed it is one strip that still carries the counts",
+        },
+        {
+          keys: ["⌘⇧T"],
+          what:
+            "The files in this reading — filter, ↑↓↵ to switch, × or ⌫ to remove one you opened " +
+            "by accident. `⌘T` adds another. The button in the header does the same",
+        },
         { keys: ["Esc"], what: "Clear the selection" },
       ],
     },
@@ -237,6 +253,15 @@
             "delete the whole reading instead",
         },
         {
+          keys: ["/", "stats"],
+          what:
+            "Block commands, for when your explanation wants a reader to see something: " +
+            "`/stats` for size and history, `/surface` for the directory, `/deps`, `/treemap`. " +
+            "Add a space and a filename — `/surface impact_stage.ex` — for any other file in " +
+            "the reading. Nothing is inserted for you; add one where you want it and delete it " +
+            "when you don't",
+        },
+        {
           keys: ["/"],
           what:
             "While editing, offers every function in the reading, grouped by module. Every " +
@@ -281,7 +306,7 @@
       rows: [
         { action: "← Home", what: "Back to your recent readings. Saves anything pending first" },
         {
-          keys: ["⌘T"],
+          keys: ["⌘O", "⌘T"],
           what:
             "Find a file by name in the open folder — and with a reading open, add it to that " +
             "reading. Matches the whole path, so `web/proc` and `my_app/acc` both narrow, and " +
@@ -293,7 +318,12 @@
             "Pick the project once; it is remembered, and the last one is reopened next launch. " +
             "Build output and dependencies are never listed",
         },
-        { keys: ["⌘O"], what: "Open a single file with the system picker" },
+        {
+          keys: ["⌘⇧O"],
+          what:
+            "The system file picker, for a file outside the project. ⌘O searches the open folder " +
+            "instead — that is the one you want almost every time",
+        },
         {
           keys: ["⌘K"],
           what:

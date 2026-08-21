@@ -9,14 +9,18 @@
   // textarea's own metrics, is filled with the text up to the caret, and a span
   // at the end reports where that lands.
   import type { VocabEntry } from "$lib/fileset";
+  import { COMMANDS, parseSlash, type BlockKind, type FileOption } from "$lib/slash";
 
   let {
     entries = [],
+    currentFile = "",
+    targets = [],
     query = "",
     x = 0,
     y = 0,
     flip = false,
     onpick,
+    oncommand,
     onclose,
   }: {
     /**
@@ -28,6 +32,10 @@
      * when it is somewhere else.
      */
     entries: VocabEntry[];
+    /** Name of the file on screen — what a bare block command works on. */
+    currentFile: string;
+    /** Files a block can be generated for, offered once a command takes an argument. */
+    targets: FileOption[];
     query: string;
     x: number;
     /**
@@ -38,8 +46,23 @@
     y: number;
     flip: boolean;
     onpick: (text: string) => void;
+    /**
+     * A block command was chosen. `path` is null for the file on screen, which is
+     * what a bare `/surface` means.
+     */
+    oncommand?: (kind: BlockKind, path: string | null) => void;
     onclose: () => void;
   } = $props();
+
+  /**
+   * What the query currently means.
+   *
+   * `/su` is a command on the file you are looking at; `/su impact_stage.ex` is
+   * the same command aimed somewhere else. The grammar lives in `$lib/slash` so
+   * the pane deciding whether to stay open and this menu deciding what to show
+   * cannot disagree about it.
+   */
+  const slash = $derived(parseSlash(query));
 
   let cursor = $state(0);
   let listEl = $state<HTMLDivElement | null>(null);
@@ -70,8 +93,41 @@
    * score decides, and the module name is part of what you can match against, so
    * `billing.to_c` narrows the way you'd expect.
    */
+  /** Command rows: only while the argument has not been started. */
+  const cmds = $derived.by(() => {
+    if (slash.arg !== null) return [];
+    const q = slash.token.toLowerCase();
+    if (q.length < 2) return [];
+    return COMMANDS.filter((c) => c.name.startsWith(q));
+  });
+
+  /**
+   * File rows, once a command has an argument.
+   *
+   * The directory is shown only when it is doing work — three pipelines each with
+   * a `config.ex` is the normal case, and the basename alone cannot tell them
+   * apart. This is also the one place lgtm lets you choose between them.
+   */
+  const files = $derived.by(() => {
+    if (!slash.command || slash.arg === null) return [];
+    const q = (slash.arg ?? "").trim();
+    const dupes = new Set(
+      targets.filter((t, i) => targets.findIndex((o) => o.filename === t.filename) !== i)
+        .map((t) => t.filename),
+    );
+    return targets
+      .map((t) => ({ t, s: score(t.filename, q) ?? score(t.path, q), ambiguous: dupes.has(t.filename) }))
+      .filter((h) => h.s !== null)
+      .sort((a, b) => a.s! - b.s! || a.t.filename.localeCompare(b.t.filename))
+      .slice(0, 9);
+  });
+
   const hits = $derived.by(() =>
-    entries
+    // Naming a file replaces the function list entirely — you are choosing a
+    // target, not a reference, and mixing the two would be two menus in one.
+    slash.arg !== null
+      ? []
+      : entries
       .map((e) => ({
         e,
         s: Math.min(
@@ -89,13 +145,16 @@
       .slice(0, 9),
   );
 
+  /** Commands come first, so a matched one is what `↵` takes. */
+  const total = $derived(cmds.length + files.length + hits.length);
+
   /** Rows in order, with a header wherever the module changes. */
   const rows = $derived.by(() => {
     const out: { hit: (typeof hits)[number]; i: number; head: string | null }[] = [];
     let seen: string | null = null;
     hits.forEach((hit, i) => {
       const key = hit.e.module;
-      out.push({ hit, i, head: key === seen ? null : key });
+      out.push({ hit, i: i + cmds.length, head: key === seen ? null : key });
       seen = key;
     });
     return out;
@@ -109,7 +168,7 @@
   /** Owned here rather than in the textarea, so the two can't disagree. */
   export function handleKey(e: KeyboardEvent): boolean {
     if (e.key === "ArrowDown") {
-      cursor = Math.min(cursor + 1, hits.length - 1);
+      cursor = Math.min(cursor + 1, total - 1);
       keepVisible();
       return true;
     }
@@ -119,7 +178,17 @@
       return true;
     }
     if (e.key === "Enter" || e.key === "Tab") {
-      const hit = hits[cursor];
+      if (cursor < cmds.length) {
+        oncommand?.(cmds[cursor].kind, null);
+        return true;
+      }
+      if (files.length && slash.command) {
+        const f = files[cursor - cmds.length];
+        if (f) oncommand?.(slash.command.kind, f.t.path);
+        else onclose();
+        return true;
+      }
+      const hit = hits[cursor - cmds.length];
       if (hit) onpick(`\`${hit.e.insert}\``);
       else onclose();
       return true;
@@ -145,9 +214,55 @@
   style:bottom={flip ? `${y}px` : "auto"}
   bind:this={listEl}
 >
-  {#if !hits.length}
+  {#each cmds as c, i (c.kind)}
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+    <div
+      class="hit cmd"
+      class:on={i === cursor}
+      onmousedown={(e) => {
+        e.preventDefault();
+        oncommand?.(c.kind, null);
+      }}
+      onmouseenter={() => (cursor = i)}
+    >
+      <span class="slash">/</span>
+      <span class="sig">{c.name}</span>
+      <span class="spacer"></span>
+      <span class="where">{c.what} · {currentFile}</span>
+    </div>
+  {/each}
+
+  {#if files.length}
+    <div class="grp">
+      <span>/{slash.command?.name}</span>
+      <span class="spacer"></span>
+      <span class="in">pick a file</span>
+    </div>
+  {/if}
+  {#each files as f, i (f.t.path)}
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+    <div
+      class="hit file"
+      class:on={i + cmds.length === cursor}
+      onmousedown={(e) => {
+        e.preventDefault();
+        if (slash.command) oncommand?.(slash.command.kind, f.t.path);
+      }}
+      onmouseenter={() => (cursor = i + cmds.length)}
+    >
+      <span class="dot"></span>
+      <span class="sig">{f.t.filename}</span>
+      <span class="spacer"></span>
+      <!-- The directory earns its place only when two files share a name. -->
+      <span class="where">{f.ambiguous ? f.t.dir : f.t.module}</span>
+    </div>
+  {/each}
+
+  {#if slash.arg !== null && !files.length}
+    <p class="none">no file matches “{slash.arg.trim()}”</p>
+  {:else if !hits.length && !cmds.length && !files.length}
     <p class="none">no function matches “{query}”</p>
-  {:else}
+  {:else if hits.length}
     {#each rows as row (row.hit.e.path + row.hit.e.sig)}
       {#if row.head}
         <!-- Grouped by module rather than by file: a qualified reference names a
@@ -181,8 +296,14 @@
        no arity — different enough that leaving you to infer it was the bug. -->
   <footer>
     <kbd>↑</kbd><kbd>↓</kbd>
-    {#if hits[cursor]}
-      <kbd>↵</kbd> inserts <code>`{hits[cursor].e.insert}`</code>
+    {#if cursor < cmds.length && cmds[cursor]}
+      <kbd>↵</kbd> inserts <code>lgtm:{cmds[cursor].kind}</code> for
+      <code>{currentFile}</code> · <kbd>space</kbd> for another file
+    {:else if files.length && files[cursor - cmds.length]}
+      <kbd>↵</kbd> inserts <code>lgtm:{slash.command?.kind}</code> for
+      <code>{files[cursor - cmds.length].t.filename}</code>
+    {:else if hits[cursor - cmds.length]}
+      <kbd>↵</kbd> inserts <code>`{hits[cursor - cmds.length].e.insert}`</code>
     {:else}
       <kbd>↵</kbd> insert
     {/if}
@@ -227,6 +348,36 @@
     font-family: var(--mono);
     font-size: 10px;
     color: var(--accent);
+  }
+  /* A command is not a function, so it wears a slash rather than the
+     public/private dot, and sits above the list it is not part of. */
+  .hit.cmd {
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .hit.cmd .slash {
+    flex: none;
+    width: 6px;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent);
+  }
+  .hit.cmd .sig {
+    color: var(--accent);
+  }
+  /* A file row is a target, not a function — square dot, no visibility colour. */
+  .hit.file .dot {
+    border-radius: 2px;
+    background: var(--fg-faint);
+  }
+  .hit.file .sig {
+    color: var(--fg);
+  }
+  .hit .where {
+    flex: none;
+    font-size: 9.5px;
+    color: var(--fg-faint);
   }
   .none {
     margin: 0;

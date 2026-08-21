@@ -6,6 +6,8 @@
   import { fontSize } from "$lib/stores/fontSize.svelte";
   import { focus } from "$lib/stores/focus.svelte";
   import { byPath, hasModules, moduleOf, origin as originOf, vocabulary } from "$lib/fileset";
+  import * as ipc from "$lib/ipc";
+  import { blockTargets, stillOpen, type BlockKind } from "$lib/slash";
   import type { ReadingFile } from "$lib/ipc";
 
   let {
@@ -18,6 +20,7 @@
     onreconcile,
     onshowfile,
     onrefs,
+    onreading,
     opened = 0,
   }: {
     markdown: string;
@@ -36,6 +39,15 @@
     onshowfile?: (path: string) => Promise<void> | void;
     /** Which files the prose references — the file strip's hollow-dot signal. */
     onrefs?: (paths: Set<string>) => void;
+    /**
+     * Read mode went on or off.
+     *
+     * The shell hides the explore drawer while reading: the drawer is what you
+     * navigate by, and read mode is being walked *through* something. Reported
+     * rather than shared as state because the pane owns the mode — two owners
+     * would eventually disagree with the button about which is on.
+     */
+    onreading?: (on: boolean) => void;
     /**
      * Bumped whenever a *different* reading is opened.
      *
@@ -213,8 +225,10 @@
     const caret = editor.selectionStart;
     if (caret <= slashAt) return closeMenu();
     const typed = editor.value.slice(slashAt + 1, caret);
-    // A space or a newline ends it — `/` in ordinary prose must stay prose.
-    if (/[\s`]/.test(typed)) return closeMenu();
+    // A space normally ends it — `/` in ordinary prose must stay prose. Once a
+    // command name matches, the space becomes an argument separator instead, so
+    // `/surface impact_stage.ex` can be typed. `stillOpen` owns that rule.
+    if (!stillOpen(typed)) return closeMenu();
     slashQuery = typed;
   }
 
@@ -260,6 +274,37 @@
 
   // The whole file set goes in: a reference may name a function in any of them,
   // and each block finds its own file from the `module=` it already carried.
+  /** A short, self-clearing message for something that could not be done. */
+  let note = $state<string | null>(null);
+
+  /**
+   * Replace `/surface` with a generated block for the file on screen.
+   *
+   * A fence has to start on its own line, so a newline goes in when the caret is
+   * mid-line — otherwise the block lands inside a paragraph and markdown renders
+   * it as inline code, which is a confusing way to find that out.
+   */
+  async function insertBlock(kind: BlockKind, path: string | null) {
+    // A named file wins; without one it is the file on screen, which is what a
+    // bare `/surface` means.
+    const file = path ? (byPath(files, path) ?? currentFile) : currentFile;
+    if (!editor || slashAt === null || !file?.outline) return closeMenu();
+    try {
+      // The path goes along because `stats` re-reads the source and the git log;
+            // the others need only the outline.
+      const body = await ipc.blockFor(kind, file.path, file.outline);
+      const before = editor.value.slice(0, slashAt);
+      const lead = before === "" || before.endsWith("\n") ? "" : "\n";
+      insertRef(`${lead}${body}`);
+    } catch (e) {
+      // A module that reaches nothing has no deps block, and saying so beats
+      // inserting an empty fence that renders as "re-seed this doc".
+      note = String(e).replace(/^Error:\s*/, "");
+      setTimeout(() => (note = null), 3200);
+      closeMenu();
+    }
+  }
+
   const md = $derived(createMarkdownIt(files, current));
   const html = $derived(md.render(markdown));
 
@@ -648,9 +693,31 @@
     markNow(i);
   }
 
+  /**
+   * The two mode toggles, exported so a keyboard shortcut can reach them.
+   *
+   * The shell owns the window's keydown handler — it already does for ⌘T, ⌘K and
+   * the rest — so it needs a way in rather than a second listener here that could
+   * disagree with the buttons about state.
+   */
+  export function toggleRead() {
+    if (canRead && !editing && steps.length) toggleReading();
+  }
+
+  export function toggleEdit() {
+    if (editing) {
+      editing = false;
+      return;
+    }
+    // Scroll-driven state while typing is chaos, so entering edit leaves read.
+    editing = true;
+    if (reading) toggleReading();
+  }
+
   function toggleReading() {
     reading = !reading;
     focus.reading = reading;
+    onreading?.(reading);
     if (!reading) {
       activeStep = -1;
       focus.rest();
@@ -680,8 +747,10 @@
     return () => window.removeEventListener("resize", onResize);
   });
 
-  // Leaving the doc pane must not leave the app stuck in reading state.
+  // Leaving the doc pane must not leave the app stuck in reading state — or the
+  // drawer hidden with nothing left to un-hide it.
   $effect(() => () => {
+    onreading?.(false);
     focus.reading = false;
   });
 
@@ -825,6 +894,7 @@
   <div class="panehead">
     {#if dirty}<span class="dot" title="unsaved"></span>{/if}
     <span>{filename ? `${filename}.md` : "no doc"}</span>
+    {#if note}<span class="note">{note}</span>{/if}
     <span class="spacer"></span>
     {#if stale}
       <button class="btn icon warn" onclick={() => onreconcile?.()}>⟳ Code changed — reconcile</button>
@@ -882,11 +952,14 @@
           <RefMenu
             bind:this={menu}
             entries={vocabulary(files, current)}
+            currentFile={currentFile?.filename ?? ""}
+            targets={blockTargets(files)}
             query={slashQuery}
             x={menuX}
             y={menuY}
             flip={menuFlip}
             onpick={insertRef}
+            oncommand={insertBlock}
             onclose={closeMenu}
           />
         {/if}
@@ -926,6 +999,13 @@
     min-height: 0;
     height: 100%;
     position: relative;
+  }
+  .note {
+    font-size: 10.5px;
+    color: var(--priv);
+    background: color-mix(in srgb, var(--priv) 12%, transparent);
+    border-radius: 5px;
+    padding: 1px 7px;
   }
   .band {
     position: absolute;

@@ -24,11 +24,19 @@ rarely lives in one file.
 - **Two panes, one selection.** Click a function in your explanation and the
   code pane scrolls to it, highlights every clause of it, tints its `@spec` in
   its own colour, and dims the rest of the file to 32% so nothing else competes.
-- **Gives you the facts, then gets out of the way.** Opening a file writes a
-  starter doc: file stats, a directory of every function with its line number, and
-  a diagram of what the module reaches outside itself. Then a heading and a blank
-  page. **Nothing is written for you** — the explanation is the part you came to
-  do, and generating a first draft of it would only give you something to skim.
+- **Nothing is written for you.** Opening a file writes a title, the module's own
+  `@moduledoc`, and a blank page. The explanation is the part you came to do, and a
+  generated first draft would only give you something to skim.
+- **Explore beside the note.** A drawer above your writing shows what to navigate
+  the current file by, and it changes with the kind of file: a module's **surface**
+  and **reaches**, a config's **settings** (marked env, `env!`, secret or literal),
+  a suite's **describes** with the context each one accumulates. Collapsed it is
+  one strip that still carries the counts. `⌥⇥`.
+- **Ten files is normal.** `⌘⇧T` lists the reading's files — filter, `↑↓↵` to
+  switch, `×` to remove one you opened by accident. `⌘T` adds another.
+- **Follow a call across files.** When a reached module is also one of the files
+  you are reviewing, its entry in the reaches list is a jump: one click switches
+  file and focuses that function.
 - **Tells you when the code moves.** Each file carries a snapshot of how it was
   when you read it, so a changed file is flagged per file, not vaguely. A
   reference in your prose to a function that has since been deleted renders struck
@@ -88,6 +96,7 @@ cargo clippy --manifest-path src-tauri/Cargo.toml
 
 python3 scripts/motion-audit.py   # every animation has a reduced-motion rule
 python3 scripts/effect-audit.py   # no $effect reads and writes the same $state
+python3 scripts/component-audit.py  # every imported component is rendered
 ```
 
 ## Building the macOS app
@@ -114,11 +123,14 @@ pnpm tauri icon       # no arguments — app-icon.png is the default input
 
 | Key | Does |
 |---|---|
-| `⌘O` | open a single file with the system picker |
+| `⌘O` | find a file by name in the open folder — same as `⌘T` |
+| `⌘⇧O` | the system picker, for a file outside the project |
 | `⌘T` | find a file by name in the open folder — or paste a path. With a reading open, this adds the file to it |
 | `⌘K` | library — everything you've written |
 | `⌘P` | jump to a function by name |
 | `⌘S` | force a save (autosave already runs 800ms after you stop typing) |
+| `⌘R` | read mode on / off |
+| `⌘E` | edit / preview the note |
 | `[` `]` | previous / next function |
 | `/` | search, marking every occurrence |
 | `?` | what everything does |
@@ -179,7 +191,11 @@ Leaving the arity off means *every* arity: `get_user` selects `get_user/1` and
 you mean exactly one.
 
 While editing, `/` offers every function in the reading grouped by module, and the
-footer shows the exact text you are about to get. **Every reference it inserts is
+footer shows the exact text you are about to get. **`/surface`** drops a directory
+of the file you are looking at into the note — every function, sorted, with line
+numbers — and **`/surface impact_stage.ex`** does it for any other file in the
+reading. Add one where you want it and delete it when you don't; only the file the
+reading started from gets blocks written for it up front. **Every reference it inserts is
 module-qualified**, from the first file onward — a one-file reading becomes a
 multi-file one the moment you open another, and the references you already wrote
 have to still mean what they said.
@@ -280,7 +296,7 @@ IMPLEMENTATION_PLAN.md     the reasoning behind every decision
 CLAUDE.md                  the map, for humans and Claude sessions alike
 
 src/                       SvelteKit frontend
-  lib/components/          CodePane, DocPane, Divider, Library, FileStrip, RefMenu
+  lib/components/          CodePane, DocPane, ExploreDrawer, FilesModal, Library
   lib/stores/              theme, focus (shared by both panes)
   lib/fileset.ts           the reading's file set: which file owns what
   lib/refs.ts              references in prose, and which file each one means

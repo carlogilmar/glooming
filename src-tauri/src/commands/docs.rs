@@ -111,6 +111,76 @@ async fn build_reading(state: &State<'_, AppState>, id: i64) -> AppResult<Readin
     Ok(Reading { doc, files })
 }
 
+/// The `lgtm:surface` block for an already-parsed file, generated on demand.
+///
+/// Blocks that are renderable but not seeded — surface, deps, treemap — are
+/// inserted from the `/` menu instead, so you get the one you want where you want
+/// it rather than three you scroll past every time.
+///
+/// In Rust even though the frontend already holds the outline, because **the sort
+/// order has to live in exactly one place**. Surface was once sorted in both
+/// `seed.rs` and the renderer and the two disagreed: Rust orders by
+/// `(name, arity)` giving `get_user/1, get_user!/1`, while JS `localeCompare` on
+/// the whole signature reorders punctuation. A second generator would be a third
+/// chance to drift.
+#[tauri::command]
+pub fn block_for(kind: String, path: String, outline: Outline) -> AppResult<String> {
+    let bad = |m: String| crate::error::AppError::BadInput(m);
+
+    // `stats` needs more than the outline — the line counts come from the source
+    // and the history from git — and it is the one block every kind can produce,
+    // so it is answered before anything looks for a module.
+    if kind == "stats" {
+        let p = Path::new(&path);
+        let source = std::fs::read_to_string(p)?;
+        let history = crate::git::history(p).unwrap_or_default();
+        return Ok(match (&outline.config, &outline.tests, outline.modules.first()) {
+            (Some(config), _, _) => seed::config_stats_block(config, &source, &history),
+            (_, Some(tests), _) => seed::test_stats_block(tests, &source, &history),
+            (_, _, Some(module)) => seed::stats_block(module, &source, &history),
+            _ => return Err(bad("nothing recognised in this file".into())),
+        });
+    }
+
+    // The rest are per kind: a config has no functions to lay out, a module has no
+    // describes. Asking for the wrong one says so rather than returning an empty
+    // fence, because an empty block reads as broken.
+    match kind.as_str() {
+        "settings" => outline
+            .config
+            .as_ref()
+            .map(|c| {
+                let name = Path::new(&path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                seed::settings_block(c, &name)
+            })
+            .ok_or_else(|| bad("this file is not a config script".into())),
+
+        "tests" => outline
+            .tests
+            .as_ref()
+            .map(seed::tests_block)
+            .ok_or_else(|| bad("this file is not a test suite".into())),
+
+        "surface" | "deps" | "treemap" => {
+            let module = outline
+                .modules
+                .first()
+                .ok_or_else(|| bad("no module in this file".into()))?;
+            match kind.as_str() {
+                "surface" => Ok(seed::surface_block(module)),
+                "treemap" => Ok(seed::treemap_block(module)),
+                "deps" if !module.deps.is_empty() => Ok(seed::deps_block(module)),
+                _ => Err(bad("this module reaches nothing outside itself".into())),
+            }
+        }
+
+        other => Err(bad(format!("no block called {other}"))),
+    }
+}
+
 /// A whole reading in one payload: the doc, and every file it covers with its
 /// source, outline and staleness.
 #[tauri::command]

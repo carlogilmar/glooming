@@ -36,6 +36,7 @@ pub fn run() {
             commands::docs::list_docs,
             commands::docs::delete_doc,
             commands::docs::reconcile_doc,
+            commands::docs::block_for,
             commands::docs::open_reading,
             commands::docs::add_doc_file,
             commands::docs::remove_doc_file,

@@ -69,34 +69,34 @@ fn normalize_reports_both_clauses() {
     assert_eq!(n.line, 30);
 }
 
-/// A fresh doc gives you the facts and then gets out of the way.
+/// A fresh doc is a title, a summary, and a blank page.
 ///
-/// Two generated blocks — how big is this, what is in it — and a blank page. The
-/// `lgtm:functions` table used to sit between them and your writing; it was a
-/// second listing of the names `lgtm:surface` already gives you, and its one
-/// unique offering, a prose slot per function, is the wrong shape for an
-/// explanation. Explanations follow the path through a module. An alphabetical
-/// index does not.
+/// Every generated block has left it. `lgtm:surface` and `lgtm:deps` are what you
+/// *navigate* by, and navigation belongs in the explore drawer next to the code —
+/// pinned to a position in a narrative they only ever served the file the reading
+/// started from, which is what made a multi-file reading uneven. `lgtm:stats` went
+/// separately: size and history are context you want recorded, so `/stats` puts
+/// them where your prose wants them.
 #[test]
-fn the_seeded_doc_gives_you_the_facts_and_a_blank_page() {
+fn the_seeded_doc_is_a_title_a_summary_and_a_blank_page() {
     let md = seed::seed_markdown(&outline(), FIXTURE, &FileHistory::default(), "accounts.ex");
 
     assert!(md.starts_with("# MyApp.Accounts\n"));
     assert!(md.contains("Reads and writes for the `users` table."));
+    assert!(md.contains("write what you make of it here"));
 
-    // The directory is still complete: every function, both visibilities.
-    let surface = md
-        .split("```lgtm:surface")
-        .nth(1)
-        .and_then(|b| b.split("```").next())
-        .expect("surface block");
-    for sig in ["create_user/1", "get_user/1", "get_user!/1", "normalize/1", "changeset/2"] {
-        assert!(surface.contains(sig), "{sig} missing from the directory:\n{surface}");
+    // Not one fence.
+    assert_eq!(md.matches("```").count(), 0, "no blocks at all:\n{md}");
+    for absent in ["lgtm:stats", "lgtm:surface", "lgtm:deps", "lgtm:treemap", "lgtm:functions"] {
+        assert!(!md.contains(absent), "{absent} is not seeded:\n{md}");
     }
 
-    // And nothing is written for you.
-    for absent in ["lgtm:functions", "lgtm:treemap"] {
-        assert!(!md.contains(absent), "{absent} is not seeded:\n{md}");
+    // The directory is still complete — it is just generated on demand now, for
+    // the drawer or for `/surface`.
+    let module = outline().modules.into_iter().next().expect("module");
+    let surface = seed::surface_block(&module);
+    for sig in ["create_user/1", "get_user/1", "get_user!/1", "normalize/1", "changeset/2"] {
+        assert!(surface.contains(sig), "{sig} missing from the directory:\n{surface}");
     }
 }
 
@@ -145,9 +145,9 @@ fn the_treemap_is_still_a_block_even_though_it_is_not_seeded() {
     assert!(block.contains("create_user/1"), "still writes rows:\n{block}");
 }
 
-/// What a fresh module doc is made of, in order. Pinned because everything above
-/// `## Explain` is generated, and every one of those sections is space taken from
-/// the part you write in.
+/// What a fresh module doc is made of. Pinned because the whole direction of this
+/// tool has been removing generated sections from above the part you write in, and
+/// there is now exactly one heading left.
 #[test]
 fn a_seeded_module_doc_has_exactly_these_sections() {
     let md = seed::seed_markdown(&outline(), FIXTURE, &FileHistory::default(), "accounts.ex");
@@ -156,7 +156,7 @@ fn a_seeded_module_doc_has_exactly_these_sections() {
         .filter(|l| l.starts_with("## "))
         .map(|l| l.trim_start_matches("## "))
         .collect();
-    assert_eq!(headings, ["Surface", "Reach", "Explain"], "{md}");
+    assert_eq!(headings, ["Explain"], "one heading, and it is where you write:\n{md}");
 }
 
 /// A module with nothing private has no list to write — and now neither does one
@@ -278,19 +278,95 @@ fn end_lines_span_the_whole_function_body() {
 
 
 
-/// Reconcile touches `lgtm:functions` and nothing else. A config or test doc
-/// has no such block, so re-parsing must pass it through untouched rather than
-/// mangling blocks it doesn't understand.
+/// Reconcile touches `lgtm:functions` and nothing else. Nothing seeds one any
+/// more, so a doc must pass through untouched — and a doc that has picked up a
+/// *different* block from `/settings` must not have it mangled either.
 #[test]
 fn reconciling_a_config_doc_changes_nothing() {
     let cfg = "import Config\n\nconfig :my_app, MyApp.Repo, pool_size: 10\n";
     let outline = parse::parse(cfg, "elixir").unwrap();
-    let md = seed::seed_markdown(&outline, cfg, &FileHistory::default(), "dev.exs");
+    let seeded = seed::seed_markdown(&outline, cfg, &FileHistory::default(), "dev.exs");
 
-    assert!(md.contains("```lgtm:settings"));
+    // The seed itself: a title and a blank page, like every other kind.
+    assert_eq!(seeded.matches("```").count(), 0, "no blocks seeded:\n{seeded}");
     assert_eq!(
-        lgtm_lib::reconcile::reconcile_markdown(&md, &outline),
-        md,
+        lgtm_lib::reconcile::reconcile_markdown(&seeded, &outline),
+        seeded,
         "a doc with no functions block is passed through verbatim"
+    );
+
+    // And with a block the author asked for, which reconcile has no business
+    // touching either.
+    let settings = seed::settings_block(&outline.config.clone().unwrap(), "dev.exs");
+    let written = format!("{seeded}\nThe pool size is the interesting part.\n\n{settings}");
+    assert_eq!(
+        lgtm_lib::reconcile::reconcile_markdown(&written, &outline),
+        written,
+        "an inserted lgtm:settings block survives verbatim"
+    );
+}
+
+/// `/surface` and the explore drawer both generate blocks for whatever file is in
+/// front of you, so the generators have to be reachable on their own — nothing
+/// seeds them any more.
+///
+/// The order still has to be the seeder's order, because it is the same function:
+/// surface was once sorted in both `seed.rs` and the renderer and the two
+/// disagreed. One generator, one order, no second chance to drift.
+#[test]
+fn a_block_can_be_generated_on_demand() {
+    let outline = outline();
+    let module = outline.modules.first().expect("module");
+
+    let surface = seed::surface_block(module);
+    assert!(surface.starts_with("```lgtm:surface module=MyApp.Accounts"));
+    assert!(surface.trim_end().ends_with("```"));
+
+    // Sorted by name within each group.
+    let rows: Vec<&str> = surface
+        .lines()
+        .filter(|l| l.contains(" : "))
+        .map(|l| l.trim().split('/').next().unwrap())
+        .collect();
+    let publics = &rows[..3];
+    let mut sorted = publics.to_vec();
+    sorted.sort();
+    assert_eq!(publics, &sorted[..], "sorted by name: {rows:?}");
+
+    // `/stats` needs the source and git as well as the outline.
+    let stats = seed::stats_block(module, FIXTURE, &FileHistory::default());
+    assert!(stats.starts_with("```lgtm:stats"));
+    assert!(stats.contains("lines: "));
+
+    // And deps, which the drawer reads to build its reaches list.
+    let deps = seed::deps_block(module);
+    assert!(deps.starts_with("```lgtm:deps module=MyApp.Accounts"));
+    assert!(deps.contains("MyApp.Repo"), "{deps}");
+}
+
+/// The surface order, pinned as a literal.
+///
+/// The explore drawer builds its surface from the live outline in TypeScript, so
+/// there are two sorters again — the exact situation that once produced
+/// `get_user_by_email/1, get_user!/1, get_user/1` in the renderer against
+/// `get_user/1, get_user!/1` in the seeder. `explore.ts` sorts by `(name, arity)`
+/// deliberately, and its probe pins **this same string**, so if either side
+/// changes its mind one of the two fails.
+#[test]
+fn the_surface_order_is_pinned_for_the_drawer_to_match() {
+    let outline = outline();
+    let module = outline.modules.first().expect("module");
+    // Bound, so the block outlives the slices borrowed out of it.
+    let block = seed::surface_block(module);
+    let rows: Vec<&str> = block
+        .lines()
+        .filter(|l| l.contains(" : "))
+        .map(|l| l.trim().split(" : ").next().unwrap().trim())
+        .collect();
+
+    assert_eq!(
+        rows,
+        ["create_user/1", "get_user/1", "get_user!/1", "changeset/2", "normalize/1"],
+        "public then private, each by (name, arity) — src/lib/explore.ts pins the same"
     );
 }

@@ -105,8 +105,11 @@ mockup/reading.html            scroll-driven reading, first cut
 mockup/authoring.html          read mode as shipped, plus the edge cases
 mockup/group.html              a reading across several files
 mockup/motion.html             the animation contract, replayable
+mockup/explore.html            the explore drawer: surface + reach beside the note
+mockup/files.html              ten mixed-kind files: the files modal, and the drawer per kind
 scripts/motion-audit.py        every animation vs its reduced-motion rule
 scripts/effect-audit.py        $effects that read and write the same $state
+scripts/component-audit.py     components imported but never rendered
 app-icon.png                   icon source (1024², RGBA); also copied to static/
 IMPLEMENTATION_PLAN.md         the reasoning behind every decision here
 README.md                      user-facing: clone, install, run, build
@@ -121,7 +124,8 @@ src/
       CodePane.svelte          source, line numbers, blame, focus, search, vim motions, font size
       DocPane.svelte           preview/edit/read, block styling, row wiring, treemap tooltip
       FontStepper.svelte       A− / A+, shared by both panes
-      FileStrip.svelte         the reading's files: switcher, state, removal
+      ExploreDrawer.svelte     what you navigate the current file by, per kind
+      FilesModal.svelte        ⌘⇧T — the reading's files: switch, add, remove
       FilePalette.svelte       ⌘T — find a file, or add one to the reading
       FnPalette.svelte         ⌘P — jump to a function by name
       RefMenu.svelte           / — insert a reference, from any file in the reading
@@ -132,10 +136,12 @@ src/
       theme.svelte.ts          ported from Alexandria; lgtm defaults to LIGHT
       focus.svelte.ts          which function is selected — shared by BOTH panes
       fontSize.svelte.ts       a remembered, clamped font size; one per pane
+    explore.ts                 what the drawer shows: surface rows, reach lines
     fileset.ts                 the reading's file set: which file owns what
     markdownit.ts              markdown-it + the lgtm:* fence renderers
     lgtmBlock.ts               parses the functions block (mirrors reconcile.rs)
     refs.ts                    references in prose, and which file each one means
+    slash.ts                   the `/` menu's grammar: commands and their arguments
     select.ts                  one signature → every span worth highlighting
     when.ts                    relative dates, shared so two views can't disagree
     treemap.ts                 parses + draws the treemap block
@@ -378,17 +384,21 @@ A block whose body is empty renders as a short "re-seed this doc, or write
 `FileKind` decides which blocks a doc gets, because the blocks that suit one
 shape say nothing about another:
 
-| Kind | Detected by | Blocks |
+| Kind | Detected by | What the drawer shows |
 |---|---|---|
-| `Module` | `defmodule` with `def`s | stats, surface, deps |
-| `Config` | `import Config` / any `config` call | stats, **settings** |
-| `Test` | `use …Case` in a module body | stats, **tests** |
-| `Plain` | anything else | stats only, plus a note saying why |
+| `Module` | `defmodule` with `def`s | **surface** + **reaches** |
+| `Config` | `import Config` / any `config` call | **settings**, grouped by app, env vs literal |
+| `Test` | `use …Case` in a module body | the **suite**, then its **describes** |
+| `Plain` | anything else | one line saying there is nothing to navigate by |
 
-The fallback is the point of the whole mechanism. A config file parsed as a
-module produces four empty blocks, and **an empty block reads as broken** — so
-`Plain` writes a title, the size, and one italic line explaining that nothing
-structural was recognised. No error, no empty boxes.
+**This table used to decide which blocks a doc got *seeded* with. Now it decides
+what you navigate a file by** — which is the job it was always describing. No kind
+seeds a block: every doc is a title, a summary and a blank page.
+
+The fallback is still the point of the whole mechanism. A config file parsed as a
+module has nothing to lay out, and **an empty panel reads as broken** — so `Plain`
+gets one line saying nothing structural was recognised, in the drawer *and* in the
+seeded note. No error, no empty boxes.
 
 `Config` is decided before the module walk (a config script has no modules at
 all); `Test` after, since a suite *is* a module, just one where surface, treemap
@@ -439,15 +449,134 @@ the same as "provides nothing"** — and the UI shows `+?` rather than guessing.
 `lgtm:stats` serving four file kinds is why it renders whatever keys the text
 carries instead of expecting a fixed set — one renderer, no per-kind variants.
 
-### The module blocks
+### The files modal replaced the tab strip
 
-A seeded module doc is **two generated blocks and a blank page**:
+`⌘⇧T`, or the file button in the app header. `FilesModal.svelte` — the Library
+idiom scoped to one reading: filter, `↑↓↵`, grouped by directory with sticky
+headers, `×` or `⌫` to remove with an inline confirm, and an **Add a file** row.
+
+The strip was cut on a measurement, not a preference: **ten filenames need about
+1200px of tabs and the left pane has about 750**, so three of ten were off-screen
+at exactly the size a real review is. Its whole job was "which files, and which am
+I in", and it stopped doing that job precisely when it mattered.
+
+What made it affordable to lose is that **navigation had already moved**: the
+note's references, and the drawer's reaches list. Switching file is no longer the
+main way you get around, so it can cost a keystroke.
+
+The header button is **136px, constant whatever the file count** — the filename,
+the count, and one dot for the current file's state. Hollow still means "your prose
+has not mentioned this", and the *earned* animation moved here with it: the moment
+your prose first names something in the file you are looking at, the dot fills and
+one ring leaves. `⌘T` adds a file, `⌘⇧T` manages the ones already in — the two
+halves of the same idea, paired on purpose.
+
+The state each row shows is said in **words** as well as a dot — *referenced in
+your note*, *not mentioned yet*, *changed on disk*. A strip had five pixels for
+that; a ten-row list has room to spell it out.
+
+### Navigation lives beside the note, not in it
+
+**A seeded module doc is a title, the moduledoc, and a blank page.** Not one
+fence. `a_seeded_module_doc_carries_no_blocks` pins it.
+
+Everything that used to be generated into it now lives in the **explore drawer**
+at the top of the right pane (`ExploreDrawer.svelte`), showing the surface and the
+reach of whatever file is on screen.
+
+That is not tidying. `lgtm:surface` and `lgtm:deps` are what you **navigate** by,
+and in the note they were pinned to a position in a narrative — so they only ever
+served the file the reading started from. Open a second file and it had none,
+which is exactly what made a multi-file reading uneven. Out in the drawer they
+follow the tab, so **every file behaves the same and nothing has to be seeded**.
+
+`lgtm:stats` left for a different reason and does *not* appear in the drawer: size
+and history are not consulted while navigating, they are context you want
+**recorded**. `/stats` puts them where your prose wants them, and they travel with
+the text into a PR comment.
+
+**The drawer is not a block.** It reads the live `Outline`; nothing in
+`explore.ts` parses a fence. A block in the note is a snapshot of what the code
+was when you read it; the drawer is what the code is *now*. Both are useful and
+they are not the same thing, so "the markdown IS the data" does not apply out
+there.
+
+**Which means there are two sorters again** — the exact situation that once gave
+`get_user_by_email/1, get_user!/1, get_user/1` in the renderer against
+`get_user/1, get_user!/1` in the seeder. `explore.ts` therefore sorts by
+`(name, arity)` explicitly, comparing the parts rather than `localeCompare` on the
+whole signature, and **both sides pin the same literal**:
+`the_surface_order_is_pinned_for_the_drawer_to_match` in Rust, and the same string
+in the `explore.ts` probe. If either changes its mind, one of the two fails.
+
+**The reaches list is the cross-file navigator**, and it is the best thing to come
+out of this. A call landing in a module that is *also* under review is a **jump**:
+one click switches tab and focuses that function, which is what following a flow
+across files actually means. Calls landing outside the reading say so — and that
+marks the edge of what you are reviewing, which is worth seeing.
+
+**Collapsed, the drawer is one 29px strip that still carries the counts.** That is
+what makes it affordable: leaving it shut while you write costs almost nothing and
+you are still oriented. `⌥⇥` toggles it — not a `⌘` binding, because it is a panel
+rather than an action and the `⌘` row is already dense.
+
+**The height stops depending on the size of the file.** Each surface column
+scrolls internally, so a 65-function module costs exactly what a 3-function one
+does. Measured: three sections came to 320px, two come to 269, and the note keeps
+a 140px floor whatever the grip does — the grip's own 5px counts against that
+budget, which the first version of the clamp forgot.
+
+**Hidden in read mode.** `DocPane` reports the mode with `onreading` rather than
+sharing it, because the pane owns it and two owners would eventually disagree with
+the button. Read mode is being walked *through* something; a reference panel above
+it is noise.
+
+**A named setup's keys are unknown, and that is not the same as none.** A test
+starts from module `setup_all` + module `setup` + its describe's `setup`, and a
+*named* callback (`setup :put_user`) is defined elsewhere in the file — so its keys
+cannot be read from the describe. `testsOf` therefore returns the keys it **can**
+see plus a separate `unknown` flag, and the drawer shows `:user +?`: here is what
+I know, and there is more. An earlier version collapsed the whole list to null the
+moment anything was unreadable, which threw away the keys it *had* found — and it
+got the condition backwards as well, treating a named callback as readable. The
+probe caught both.
+
+The blocks themselves are untouched — all five still render, `lgtm:functions`
+still reconciles, and `/` inserts any of them. What changed is that **nothing puts
+one in your note but you**.
+
+### What a seeded module doc actually is
 
 ````markdown
 # MyApp.Accounts
 
 > Reads and writes for the `users` table.
 
+## Explain
+
+_The code is on the left — write what you make of it here. Press `/` while
+editing to reference any function in this reading; once your prose names one,
+`▷ Read` will walk the code in the order you wrote it._
+````
+
+That is the whole thing. One heading, and an invitation under it.
+`a_seeded_module_doc_carries_no_blocks` pins that there is not a single fence.
+
+### The blocks, when you ask for one
+
+`/stats`, `/surface`, `/deps`, `/treemap` — for the file you are looking at, or
+`/surface impact_stage.ex` for any other file in the reading. Generated by
+`block_for` in `commands/docs.rs`, which is in Rust even though the frontend holds
+the outline: **the block's order has to come from one place**, and surface was once
+generated in both `seed.rs` and the renderer and they disagreed.
+
+`stats` is the only one needing more than the outline — the line counts come from
+the source and the history from git, so it re-reads both rather than trusting
+numbers the frontend happens to be holding.
+
+What each one writes:
+
+````markdown
 ```lgtm:stats
 lines: 42
 code: 33
@@ -459,8 +588,6 @@ created: 2025-02-14
 updated: 2026-08-10
 ```
 
-## Surface
-
 ```lgtm:surface module=MyApp.Accounts
 public:
   create_user/1 : 12
@@ -469,28 +596,32 @@ private:
   normalize/1   : 30 2 clauses
 ```
 
-## Reach
-
 ```lgtm:deps module=MyApp.Accounts
   MyApp.Repo : app
     insert/1 : create_user/1
     get/2    : get_user/1
 ```
-
-## Explain
-
-_The code is on the left — write what you make of it here. Press `/` while
-editing to reference any function in this reading; once your prose names one,
-`▷ Read` will walk the code in the order you wrote it._
 ````
 
-Seed order is **stats → surface → deps**, under the headings *(none)* → Surface →
-Reach → Explain: how big is this, what's in it, what does it touch, and then get
-out of the way. `lgtm:deps` is omitted entirely when a module reaches nothing.
-Pinned exactly by `a_seeded_module_doc_has_exactly_these_sections`.
+**The space is the interesting part.** The menu closes on whitespace, and has to:
+a bare `/` followed by a space is a slash in ordinary prose and must stay one. So
+the rule became *a space is an argument separator only once a command name
+matches* — which keeps the protection and buys the argument. `stillOpen` in
+`slash.ts` owns it, shared between `DocPane` deciding whether to stay open and
+`RefMenu` deciding what to show, or the two would disagree about what is still a
+live query. A command needs **two** characters before it matches, so `/s` still
+filters functions on the way to `/smembers`.
 
-The directory comes **before** the picture on purpose: names are what you orient
-by, and the reach diagram reads better once you already know what the names are.
+Naming a file **replaces** the function list rather than appending to it — you are
+choosing a target, not a reference, and showing both would be two menus in one.
+Only files with a module are offered, since `block_for` would refuse a config
+script and offering something that fails is worse than not offering it. The
+directory is shown beside a filename **only when two files in the reading share
+it** — three pipelines each with a `config.ex` is the normal case, and this is the
+one place lgtm lets you choose between them by hand.
+
+Insert one where you want it, delete it when you don't. That is the whole point of
+not seeding them: a block you asked for beats three you scroll past.
 
 **Two blocks are renderable, reconcilable and deliberately not seeded.** Both were
 seeded once and both were cut for the same reason — a generated section above the
@@ -682,7 +813,7 @@ Each animation carries information rather than decorating:
   16ms in CSS, and **capped at row 12** — 200 functions would otherwise cascade
   for 3.4s, and waiting on an animation to look a name up is worse than no
   animation. Both columns share the index so they arrive together.
-- **The dot earns its colour.** `FileStrip` diffs `referenced` against the
+- **The dot earns its colour.** The file button diffs `referenced` against the
   previous set, so this fires on the *transition* rather than the state — and the
   first paint of an already-written note is seeded silently, because that is not
   an achievement. A state change you caused is the one place a small reward is
@@ -762,6 +893,25 @@ it is suppressed while blame or a search is active — see `dimming` in
 where you are; it just stops hiding the author colours or the matches you asked
 for. Without this, turning on blame with a function selected leaves 68% of the
 authors invisible.
+
+### The two mode toggles are keys as well as buttons
+
+`⌘R` for read mode and `⌘E` for edit/preview. Both live in `DocPane` as exported
+functions the shell calls, rather than a second keydown listener inside the pane —
+the shell already owns the window's handler for `⌘T`, `⌘K` and the rest, and two
+listeners would eventually disagree with the buttons about which mode is on.
+
+`⌘R` is `preventDefault`ed before anything else can see it: in a dev build it
+would reload the webview.
+
+`toggleEdit` leaves read mode on the way in, because scroll-driven selection while
+you type is chaos — the same rule the Edit button already followed.
+
+Adding them exposed the real problem, which was the status bar. It advertised
+`j k gg G vim`, which tells anyone who does not think of themselves as a vim user
+to skip the line — while `↑`/`↓` for the review cursor and `⌘T` to add a file were
+only mentioned inside `?`. It now reads
+`↑↓ lines · [ ] fns · / find · ⌘T add a file · ⌘R read · ⌘E edit · ? help`.
 
 ### Lists are rows
 
@@ -930,6 +1080,14 @@ under a `processor/` directory outranks `processor.ex` itself. Substring first,
 then subsequence over the whole relative path, so `myacc` finds
 `my_app/accounts.ex`.
 
+`⌘O` opens the same palette as `⌘T`. It is the muscle memory for "open", and what
+you almost always want to open is a file in the project you are already in — so
+the system picker moved to `⌘⇧O`, for the rarer case of a file outside it. Two keys
+for one action is deliberate: `⌘T` is advertised in the status bar as "add a file",
+`⌘O` is what fingers reach for, and neither being wrong is worth more than the
+saved binding. Comparing `e.key` **lowercased** matters — `⇧O` arrives as `"O"`,
+so the old `=== "o"` meant the shifted form silently did nothing.
+
 `⌘T` also absorbed `⌘L`: if what you have typed looks like a path rather than a
 search, `↵` opens it directly. A path from a stack trace is often outside the
 project, and two near-identical dialogs for "open a file by naming it" was one
@@ -1073,6 +1231,21 @@ than patching it — the same one-payload habit as `open_file`. The one thing th
 frontend must *not* adopt is the markdown: an autosave may be in flight, and
 taking the server's copy would lose the sentence you are mid-way through. Every
 call site saves `markdown` and puts it back.
+
+**An imported component must actually be rendered.** `HelpModal` was imported,
+`showHelp` was toggled by `?` and by two buttons, and the `{#if showHelp}` block
+had been dropped in an unrelated rewire of the shell markup — so `?` did nothing
+at all for **five commits**, until someone went looking for a shortcut and could
+not find the list.
+
+Nothing catches this on its own. The import is a valid binding, the state is real,
+the buttons that set it type-check, and `pnpm check` is clean: everything is
+correct except that nothing mounts. A feature wired end to end and unreachable
+looks exactly like a feature that works, right up to the moment you use it.
+
+```bash
+python3 scripts/component-audit.py   # exits non-zero on an unrendered import
+```
 
 **An `$effect` must never read and write the same `$state`.** The write
 re-triggers the effect, which writes again — the main thread is pinned and the

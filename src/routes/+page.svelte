@@ -7,7 +7,8 @@
   import FnPalette from "$lib/components/FnPalette.svelte";
   import HelpModal from "$lib/components/HelpModal.svelte";
   import FilePalette from "$lib/components/FilePalette.svelte";
-  import FileStrip from "$lib/components/FileStrip.svelte";
+  import FilesModal from "$lib/components/FilesModal.svelte";
+  import ExploreDrawer from "$lib/components/ExploreDrawer.svelte";
   import { byPath, origin as originOf } from "$lib/fileset";
   import { displaySig, locate } from "$lib/select";
   import { when } from "$lib/when";
@@ -29,6 +30,21 @@
   let doc = $state<Doc | null>(null);
   /** Paths the prose actually references — the strip's hollow-dot signal. */
   let referenced = $state<Set<string>>(new Set());
+  /** The doc pane instance, so ⌘R and ⌘E can reach its mode toggles. */
+  let docPane = $state<DocPane | null>(null);
+  /**
+   * The explore drawer: surface and reach for the file on screen.
+   *
+   * Its state lives here rather than in the component so it survives a file
+   * switch — collapsing it once should stay collapsed as you move through the
+   * reading, not reset on every tab.
+   */
+  let exploreOpen = $state(true);
+  let exploreHeight = $state(270);
+  /** Read mode takes the whole pane; the drawer stands down. */
+  let readingNow = $state(false);
+  /** ⌘⇧T — the reading's own files: switch, add, remove. */
+  let showReadingFiles = $state(false);
   /**
    * Bumped when a *different* reading opens — the doc pane's cue to play its
    * arrival animations once.
@@ -97,6 +113,47 @@
    */
   const stale = $derived(!!origin?.stale);
   const currentStale = $derived(!!file && !file.origin && (file.stale || file.missing));
+  /**
+   * The dot on the file button: the state of the file you are in.
+   *
+   * Hollow means your prose has not mentioned it — the same nudge an unwritten
+   * Explain section is, and the one signal the tab strip was carrying that the
+   * button has to keep.
+   */
+  const fileState = $derived(
+    !file ? "" : file.missing || file.stale ? "stale" : referenced.has(file.path) ? "" : "unread",
+  );
+
+  /**
+   * The dot earns its colour: it fills, and one ring leaves.
+   *
+   * A hollow dot means "you opened this and never wrote about it", and the moment
+   * your prose first names something in the file that stops being true. A state
+   * change *you* caused is the one place a small reward is honest — and it moved
+   * here from the tab strip along with everything else the strip was carrying.
+   *
+   * `seenRefs` is **not** `$state`: an effect that reads and writes the same
+   * reactive value re-triggers itself forever, which froze the whole window once
+   * already. Read reactive state or write it, never both.
+   */
+  let seenRefs: Set<string> | null = null;
+  let earnTimer: ReturnType<typeof setTimeout> | null = null;
+  let earnedPath = $state<string | null>(null);
+
+  $effect(() => {
+    const now = referenced; // the only reactive read in here
+    const before = seenRefs;
+    seenRefs = new Set(now);
+    // First paint of an already-written note is not an achievement.
+    if (before === null) return;
+
+    const fresh = [...now].filter((p) => !before.has(p));
+    if (!fresh.length) return;
+
+    earnedPath = fresh[0];
+    if (earnTimer) clearTimeout(earnTimer);
+    earnTimer = setTimeout(() => (earnedPath = null), 900);
+  });
   const moduleCount = $derived(outline?.modules?.length ?? 0);
 
   /**
@@ -126,6 +183,28 @@
   async function switchTo(path: string) {
     focus.clear();
     await showFile(path);
+  }
+
+  /**
+   * Follow a call from the drawer into another file of the reading.
+   *
+   * Switch first, then select — a span means nothing over the wrong source. This
+   * is the one gesture that makes a multi-file reading feel like one thing rather
+   * than several files open at once.
+   */
+  async function jumpTo(path: string, line: number) {
+    await showFile(path);
+    const f = byPath(files, path);
+    const fn = f?.outline?.modules?.[0]?.functions.find((x) => x.line === line);
+    if (fn) selectFunction(fn);
+    else focus.gotoLine(line, (f?.source.split("\n").length ?? line) || line);
+  }
+
+  /** Pick something in the drawer's surface: focus it in the code beside it. */
+  function selectFromDrawer(sig: string, line: number) {
+    const at = locate(sig, outline?.modules?.[0] ?? null);
+    if (at) focus.select(sig, at.ranges, at.related, at.spec, at.doc);
+    else focus.gotoLine(line, file?.source.split("\n").length ?? line);
   }
 
   /** The pre-doc moment still has to feed the code pane, so it gets one entry. */
@@ -515,7 +594,8 @@
     const meta = e.metaKey || e.ctrlKey;
 
     if (e.key === "Escape") {
-      if (showHelp) showHelp = false;
+      if (showReadingFiles) showReadingFiles = false;
+      else if (showHelp) showHelp = false;
       else if (showPalette) showPalette = false;
       else if (showFiles) showFiles = false;
       else if (showLibrary) showLibrary = false;
@@ -523,27 +603,60 @@
       return;
     }
 
-    if (meta && e.key === "o") {
+    // ⌘O is the muscle memory for "open", so it opens the thing you almost always
+    // want: search the folder you are already in. The system picker is for the
+    // rarer case of a file outside the project, and keeps ⇧.
+    //
+    // Every one of these compares `e.key` LOWERCASED. `⇧O` arrives as "O", so a
+    // bare `=== "o"` meant the shifted form silently did nothing — and the same
+    // is true of every shortcut here with Caps Lock on.
+    if (meta && e.key.toLowerCase() === "o") {
       e.preventDefault();
-      pickFile();
+      if (e.shiftKey) pickFile();
+      else showFiles = true;
       return;
     }
-    if (meta && e.key === "s") {
+    if (meta && e.key.toLowerCase() === "s") {
       e.preventDefault();
       save();
       return;
     }
-    if (meta && e.key === "k") {
+    if (meta && e.key.toLowerCase() === "k") {
       e.preventDefault();
       showLibrary = !showLibrary;
       return;
     }
-    if (meta && e.key === "t") {
+    if (meta && e.key.toLowerCase() === "t") {
       e.preventDefault();
-      showFiles = !showFiles;
+      // ⌘T adds a file to the reading; ⇧ manages the ones already in it. Paired
+      // on purpose — they are the two halves of "the files of this review".
+      if (e.shiftKey) {
+        if (doc) showReadingFiles = !showReadingFiles;
+      } else {
+        showFiles = !showFiles;
+      }
       return;
     }
-    if (meta && e.key === "p") {
+    // ⌘R would reload the webview in a dev build, so it is prevented before
+    // anything else can act on it.
+    if (meta && e.key.toLowerCase() === "r") {
+      e.preventDefault();
+      docPane?.toggleRead();
+      return;
+    }
+    // ⌥⇥ collapses the drawer. Not ⌘-anything: it is a panel, not an action, and
+    // the ⌘ row is already dense.
+    if (e.altKey && e.key === "Tab" && doc) {
+      e.preventDefault();
+      exploreOpen = !exploreOpen;
+      return;
+    }
+    if (meta && e.key.toLowerCase() === "e") {
+      e.preventDefault();
+      docPane?.toggleEdit();
+      return;
+    }
+    if (meta && e.key.toLowerCase() === "p") {
       e.preventDefault();
       if (outline?.modules?.[0]?.functions.length) showPalette = !showPalette;
       return;
@@ -597,8 +710,24 @@
       {#if file.branch}
         <span class="branch" title="Branch, read from .git/HEAD">⑂ {file.branch}</span>
       {/if}
-      {#if files.length > 1}
-        <span class="count" title="Files in this reading">{files.length} files</span>
+      {#if doc}
+        <!-- One button instead of a strip of tabs. Ten filenames need about
+             1200px of tabs and the pane has about 750 — three of ten were
+             off-screen at exactly the size a real review is. What made the strip
+             affordable to lose is that navigation moved to the note's references
+             and the drawer's reaches list. -->
+        <button
+          class="filebtn"
+          onclick={() => (showReadingFiles = true)}
+          title="Files in this reading (⌘⇧T)"
+        >
+          <i class={fileState} class:earned={earnedPath === file?.path}></i>
+          <span>{file?.filename ?? ""}</span>
+          {#if files.length > 1}
+            <span class="n">{files.length} files</span>
+          {/if}
+          <span class="caret">▾</span>
+        </button>
       {/if}
 
       <span class="spacer"></span>
@@ -633,9 +762,9 @@
       <p>Open an Elixir file. The source goes left, your explanation goes right.</p>
       <div class="actions">
         <button class="btn primary" onclick={() => (showFiles = true)}>
-          Find a file… <kbd>⌘T</kbd>
+          Find a file… <kbd>⌘O</kbd><kbd>⌘T</kbd>
         </button>
-        <button class="btn" onclick={pickFile}>Open a file… <kbd>⌘O</kbd></button>
+        <button class="btn" onclick={pickFile}>Anywhere on disk… <kbd>⌘⇧O</kbd></button>
         <button class="btn" onclick={() => (showLibrary = true)}>Library <kbd>⌘K</kbd></button>
         <button class="btn" onclick={() => (showHelp = true)}>What it does <kbd>?</kbd></button>
       </div>
@@ -674,19 +803,6 @@
   {:else}
     <div class="split">
       <div class="pane" style:flex="0 0 {basis}%">
-        <!-- The strip only earns its row once there is more than one file: a
-             single-file reading should look exactly as it always did. -->
-        {#if doc && files.length > 1}
-          <FileStrip
-            {files}
-            current={currentPath}
-            {referenced}
-            onswitch={switchTo}
-            onremove={removeFile}
-            onadd={() => (showFiles = true)}
-          />
-        {/if}
-
         {#if currentStale}
           <!-- Only for a file that joined the reading later. The origin's
                staleness is the note's business, and DocPane offers the richer
@@ -716,7 +832,11 @@
               path={file.path}
               hasGit={file.hasGit}
               {outline}
-              keysEnabled={!showLibrary && !showFiles && !showPalette && !showHelp}
+              keysEnabled={!showLibrary &&
+                !showFiles &&
+                !showReadingFiles &&
+                !showPalette &&
+                !showHelp}
             />
           {/key}
           {#if swapped}
@@ -728,6 +848,21 @@
       <Divider bind:basis />
 
       <div class="pane grow">
+        <!-- Surface and reach for whatever file is on screen. Hidden in read
+             mode, and while the chooser is up — neither is a moment for
+             navigating. -->
+        {#if doc && !chooser && !readingNow && outline?.kind === "module"}
+          <ExploreDrawer
+            {file}
+            {files}
+            bind:open={exploreOpen}
+            bind:height={exploreHeight}
+            selected={focus.sig}
+            onselect={selectFromDrawer}
+            onjump={jumpTo}
+          />
+        {/if}
+
         {#if chooser}
           <div class="chooser">
             <h2>This file is already part of a reading</h2>
@@ -745,6 +880,7 @@
           </div>
         {:else}
           <DocPane
+            bind:this={docPane}
             bind:markdown
             {files}
             current={currentPath}
@@ -755,6 +891,7 @@
             {opened}
             onshowfile={showFile}
             onrefs={(paths) => (referenced = paths)}
+            onreading={(on) => (readingNow = on)}
           />
         {/if}
       </div>
@@ -783,8 +920,9 @@
       <span class="spacer"></span>
       {#if outline?.modules?.[0]?.functions.length}
         <span class="keys">
-          <kbd>/</kbd> find · <kbd>⌘P</kbd> jump · <kbd>[</kbd><kbd>]</kbd> fns ·
-          <kbd>j</kbd><kbd>k</kbd><kbd>gg</kbd><kbd>G</kbd> vim · <kbd>?</kbd> help
+          <kbd>↑</kbd><kbd>↓</kbd> lines · <kbd>[</kbd><kbd>]</kbd> fns ·
+          <kbd>/</kbd> find · <kbd>⌥⇥</kbd> explore · <kbd>⌘⇧T</kbd> files ·
+          <kbd>⌘R</kbd> read · <kbd>⌘E</kbd> edit · <kbd>?</kbd> help
         </span>
       {/if}
       {#if doc}
@@ -824,6 +962,28 @@
       }}
       onclose={() => (showPalette = false)}
     />
+  {/if}
+
+  {#if showReadingFiles && doc}
+    <FilesModal
+      {files}
+      current={currentPath}
+      {referenced}
+      onpick={(p) => {
+        showReadingFiles = false;
+        switchTo(p);
+      }}
+      onremove={(p) => removeFile(p)}
+      onadd={() => {
+        showReadingFiles = false;
+        showFiles = true;
+      }}
+      onclose={() => (showReadingFiles = false)}
+    />
+  {/if}
+
+  {#if showHelp}
+    <HelpModal onclose={() => (showHelp = false)} />
   {/if}
 
   {#if showLibrary}
@@ -878,11 +1038,93 @@
   .home {
     flex: none;
   }
-  .count {
-    font-size: 10.5px;
+  /* The file you are in, and the way to the rest — 136px, constant whatever the
+     file count. */
+  .filebtn {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 3px 9px;
+    font: inherit;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--fg);
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+  }
+  .filebtn:hover {
+    border-color: var(--accent);
+  }
+  .filebtn i {
+    width: 5px;
+    height: 5px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--pub);
+  }
+  .filebtn i.stale {
+    background: var(--priv);
+  }
+  .filebtn i.unread {
+    background: transparent;
+    box-shadow: inset 0 0 0 1.5px var(--fg-faint);
+  }
+  .filebtn .n {
+    font-family: var(--sans);
+    font-size: 9.5px;
     color: var(--fg-faint);
     border-left: 1px solid var(--line);
-    padding-left: 10px;
+    padding-left: 7px;
+  }
+  .filebtn .caret {
+    font-size: 8px;
+    color: var(--fg-faint);
+  }
+  /* Earned: the dot fills and one ring leaves. Once — this marks a thing that
+     just became true, not a state that keeps being true. */
+  .filebtn i.earned {
+    position: relative;
+    background: var(--pub);
+    box-shadow: none;
+    animation: fill var(--fast) var(--ease) both;
+  }
+  .filebtn i.earned::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    border: 1.5px solid var(--pub);
+    animation: dotring var(--ring) var(--ease) both;
+  }
+  @keyframes fill {
+    from {
+      transform: scale(0.4);
+    }
+    to {
+      transform: scale(1);
+    }
+  }
+  @keyframes dotring {
+    0% {
+      opacity: 0.9;
+      transform: scale(0.6);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(1.9);
+    }
+  }
+  /* Motion off: the dot is simply green, which was always the actual message. */
+  @media (prefers-reduced-motion: reduce) {
+    .filebtn i.earned {
+      animation: none;
+    }
+    .filebtn i.earned::after {
+      display: none;
+    }
   }
 
   /* The left pane's own column: strip, note, then the code. */

@@ -239,6 +239,18 @@ export const reconcileDoc = (id: number, outline: Outline, source: string) =>
 
 export const openReading = (id: number) => invoke<Reading>("open_reading", { id });
 
+/**
+ * Generate one `lgtm:*` block for an already-parsed file.
+ *
+ * Round-trips to Rust even though the outline is already here, because the sort
+ * order must live in exactly one place — see `block_for`.
+ */
+export const blockFor = (
+  kind: "stats" | "surface" | "deps" | "treemap",
+  path: string,
+  outline: Outline,
+) => invoke<string>("block_for", { kind, path, outline });
+
 /** Adding a file seeds nothing. It contributes source, and vocabulary. */
 export const addDocFile = (id: number, path: string) =>
   invoke<Reading>("add_doc_file", { id, path });

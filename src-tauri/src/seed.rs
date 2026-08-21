@@ -63,40 +63,31 @@ pub fn seed_markdown(
         _ => out.push_str("> _one-line summary…_\n\n"),
     }
 
-    // How big is this, what is in it, what does it touch — and only then the
-    // block you write in. The directory comes before the picture: names are what
-    // you orient by, and the reach diagram reads better once you already know
-    // what the names are.
+    // **A module doc is a title, a summary and a blank page.** Nothing is
+    // generated into it.
     //
-    // No `lgtm:treemap`. It is still a block — `treemap_block` below writes one
-    // and the renderer draws it — but it is not seeded. Function sizes answer a
-    // question you ask *occasionally* ("is anything in here disproportionate?"),
-    // and a generated section you scroll past every time is not paying for the
-    // space it takes above the part you actually write in.
-    out.push_str(&stats_block(module, source, history));
-    out.push('\n');
-
-    out.push_str("## Surface\n\n");
-    out.push_str(&surface_block(module));
-    out.push('\n');
-
-    if !module.deps.is_empty() {
-        out.push_str("## Reach\n\n");
-        out.push_str(&deps_block(module));
-        out.push('\n');
-    }
-
-    // No `lgtm:functions` either. It was a second listing of the same names the
-    // surface block already gives you, and its one unique offering — a prose slot
-    // per function — turned out to be the wrong shape: an explanation follows the
-    // path through a module, not its alphabetical index. So Explain is now just a
-    // heading and a blank page.
+    // Every block that used to be here now lives in the explore drawer beside the
+    // note, for whichever file is open: `lgtm:surface` and `lgtm:deps` are what
+    // you *navigate* by, and navigation belongs next to the code, not pinned to a
+    // position in a narrative. That is what made a multi-file reading uneven —
+    // only the file the reading started from had them.
+    //
+    // `lgtm:stats` went for a different reason: size and history are not
+    // consulted while navigating, they are context you want *recorded*. `/stats`
+    // puts them where your prose wants them, and they travel with the text.
+    //
+    // All five blocks stay renderable and reconcilable; `/` inserts any of them
+    // when your explanation deliberately wants one. See `block_for`.
     out.push_str("## Explain\n\n");
     out.push_str(NOTES_INVITE);
     out
 }
 
 /// What the Explain section says on a doc nobody has written in yet.
+///
+/// It is now the *only* thing a module doc is seeded with, besides the title and
+/// the moduledoc — so it carries more weight than it did, and names the two keys
+/// that turn an empty note into a reading.
 ///
 /// It used to be a generated list of every private helper, each an inline
 /// reference — which existed so `▷ Read` did something on a file you had not
@@ -113,62 +104,43 @@ const NOTES_INVITE: &str = "_The code is on the left — write what you make of 
      Press `/` while editing to reference any function in this reading; once your prose \
      names one, `▷ Read` will walk the code in the order you wrote it._\n";
 
-/// A config script. No functions, so no surface, treemap or reach — those
-/// blocks would all be empty, and an empty block reads as broken.
+/// A config script. Like every other kind, it is seeded with a title and a blank
+/// page: `lgtm:settings` is what you *navigate* a config by, and navigation lives
+/// in the explore drawer beside the code.
 fn seed_config(
-    outline: &Outline,
-    source: &str,
-    history: &FileHistory,
+    _outline: &Outline,
+    _source: &str,
+    _history: &FileHistory,
     filename: &str,
 ) -> String {
-    let config = outline.config.clone().unwrap_or_default();
     let title = if filename.is_empty() { "Configuration" } else { filename };
     let mut out = format!("# {title}\n\n> _what does this file configure?_\n\n");
-
-    out.push_str(&config_stats_block(&config, source, history));
-    out.push('\n');
-    out.push_str("## Settings\n\n");
-    out.push_str(&settings_block(&config, filename));
-    out.push_str("\n## Explain\n\n");
+    out.push_str("## Explain\n\n");
     out.push_str(PLAIN_INVITE);
     out
 }
 
-/// A test suite. Its structure is describes, setups and tests — none of which a
-/// plain module has, and none of the module blocks say anything about it.
-fn seed_test(outline: &Outline, source: &str, history: &FileHistory) -> String {
+/// A test suite. Its structure — describes, setups, assertion counts — is in the
+/// drawer, which is where you read it from. Nothing about it is seeded.
+fn seed_test(outline: &Outline, _source: &str, _history: &FileHistory) -> String {
     let tests = outline.tests.clone().unwrap_or_default();
     let mut out = format!("# {}\n\n> _what does this suite cover?_\n\n", tests.module);
-
-    out.push_str(&test_stats_block(&tests, source, history));
-    out.push('\n');
-    out.push_str("## Tests\n\n");
-    out.push_str(&tests_block(&tests));
-    out.push_str("\n## Explain\n\n");
+    out.push_str("## Explain\n\n");
     out.push_str(PLAIN_INVITE);
     out
 }
 
 /// Anything else — a script, a one-off `.exs`, a file that didn't parse. A
 /// title, the size, and a blank page. No blocks, and above all no error.
-fn seed_plain(source: &str, history: &FileHistory, filename: &str) -> String {
+fn seed_plain(_source: &str, _history: &FileHistory, filename: &str) -> String {
     let title = if filename.is_empty() { "Untitled" } else { filename };
     let mut out = format!("# {title}\n\n> _what is this file for?_\n\n");
-    out.push_str(&stats_lines(
-        &[
-            ("lines", source.lines().count().to_string()),
-            (
-                "code",
-                source.lines().filter(|l| !l.trim().is_empty()).count().to_string(),
-            ),
-        ],
-        history,
-    ));
-    // Say why there are no blocks, so their absence reads as a fact about the
-    // file rather than as something broken.
+    // Say *why* there is nothing, so the absence reads as a fact about the file
+    // rather than as something broken. This is the whole point of the `Plain`
+    // kind, and the one sentence still worth seeding.
     out.push_str(
-        "\n_No module, config or test suite recognised in this file — nothing structural to \
-         show. The code is on the left; write whatever you need here._\n",
+        "_No module, config or test suite recognised in this file — so there is nothing to \
+         navigate by, and the drawer stays quiet. The code is on the left._\n",
     );
     out.push_str("\n## Explain\n\n");
     out.push_str(PLAIN_INVITE);
@@ -201,7 +173,7 @@ fn stats_lines(rows: &[(&str, String)], history: &FileHistory) -> String {
     out
 }
 
-fn config_stats_block(config: &ConfigInfo, source: &str, history: &FileHistory) -> String {
+pub fn config_stats_block(config: &ConfigInfo, source: &str, history: &FileHistory) -> String {
     let all: Vec<_> = config.groups.iter().flat_map(|g| &g.settings).collect();
     let env = all
         .iter()
@@ -231,7 +203,7 @@ fn config_stats_block(config: &ConfigInfo, source: &str, history: &FileHistory) 
     stats_lines(&rows, history)
 }
 
-fn test_stats_block(tests: &TestInfo, source: &str, history: &FileHistory) -> String {
+pub fn test_stats_block(tests: &TestInfo, source: &str, history: &FileHistory) -> String {
     let all: Vec<_> = tests.describes.iter().flat_map(|d| &d.tests).collect();
     let asserts: u32 = all.iter().map(|t| t.asserts).sum();
     let named = tests.describes.iter().filter(|d| d.name.is_some()).count();
@@ -583,6 +555,23 @@ end
             .to_string()
     }
 
+    /// The sample's module, for the tests that are about a generator rather than
+    /// about what gets seeded. Nothing but `lgtm:functions` is seeded any more —
+    /// surface and deps moved to the explore drawer, stats to `/stats` — so every
+    /// block test drives its generator directly.
+    fn sample_module() -> crate::parse::ModuleInfo {
+        elixir::parse(SAMPLE).expect("parse").modules.into_iter().next().expect("module")
+    }
+
+    fn history() -> FileHistory {
+        FileHistory {
+            commits: 3,
+            authors: vec!["Carlo Padilla".into(), "Jane Rivera".into()],
+            first: Some("2025-02-14T09:00:00+00:00".into()),
+            last: Some("2026-08-10T09:00:00+00:00".into()),
+        }
+    }
+
     /// The generated table, for the tests that are about the table itself.
     fn table() -> String {
         let outline = elixir::parse(SAMPLE).expect("parse");
@@ -612,13 +601,15 @@ end
 
     /// The surface block is the only listing now, and it still splits by
     /// visibility with public first.
+    /// The surface block still splits by visibility, public first — it is just
+    /// rendered in the drawer now rather than seeded into the note.
     #[test]
     fn groups_public_and_private() {
-        let md = seeded();
-        let pub_at = md.find("public:").expect("public group");
-        let priv_at = md.find("private:").expect("private group");
+        let block = surface_block(&sample_module());
+        let pub_at = block.find("public:").expect("public group");
+        let priv_at = block.find("private:").expect("private group");
         assert!(pub_at < priv_at, "public comes first");
-        assert!(md.contains("normalize/1"), "privates are listed:\n{md}");
+        assert!(block.contains("normalize/1"), "privates are listed:\n{block}");
     }
 
     #[test]
@@ -636,33 +627,47 @@ end
 
     #[test]
     fn renders_default_arguments_as_a_range() {
-        assert!(seeded().contains("search/1..2"));
+        assert!(surface_block(&sample_module()).contains("search/1..2"));
     }
 
+    /// **A seeded module doc has no blocks at all.** A title, the moduledoc as a
+    /// blockquote, and an invitation to write — everything else is either in the
+    /// drawer or one `/` away.
     #[test]
-    fn is_a_well_formed_fence() {
-        // stats and surface. The sample reaches nothing outside itself so deps is
-        // absent, and neither the treemap nor the functions table is seeded.
-        assert_eq!(seeded().matches("```").count(), 4, "every block opened and closed");
-        assert!(table().contains("create_user/1"), "the generator still writes one");
+    fn a_seeded_module_doc_carries_no_blocks() {
+        let md = seeded();
+        assert_eq!(md.matches("```").count(), 0, "no fences:\n{md}");
+        for absent in ["lgtm:stats", "lgtm:surface", "lgtm:deps", "lgtm:treemap", "lgtm:functions"] {
+            assert!(!md.contains(absent), "{absent} is not seeded:\n{md}");
+        }
+        // And every generator still writes one when asked.
+        assert!(table().contains("create_user/1"));
+        assert!(surface_block(&sample_module()).starts_with("```lgtm:surface"));
+        assert!(stats_block(&sample_module(), SAMPLE, &history()).starts_with("```lgtm:stats"));
     }
 
     /// Facts, then the directory, then a blank page. Two blocks, and everything
     /// after them is yours.
+    /// What is left: a title, the moduledoc, and where you write.
     #[test]
-    fn seeds_the_facts_then_the_directory_then_gets_out_of_the_way() {
+    fn a_module_doc_is_a_title_a_summary_and_a_blank_page() {
         let md = seeded();
-        assert!(md.find("lgtm:stats").unwrap() < md.find("lgtm:surface").unwrap());
-        assert!(md.find("lgtm:surface").unwrap() < md.find("## Explain").unwrap());
-        for absent in ["lgtm:treemap", "lgtm:functions"] {
-            assert!(!md.contains(absent), "{absent} is not seeded:\n{md}");
-        }
+        assert!(md.starts_with("# MyApp.Accounts\n"));
+        assert!(md.contains("> Reads and writes for the users table."));
+        assert!(md.contains("## Explain"));
+        assert!(md.contains("write what you make of it here"));
+        // Nothing between the summary and the invitation — the slice starts after
+        // the summary text, not at it.
+        const SUMMARY: &str = "users table.";
+        let from = md.find(SUMMARY).unwrap() + SUMMARY.len();
+        let between = &md[from..md.find("## Explain").unwrap()];
+        assert!(between.trim().is_empty(), "nothing seeded between:\n{between:?}");
     }
 
     #[test]
     fn the_surface_block_is_a_directory_sorted_by_name() {
-        let md = seeded();
-        let block = md
+        let full = surface_block(&sample_module());
+        let block = full
             .split("```lgtm:surface")
             .nth(1)
             .and_then(|b| b.split("```").next())
@@ -717,8 +722,9 @@ end
   defp normalize(a), do: Changeset.cast(a, %{}, [])
 end
 "#;
-        let md = seed_markdown(&elixir::parse(src).unwrap(), src, &FileHistory::default(), "accounts.ex");
-        let block = md
+        let module = elixir::parse(src).unwrap().modules.into_iter().next().unwrap();
+        let full = deps_block(&module);
+        let block = full
             .split("```lgtm:deps")
             .nth(1)
             .and_then(|b| b.split("```").next())
@@ -748,9 +754,11 @@ end
         assert!(seed_markdown(&outline, "x = 1\n", &FileHistory::default(), "").starts_with("# Untitled"));
     }
 
+    /// `/stats` writes this into the note on request. Not seeded — size and
+    /// history are context you want recorded, not something you navigate by.
     #[test]
     fn the_stats_block_carries_its_numbers_as_text() {
-        let md = seeded();
+        let md = stats_block(&sample_module(), SAMPLE, &history());
         assert!(md.contains("lines: 12"), "{md}");
         assert!(md.contains("code: 8"));
         assert!(md.contains("public: 3"));
@@ -785,7 +793,7 @@ end
 
     #[test]
     fn a_repo_less_file_omits_the_git_facts() {
-        let md = seed_markdown(&elixir::parse(SAMPLE).unwrap(), SAMPLE, &FileHistory::default(), "accounts.ex");
+        let md = stats_block(&sample_module(), SAMPLE, &FileHistory::default());
         assert!(md.contains("lines: "), "size still reported");
         assert!(!md.contains("commits:"), "no git, no git columns");
         assert!(!md.contains("authors:"));
@@ -813,6 +821,33 @@ mod kind_tests {
             .unwrap_or_else(|| panic!("no {tag} block in:\n{md}"))
     }
 
+    /// The generators, run on a source. **No kind seeds a block any more** — a
+    /// config's settings and a suite's describes are what you navigate those files
+    /// by, and navigation lives in the explore drawer. Every block test therefore
+    /// drives its generator, and `/settings` and `/tests` reach the same code.
+    fn outline_of(src: &str) -> Outline {
+        parse::parse(src, "elixir").expect("parse")
+    }
+
+    fn settings_of(src: &str) -> String {
+        let o = outline_of(src);
+        settings_block(&o.config.expect("config"), "sample.exs")
+    }
+
+    fn tests_of(src: &str) -> String {
+        tests_block(&outline_of(src).tests.expect("tests"))
+    }
+
+    fn config_stats_of(src: &str) -> String {
+        let o = outline_of(src);
+        config_stats_block(&o.config.expect("config"), src, &FileHistory::default())
+    }
+
+    fn test_stats_of(src: &str) -> String {
+        let o = outline_of(src);
+        test_stats_block(&o.tests.expect("tests"), src, &FileHistory::default())
+    }
+
     const CONFIG: &str = r#"import Config
 
 config :my_app, MyApp.Repo,
@@ -825,20 +860,26 @@ config :logger, :console, level: :debug
 import_config "dev.secret.exs"
 "#;
 
+    /// A config doc is a title and a blank page, like every other kind. Its
+    /// settings are in the drawer, which is where you read them from.
     #[test]
-    fn a_config_seeds_settings_and_nothing_about_functions() {
+    fn a_config_doc_is_a_title_and_a_blank_page() {
         let md = seed(CONFIG);
-        assert!(md.contains("```lgtm:settings"), "{md}");
-        // The module blocks would all be empty here, so they are not written.
-        for absent in ["lgtm:surface", "lgtm:treemap", "lgtm:deps", "lgtm:functions"] {
-            assert!(!md.contains(absent), "{absent} has nothing to say:\n{md}");
-        }
+        assert!(md.starts_with("# sample.exs"), "{md}");
+        assert!(md.contains("what does this file configure?"), "{md}");
+        assert!(md.contains("## Explain"), "{md}");
+        assert_eq!(md.matches("```").count(), 0, "no blocks at all:\n{md}");
+
+        // And the generator still writes one when `/settings` asks.
+        let block = settings_of(CONFIG);
+        assert!(block.starts_with("```lgtm:settings"), "{block}");
+        assert!(block.contains("my_app"), "{block}");
     }
 
     #[test]
     fn the_settings_block_says_where_each_value_comes_from() {
-        let block = seed(CONFIG);
-        let block = block_of(&block, "lgtm:settings");
+        let full = settings_of(CONFIG);
+        let block = block_of(&full, "lgtm:settings");
         assert!(block.contains(":my_app MyApp.Repo"), "{block}");
         assert!(block.contains("env! DB_PASSWORD"), "required env:\n{block}");
         assert!(block.contains(r#"= "postgres""#), "literal value:\n{block}");
@@ -851,7 +892,7 @@ import_config "dev.secret.exs"
 
     #[test]
     fn config_stats_count_what_matters_for_a_config() {
-        let md = seed(CONFIG);
+        let md = config_stats_of(CONFIG);
         let stats = block_of(&md, "lgtm:stats");
         assert!(stats.contains("apps: 2"), "{stats}");
         assert!(stats.contains("settings: 4"), "{stats}");
@@ -882,19 +923,22 @@ import_config "dev.secret.exs"
 end
 "#;
 
+    /// A suite doc is a title and a blank page too.
     #[test]
-    fn a_test_suite_seeds_its_own_structure() {
+    fn a_test_doc_is_a_title_and_a_blank_page() {
         let md = seed(SUITE);
-        assert!(md.contains("# MyApp.AccountsTest"), "{md}");
-        assert!(md.contains("```lgtm:tests"), "{md}");
-        for absent in ["lgtm:surface", "lgtm:treemap", "lgtm:functions"] {
-            assert!(!md.contains(absent), "{absent} says nothing here:\n{md}");
-        }
+        assert!(md.starts_with("# MyApp.AccountsTest"), "{md}");
+        assert!(md.contains("what does this suite cover?"), "{md}");
+        assert!(md.contains("## Explain"), "{md}");
+        assert_eq!(md.matches("```").count(), 0, "no blocks at all:\n{md}");
+
+        let block = tests_of(SUITE);
+        assert!(block.starts_with("```lgtm:tests module=MyApp.AccountsTest"), "{block}");
     }
 
     #[test]
     fn the_tests_block_nests_setups_where_they_apply() {
-        let md = seed(SUITE);
+        let md = tests_of(SUITE);
         let block = block_of(&md, "lgtm:tests");
 
         // Module scope first, then the describe with its own setup indented.
@@ -911,7 +955,7 @@ end
 
     #[test]
     fn test_stats_count_what_matters_for_a_suite() {
-        let md = seed(SUITE);
+        let md = test_stats_of(SUITE);
         let stats = block_of(&md, "lgtm:stats");
         assert!(stats.contains("tests: 2"), "{stats}");
         assert!(stats.contains("describes: 1"), "{stats}");
@@ -925,15 +969,11 @@ end
         let md = seed("IO.puts(\"hi\")\nx = 1\n");
         // Titled by filename — "Untitled" only when there isn't one.
         assert!(md.starts_with("# sample.exs"), "{md}");
-        // And it says why there is nothing else, rather than just being bare.
-        assert!(md.contains("nothing structural to"), "{md}");
-        // Size still reported; nothing structural claimed.
-        assert!(md.contains("lines: 2"), "{md}");
-        // The section you write in is called what it is for, in every kind.
+        // And it says *why* there is nothing, rather than just being bare. This is
+        // the whole point of the `Plain` kind and the one sentence still seeded.
+        assert!(md.contains("nothing to navigate by"), "{md}");
         assert!(md.contains("## Explain"), "{md}");
-        for absent in ["lgtm:surface", "lgtm:treemap", "lgtm:deps", "lgtm:functions", "lgtm:tests"] {
-            assert!(!md.contains(absent), "{absent} must be absent:\n{md}");
-        }
+        assert_eq!(md.matches("```").count(), 0, "no blocks:\n{md}");
     }
 }
 
@@ -963,7 +1003,8 @@ end
     #[test]
     fn every_block_carries_its_whole_span() {
         let outline = parse::parse(SUITE, "elixir").unwrap();
-        let md = seed_markdown(&outline, SUITE, &FileHistory::default(), "accounts_test.exs");
+        // The generator, not the seed — nothing is seeded for a test suite now.
+        let md = tests_block(&outline.tests.expect("tests"));
         let block = md
             .split("```lgtm:tests")
             .nth(1)
