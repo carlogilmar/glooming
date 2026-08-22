@@ -837,6 +837,7 @@
             class:cursor={focus.cursorLine === n}
             class:authored={showBlame && !!blameRows[i]}
             style:--who-h={showBlame ? (blameRows[i]?.hue ?? 212) : undefined}
+            style:--i={Math.min(i, 12)}
             data-line={n}
           >
             {#if showBlame}
@@ -1134,6 +1135,48 @@
     opacity: 0.6;
     user-select: none; /* keep line numbers out of a copied selection */
   }
+  /* The file arrives in the GUTTER, never in the glyphs.
+     Motion in the code pane's text is refused on purpose — that surface is for
+     reading, and cascading it in delays the one thing you opened the file to do.
+     The line numbers are chrome, though, and they are already where the focus
+     bar breathes, so the arrival happens there: the numbers wipe down from the
+     top and the code is legible from the first frame.
+
+     `backwards`, not `both`: the fill has to hold the *from* state through the
+     stagger delay and then get out of the way, or it would pin `opacity` and
+     outrank `.row.hit .ln`, which is a declaration and loses to an animation.
+
+     No gate — `CodePane` is keyed on the path, so a mount *is* a new file, and
+     the rows are created exactly once per arrival. */
+  .row .ln,
+  .row .bl {
+    animation: gutterIn var(--wipe) var(--ease-out) backwards;
+    /* 26ms a row rather than the surface table's 16ms: the table is a short
+       catalog you scan, this travels a whole pane, and the same step that reads
+       as arriving over six rows reads as a twitch over forty. */
+    animation-delay: calc(var(--i, 0) * 26ms);
+  }
+  @keyframes gutterIn {
+    from {
+      opacity: 0;
+      transform: translateX(-4px);
+    }
+  }
+  /* The source arrives with its gutter, on the same beat.
+     Opacity ONLY — no translate, ever. The refusal that stood here was against
+     motion in the code pane's text, and a *fade* is the version of arrival that
+     costs nothing: the glyphs never leave the position you are about to read
+     them in, so nothing has to settle before your eye can land. Sliding text is
+     what the refusal was actually about. */
+  .row .src {
+    animation: srcIn var(--wipe) var(--ease-out) backwards;
+    animation-delay: calc(var(--i, 0) * 26ms);
+  }
+  @keyframes srcIn {
+    from {
+      opacity: 0;
+    }
+  }
   .row .src {
     flex: 1 1 auto;
     min-width: 0;
@@ -1322,6 +1365,15 @@
     .copied,
     .sticky,
     .focushint {
+      animation: none;
+    }
+    /* The gutter is already at its numbers and the code at its lines; the wipe
+       was the whole motion, so there is nothing to keep but the end state. */
+    .row .ln,
+    .row .bl {
+      animation: none;
+    }
+    .row .src {
       animation: none;
     }
   }

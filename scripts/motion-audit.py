@@ -52,7 +52,12 @@ for root, _, fs in os.walk('src'):
                     for part in sel.split(','):
                         covered.setdefault(p, set()).add(part.strip())
             elif name != 'none':
-                live.append((p, name, sel))
+                # Per selector PART, on both sides. A grouped rule needs every
+                # part overridden — covering three of four leaves one animation
+                # running under reduced motion, and comparing the whole comma
+                # -joined string against a set of parts never matched at all.
+                for part in sel.split(','):
+                    live.append((p, name, part.strip()))
 
         # Transitions count too, but only the ones that MOVE something. Reduced
         # motion means "drop movement, keep opacity and colour" — so a fading
@@ -78,7 +83,8 @@ for root, _, fs in os.walk('src'):
                 r'\b(transform|height|width|top|left|right|bottom|margin|padding)\b', decl
             )
             if moves:
-                live.append((p, 'transition:' + moves.group(1), sel))
+                for part in sel.split(','):
+                    live.append((p, 'transition:' + moves.group(1), part.strip()))
         # `display: none` on a decorative ::after counts as neutralising it.
         for m in re.finditer(r'display:\s*none', s):
             if inside(m.start()):

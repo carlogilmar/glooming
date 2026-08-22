@@ -78,6 +78,10 @@
   --slow:  2.1s;    /* ambient: focus pulses, the loading orb */
   --calm:  1.9s;    /* ambient: the treemap's top three, kept distinct */
   --fast:  0.18s;   /* transient: a thing arrived */
+  /* transient: a thing arrived somewhere LONG — the code pane's gutter wipes the
+     full height of a file, and --fast is calibrated for one element appearing in
+     place. At 0.18s a wipe down 40 rows reads as a flicker rather than a sweep. */
+  --wipe:  0.34s;
   --trace: 0.62s;   /* transient: a connection being drawn */
   --ring:  0.7s;    /* transient: one pulse, then nothing */
 

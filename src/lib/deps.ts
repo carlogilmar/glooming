@@ -159,6 +159,18 @@ export function renderDeps(body: string, module: ModuleInfo | null): string {
 
   const parts: string[] = [];
 
+  /**
+   * Arrival order, carried on the markup so CSS can stagger it.
+   *
+   * The picture assembles the way you read it: the boundary, then what is inside
+   * it top to bottom, then what lies beyond, and the connections last — a line
+   * cannot arrive before both ends of it exist. Capped for the same reason the
+   * surface table's cascade is: a long stack must not turn a glance into a wait.
+   */
+  const STAGGER_CAP = 12;
+  let step = 0;
+  const at = () => `style="--i:${Math.min(step++, STAGGER_CAP)}"`;
+
   parts.push(
     `<rect class="bound" x="${BOX.x}" y="${BOX.y}" width="${BOX.w}" height="${boxH}" rx="10"/>`,
     // The module's own name. A nested one is mostly the path to the file, which
@@ -173,6 +185,9 @@ export function renderDeps(body: string, module: ModuleInfo | null): string {
     const c = (DOT_X - x1) * 0.55;
     parts.push(
       `<path class="edge ${e.kind}" data-from="${esc(e.from)}" data-to="${esc(e.to)}" stroke-width="2"` +
+        // Every edge shares the last index: they are one gesture, drawn once the
+        // things they join are all there.
+        ` style="--i:${STAGGER_CAP + 1}"` +
         ` d="M${x1},${e.y1} C${x1 + c},${e.y1} ${DOT_X - c},${e.y2} ${DOT_X},${e.y2}"/>`,
     );
     // An arrowhead, hidden until reduced motion is on. The travelling dash is
@@ -186,8 +201,11 @@ export function renderDeps(body: string, module: ModuleInfo | null): string {
   }
 
   for (const f of locals) {
+    // The puncture belongs to its function, so it arrives with it rather than
+    // ahead of everything on a zero delay.
+    const fi = at();
     parts.push(
-      `<g class="fn${f.pure ? " pure" : ""}" data-fn="${esc(f.sig)}" data-sig="${esc(f.sig)}" data-line="${f.line}" role="button" tabindex="0">`,
+      `<g class="fn${f.pure ? " pure" : ""}" ${fi} data-fn="${esc(f.sig)}" data-sig="${esc(f.sig)}" data-line="${f.line}" role="button" tabindex="0">`,
       `<rect class="fn-hit" x="${BOX.x + 6}" y="${f.y - 13}" width="${BOX.w - 12}" height="26" rx="5"/>`,
       `<text class="fn-name" x="${BOX.x + 18}" y="${f.y + 4}">${esc(f.sig)}</text>`,
       `<text class="fn-line" x="${BOX.x + BOX.w - 18}" y="${f.y + 4}" text-anchor="end">${f.line}</text>`,
@@ -195,7 +213,7 @@ export function renderDeps(body: string, module: ModuleInfo | null): string {
     );
     // The puncture, only where something actually leaves.
     if (!f.pure) {
-      parts.push(`<circle class="pierce" cx="${BOX.x + BOX.w}" cy="${f.y}" r="3.5"/>`);
+      parts.push(`<circle class="pierce" ${fi} cx="${BOX.x + BOX.w}" cy="${f.y}" r="3.5"/>`);
     }
   }
 
@@ -204,14 +222,17 @@ export function renderDeps(body: string, module: ModuleInfo | null): string {
     // offset from the *drawn* width, not the full name's, or it lands in the
     // middle of nowhere.
     const shown = shortModule(d.module);
+    // One index for the name and its kind label: they are one label in two
+    // pieces, and arriving separately would read as a stutter.
+    const mi = at();
     parts.push(
-      `<text class="mod-name ${d.kind}" x="${OUT_X}" y="${(d.y ?? 0) + 4}">` +
+      `<text class="mod-name ${d.kind}" ${mi} x="${OUT_X}" y="${(d.y ?? 0) + 4}">` +
         `<title>${esc(d.module)}</title>${esc(shown)}</text>`,
-      `<text class="mod-kind" x="${OUT_X + shown.length * 7.3 + 12}" y="${(d.y ?? 0) + 4}">${KIND_LABEL[d.kind]}</text>`,
+      `<text class="mod-kind" ${mi} x="${OUT_X + shown.length * 7.3 + 12}" y="${(d.y ?? 0) + 4}">${KIND_LABEL[d.kind]}</text>`,
     );
     for (const fn of d.functions) {
       parts.push(
-        `<g class="rfn" data-to="${esc(`${d.module}.${fn.name}`)}" data-callers="${esc(fn.callers.join("|"))}" role="button" tabindex="0">`,
+        `<g class="rfn" ${at()} data-to="${esc(`${d.module}.${fn.name}`)}" data-callers="${esc(fn.callers.join("|"))}" role="button" tabindex="0">`,
         `<rect class="rfn-hit" x="${DOT_X - 8}" y="${(fn.y ?? 0) - 11}" width="330" height="22" rx="5"/>`,
         `<circle class="dot ${d.kind}" cx="${DOT_X}" cy="${fn.y ?? 0}" r="3"/>`,
         // The hit on arrival. A ring of its own rather than growing the dot,

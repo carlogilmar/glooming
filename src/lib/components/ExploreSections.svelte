@@ -594,6 +594,35 @@
     }
   }
 
+  /* The boundary assembles in the order you read it: the shape, then what is
+     inside it top to bottom, then what lies beyond, and the lines last — a
+     connection cannot arrive before both of its ends exist. Same 16ms beat as
+     the table above it, so the two read as one arrival rather than two.
+
+     `--i` and its cap come from `deps.ts`, which is the only place that knows
+     the drawing order; every edge shares the last index, so they draw together.
+
+     Opacity only, again: the diagram is one laid-out picture and sliding its
+     parts in from an offset would misplace them relative to the lines. */
+  .arriving :global(.lgtm-deps .bound),
+  .arriving :global(.lgtm-deps .bound-label) {
+    animation: partIn var(--fast) var(--ease-out) both;
+  }
+  .arriving :global(.lgtm-deps .fn),
+  .arriving :global(.lgtm-deps .pierce),
+  .arriving :global(.lgtm-deps .mod-name),
+  .arriving :global(.lgtm-deps .mod-kind),
+  .arriving :global(.lgtm-deps .rfn),
+  .arriving :global(.lgtm-deps .edge) {
+    animation: partIn var(--fast) var(--ease-out) both;
+    animation-delay: calc(var(--i, 0) * 16ms);
+  }
+  @keyframes partIn {
+    from {
+      opacity: 0;
+    }
+  }
+
   .rule {
     position: relative;
     height: 1px;
@@ -616,9 +645,22 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    /* The rows are already where they belong; the cascade was the only motion,
-       so there is nothing to preserve but the end state. */
+    /* The rows and the diagram's parts are already where they belong; the
+       cascade was the only motion, so there is nothing to preserve but the end
+       state. */
     .arriving tbody tr {
+      animation: none;
+    }
+    .arriving :global(.lgtm-deps .bound),
+    .arriving :global(.lgtm-deps .bound-label) {
+      animation: none;
+    }
+    .arriving :global(.lgtm-deps .fn),
+    .arriving :global(.lgtm-deps .pierce),
+    .arriving :global(.lgtm-deps .mod-name),
+    .arriving :global(.lgtm-deps .mod-kind),
+    .arriving :global(.lgtm-deps .rfn),
+    .arriving :global(.lgtm-deps .edge) {
       animation: none;
     }
   }

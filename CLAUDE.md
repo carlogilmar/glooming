@@ -833,6 +833,7 @@ in `app.css` with the rest, in **two tiers**:
 | `--slow` | 2.1s | ambient — Xray's `tmPulse` beat: the focus pulses, the orb |
 | `--calm` | 1.9s | ambient — the treemap's top three, kept distinct |
 | `--fast` | 0.18s | transient — a thing arrived |
+| `--wipe` | 0.34s | transient — a thing arrived somewhere long |
 | `--trace` | 0.62s | transient — a connection being drawn |
 | `--ring` | 0.7s | transient — one pulse, then nothing |
 
@@ -870,6 +871,28 @@ Each animation carries information rather than decorating:
   current at once. So the outgoing chip loses its state in the same frame and only
   the **incoming** one animates: an underline wiping in from the left. Hover's
   border is suppressed on an active chip, or one word gets two underlines.
+- **The code wipes in, top down — as a fade, never a slide.** The refusal here
+  was against motion in the code pane's *text*, and it narrowed rather than held:
+  a **fade** costs nothing, because the glyphs never leave the position you are
+  about to read them in. A *slide* is what the refusal was actually about — text
+  that has to settle before your eye can land on it. So the line numbers, the
+  blame gutter and the source all arrive on one beat, and only the gutter (which
+  is chrome) travels the 4px. It runs at `--wipe` and 26ms a row, not `--fast` and
+  16ms: those are calibrated for a short catalog you scan, and the same values
+  down a whole pane read as a flicker rather than a sweep. The last row lands at
+  652ms. `backwards`, not `both`: the
+  fill has to hold the from-state through the stagger delay and then get out of
+  the way, or it pins `opacity` and outranks `.row.hit .ln`, which is a
+  declaration and loses to an animation. No gate is needed, because `CodePane` is
+  keyed on the path — a mount *is* a new file.
+- **The boundary assembles in reading order.** The shape, then what is inside it
+  top to bottom, then what lies beyond, and the lines last — a connection cannot
+  arrive before both of its ends exist. `deps.ts` carries the order as `--i` on
+  the markup, because it is the only place that knows the drawing order; a pierce
+  shares its function's index and a kind label shares its module's, or one label
+  arrives as two. Every edge shares the last index, so they draw as one gesture.
+  Opacity only: the parts are laid out against each other, and sliding them in
+  from an offset would put a function somewhere its own line does not reach.
 - **The directory arrives in order.** `--i` per row — in `surface.ts` for the
   block and on the surface table's `<tr>` in `ExploreSections`, which gates it on
   the *path* so it plays once per file rather than on every render — staggered
@@ -932,7 +955,9 @@ correct there. Both set a `mounted` class one frame after mount, because an elem
 rendered already-open has no state to transition *from*.
 
 `scripts/motion-audit.py` enforces this, and it compares **selector text**, not
-just animation names. It also covers **transitions that move something** — added
+just animation names — **per selector part on both sides**, since a grouped rule
+needs every part overridden and comparing a whole comma-joined selector against a
+set of parts matched nothing at all. It also covers **transitions that move something** — added
 after three keyframe animations became transitions and silently left the audit's
 field of view. Opacity and colour transitions are exempt, since reduced motion
 keeps those, and an override counts if it *stops the movement*, whether by
@@ -950,8 +975,10 @@ python3 scripts/motion-audit.py     # exits non-zero on an uncovered animation
 **What was refused** is in `mockup/motion.html`'s last section, and matters more
 than the six above because these are the things a library makes easy: counting
 the stats up (it delays reading the number, which was the whole point of the
-block), any motion in the code pane's *text* (that surface is for reading — the
-existing bar breathes in the gutter, deliberately, and stays out of the glyphs),
+block), any *sliding* of the code pane's text (that surface is for
+reading: the arrival fades it and travels only the gutter, and the focus bar
+breathes in the gutter for the same reason — nothing the eye is about to land on
+has to settle first),
 route transitions (there is one route), and easing scroll position (read mode
 already drives the code pane *from* scroll; animating scroll from scroll fights
 the trackpad). And the library itself: all six are `class` + `@keyframes`, none
