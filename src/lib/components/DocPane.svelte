@@ -154,7 +154,11 @@
   let reading = $state(false);
   /** Paragraphs carrying a reference, in prose order — the steps. */
   let steps = $state<HTMLElement[]>([]);
-  let activeStep = $state(-1);
+  /** Every reference the reading walks, in document order. */
+  let stops = $state<HTMLElement[]>([]);
+  /** Which block each stop lives in — what gets `.now` and the row tint. */
+  let stopOwner = new Map<HTMLElement, HTMLElement>();
+  let activeStop = $state(-1);
   /**
    * Index of the chip that is current, not its signature.
    *
@@ -583,7 +587,7 @@
    * the page, which is what it always was.
    */
   function sizeLead() {
-    if (!container || !body || !steps.length) return;
+    if (!container || !body || !stops.length) return;
 
     let lead = container.querySelector<HTMLElement>(".reading-lead");
     let tail = container.querySelector<HTMLElement>(".reading-tail");
@@ -611,15 +615,26 @@
     // the lead collapsed, and independent of where the reader currently is.
     lead.style.height = "0px";
     const firstOffset =
-      steps[0].getBoundingClientRect().top - paneTop + body.scrollTop;
+      stops[0].getBoundingClientRect().top - paneTop + body.scrollTop;
     lead.style.height = Math.max(0, H * TRIGGER + 16 - firstOffset) + "px";
 
-    // The last step has to be able to reach the trigger too. At the bottom of
-    // the scroll there must be at least (1 - TRIGGER) of a pane below its top,
-    // otherwise it simply never fires — and how badly depends on the window
-    // height, so a fixed fraction is not good enough.
-    const lastH = steps[steps.length - 1].getBoundingClientRect().height;
-    tail.style.height = Math.max(0, H * (1 - TRIGGER) - lastH) + "px";
+    // The last stop has to be able to reach the trigger too. At the bottom of the
+    // scroll there must be at least (1 - TRIGGER) of a pane below it, otherwise
+    // it simply never fires — and how badly depends on the window height, so a
+    // fixed fraction is not good enough.
+    //
+    // Measured from the last stop to the END OF THE CONTENT, not from the height
+    // of the block it sits in. Those are the same number only when the last
+    // reference is the first thing in the last block; when a final paragraph
+    // names two functions, the second sits near the bottom of it, so the block's
+    // height wildly overstates what is below the chip and the tail comes out
+    // short by the difference. The symptom is precise and easy to misread: every
+    // reference works except the last one, and adding any paragraph after it
+    // fixes it.
+    tail.style.height = "0px";
+    const lastTop = stops[stops.length - 1].getBoundingClientRect().top;
+    const below = container.getBoundingClientRect().bottom - lastTop;
+    tail.style.height = Math.max(0, H * (1 - TRIGGER) - below) + "px";
 
     placeBand();
   }
@@ -646,9 +661,9 @@
    * One helper because two call sites set this (scrolling and clicking), and they
    * were already required never to disagree about which reference is current.
    */
-  function markNow(i: number) {
+  function markNow(ref: HTMLElement | null | undefined) {
     for (const el of container?.querySelectorAll(".now") ?? []) el.classList.remove("now");
-    const block = steps[i];
+    const block = ref ? stopOwner.get(ref) : null;
     if (!block) return;
     block.classList.add("now");
     block.closest("li")?.classList.add("now");
@@ -693,12 +708,28 @@
     hit.closest("li")?.classList.add("here");
   }
 
-  function stepAt(): number {
+  /**
+   * The reading advances by REFERENCE, not by block.
+   *
+   * A paragraph often names three functions in the order the code runs them, and
+   * one step per block meant the first won and the other two were scenery: you
+   * read "…then `changeset/2`, then `Repo.insert/1`" while the code sat on
+   * `normalize/1` until the paragraph ended. Now each reference is its own stop,
+   * so the code walks them in order while the block stays highlighted — which is
+   * what the prose was describing all along.
+   *
+   * Blocks are still what gets marked (`.step`, `.now`, the row tint); they are
+   * just no longer the unit of advance.
+   */
+  function stopAt(): number {
     const line = triggerY();
     let hit = -1;
-    steps.forEach((p, i) => {
-      if (p.getBoundingClientRect().top <= line) hit = i;
-    });
+    for (let i = 0; i < stops.length; i++) {
+      // The chip's own top, so the code changes as you reach the *sentence* that
+      // names it rather than when the paragraph began.
+      if (stops[i].getBoundingClientRect().top > line) break;
+      hit = i;
+    }
     return hit;
   }
 
@@ -713,21 +744,19 @@
       // "where am I reading" and "what should the code be showing".
       placeBand();
       markHere();
-      const i = stepAt();
-      if (i === activeStep) return;
-      activeStep = i;
+      const i = stopAt();
+      if (i === activeStop) return;
+      activeStop = i;
 
       // Before the first paragraph reaches the trigger the reading has not
       // begun: the file sits at rest rather than pre-armed on step one.
       if (i < 0) {
         focus.rest();
         activeRef = null;
-        markNow(-1);
+        markNow(null);
         return;
       }
-      // `:not(.mention)` is the block's own step — a nested block's reference is
-      // a mention from out here, and its own lead from in there.
-      const ref = steps[i].querySelector<HTMLElement>("code.ref[data-line]:not(.mention)");
+      const ref = stops[i];
       if (!ref) return;
       const start = parseInt(ref.dataset.line ?? "0", 10);
       const end = parseInt(ref.dataset.end ?? "0", 10) || start;
@@ -748,7 +777,7 @@
       // Only the block is marked here. The chip is marked by the selection
       // effect, keyed on focus.sig — one mechanism, so scrolling and clicking
       // can never disagree about which reference is current.
-      markNow(i);
+      markNow(ref);
 
       // And the band takes one flash, so the hand-over is something you *see*
       // happen rather than a line you infer. Only on an actual step change —
@@ -778,21 +807,24 @@
   function alignReading(clicked?: HTMLElement | null) {
     if (!reading || !body || !focus.active) return;
 
-    // Prefer the paragraph the click was actually in. Falling back to a search
-    // by name would land on the *first* mention of it, which is why clicking a
+    // Prefer the reference that was actually clicked. Falling back to a search by
+    // name lands on the first one carrying that signature, which is why clicking a
     // repeated reference used to scroll backwards.
-    const own = clicked?.closest<HTMLElement>(".step");
-    const i = own
-      ? steps.indexOf(own)
-      : steps.findIndex((p) => p.querySelector(`code.ref[data-sig="${CSS.escape(focus.sig)}"]`));
+    const chip = clicked?.closest<HTMLElement>("code.ref[data-line]");
+    const i = chip
+      ? stops.indexOf(chip)
+      : stops.findIndex((r) => r.dataset.sig === focus.sig);
     if (i < 0) return; // selected something the prose never mentions
 
-    const delta = steps[i].getBoundingClientRect().top - triggerY();
-    // +2 so the paragraph lands just *past* the line and the step registers.
+    // Scroll the *block* to the line — a chip alone would put one sentence at the
+    // trigger and leave the paragraph it belongs to half off the top.
+    const block = stopOwner.get(stops[i]) ?? stops[i];
+    const delta = block.getBoundingClientRect().top - triggerY();
+    // +2 so the paragraph lands just *past* the line and the stop registers.
     body.scrollTo({ top: body.scrollTop + delta + 2, behavior: "smooth" });
 
-    activeStep = i;
-    markNow(i);
+    activeStop = i;
+    markNow(stops[i]);
   }
 
   /**
@@ -808,7 +840,7 @@
     // exit on them too meant that anything which emptied `steps` mid-read (a
     // re-render landing between two files, a note edited elsewhere) locked you
     // in: the button vanished and ⌘R was refused by the same test.
-    if (reading || (canRead && !editing && steps.length)) toggleReading();
+    if (reading || (canRead && !editing && stops.length)) toggleReading();
   }
 
   export function toggleEdit() {
@@ -826,7 +858,7 @@
     focus.reading = reading;
     onreading?.(reading);
     if (!reading) {
-      activeStep = -1;
+      activeStop = -1;
       focus.rest();
       for (const el of container?.querySelectorAll(".here") ?? []) el.classList.remove("here");
       hereEl = null;
@@ -834,7 +866,7 @@
     // Wait for the class change to land before measuring.
     queueMicrotask(() => {
       sizeLead();
-      activeStep = -2;
+      activeStop = -2;
       onDocScroll();
       // And once more after the frame has actually been laid out. Entering read
       // mode changes the type and the spacing, so the height measured in the
@@ -845,7 +877,7 @@
 
   // Re-measure whenever the content, the mode or the window changes.
   $effect(() => {
-    steps;
+    stops;
     reading;
     queueMicrotask(sizeLead);
   });
@@ -853,7 +885,7 @@
   $effect(() => {
     const onResize = () => {
       sizeLead();
-      activeStep = -2;
+      activeStop = -2;
       onDocScroll();
     };
     window.addEventListener("resize", onResize);
@@ -901,6 +933,8 @@
     html;
     if (!container) {
       steps = [];
+      stops = [];
+      stopOwner = new Map();
       return;
     }
     // Every block that carries a reference — but a reference can sit inside more
@@ -939,10 +973,15 @@
 
     let n = 0;
     for (const r of allRefs) {
-      r.classList.toggle("mention", lead.get(owner.get(r) as HTMLElement) !== r);
       // A stable per-render index, so duplicates of one name stay distinct.
       r.dataset.ref = String(n++);
     }
+
+    // Every reference is a stop, and each knows the block it is in. `.mention`
+    // used to mark "not this block's step" and is gone with the idea: a second
+    // reference in a paragraph is the next thing the reading walks, not scenery.
+    stops = allRefs;
+    stopOwner = owner;
 
     const found = carriers.filter((b) => lead.has(b));
     for (const b of found) {
@@ -959,13 +998,13 @@
     // Re-render wipes the marks — put them back.
     //
     // `md` depends on `current`, so crossing a file re-renders the whole note.
-    // The scroll handler does not fire (nothing scrolled) and `activeStep` has
+    // The scroll handler does not fire (nothing scrolled) and `activeStop` has
     // not changed, so `.now` was never re-applied: the step you had just walked
     // into went to 45% and stayed there, while `.here` came back on the next
     // frame and tinted it.
     //
     // **`untrack` is load-bearing.** This effect WRITES `steps`; reading
-    // `activeStep` and `reading` here made it re-run on every scroll step, and
+    // `activeStop` and `reading` here made it re-run on every scroll step, and
     // each run rebuilt `steps` as a fresh array, which re-ran the measuring
     // effect, which resized the lead and tail spacers, which moved the content
     // under the reader, which fired the scroll handler again. A loop through the
@@ -975,7 +1014,10 @@
     untrack(() => {
       if (!reading) return;
       placeBand();
-      markNow(activeStep);
+      // `allRefs`, not `stops` — the same array, but reading the local keeps this
+      // effect free of a read of the state it just wrote, which is the shape the
+      // audit looks for and the shape that bites.
+      markNow(allRefs[activeStop]);
       markHere();
     });
 
@@ -1038,7 +1080,7 @@
       <button class="btn icon warn" onclick={() => onreconcile?.()}>⟳ Code changed — reconcile</button>
     {/if}
     <FontStepper {font} label="text" />
-    {#if reading || (canRead && !editing && steps.length)}
+    {#if reading || (canRead && !editing && stops.length)}
       <button
         class="btn icon read"
         class:on={reading}
@@ -2788,11 +2830,6 @@
   }
   :global(.doc code.ref.away.active) {
     border-left-color: #fff;
-  }
-  /* A later mention in the same paragraph: still a link, not a step. */
-  :global(.doc code.ref.mention) {
-    background: transparent;
-    border: 1px dashed color-mix(in srgb, var(--accent) 35%, transparent);
   }
   /* The code moved out from under the explanation. Say so — never fall back to
      plain text and lose the fact quietly. */

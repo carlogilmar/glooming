@@ -50,10 +50,15 @@ def match_block(s, open_at):
         i += 1
     return open_at, len(s)
 
-#: Callbacks that run after the effect body has finished, so their reads are not
-#: tracked dependencies.
+#: Callbacks whose reads are not tracked dependencies — either because they run
+#: after the effect body has finished, or because `untrack` says so outright.
+#: `untrack` is the sanctioned escape hatch for exactly the case this checks for
+#: (restore some DOM state after a render, from state you must not depend on), so
+#: treating a read inside it as a dependency would flag correct code — and a check
+#: that cries wolf is one people learn to ignore.
 DEFERRED = ('.then(', '.catch(', '.finally(', 'setTimeout(', 'setInterval(',
-            'queueMicrotask(', 'requestAnimationFrame(', 'addEventListener(')
+            'queueMicrotask(', 'requestAnimationFrame(', 'addEventListener(',
+            'untrack(')
 
 
 def deferred_spans(body):

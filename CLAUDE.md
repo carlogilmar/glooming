@@ -1317,10 +1317,26 @@ ordinary inline code.
 
 Four rules, each of which replaced something that read worse:
 
-- **One step per block, and the block is the innermost one that owns the
-  reference.** The first reference a block owns is its step; later mentions stay
-  clickable but don't re-trigger, or a paragraph naming three functions fires
-  three code scrolls inside ~60px.
+- **The reading advances by reference, not by block.** A paragraph often names
+  three functions in the order the code runs them, and one step per block meant the
+  first won and the other two were scenery: you read "…then `changeset/2`, then
+  `Repo.insert/1`" while the code sat on `normalize/1` until the paragraph ended.
+  Each reference is now a **stop**, triggered by its own chip crossing the line —
+  so the code changes as you reach the *sentence* that names it, and the block
+  stays highlighted throughout. `.mention` is gone with the old idea: a second
+  reference in a paragraph is the next thing the reading walks, not scenery.
+
+  Blocks are still what gets *marked* — `.step` for the dimming, `.now` on the
+  block owning the current stop, `.here` on the block under the line. They are
+  simply no longer the unit of advance. `stopOwner` maps each reference to its
+  innermost block, which is where the old innermost-owner rule now lives: a loose
+  list's `<li><p>ref</p></li>` still resolves to the `p`, so a three-item list is
+  three rows and not six.
+
+  A click still lands on the chip that was clicked (`stops.indexOf(chip)`) rather
+  than the first one carrying that signature, and still scrolls the *block* to the
+  line — a chip alone would put one sentence at the trigger and leave its paragraph
+  half off the top.
 
   "Innermost" is load-bearing, and it took two ordinary markdown shapes to find
   out. A **loose** list — blank lines between items — wraps each item's text in a
@@ -1348,6 +1364,14 @@ Four rules, each of which replaced something that read worse:
   per scroll frame is cheaper than being wrong, and it re-runs after the frame
   that read mode's own type change lays out. It is *meant* to stay still: the
   trigger is a fixed height and the text moves past it.
+- **The tail is measured from the last stop to the end of the content**, not from
+  the height of the block it sits in. Those agree only when the last reference is
+  the first thing in the last block; when a closing paragraph names *two*
+  functions, the second sits near its bottom, the block height wildly overstates
+  what is below the chip, and the tail comes out short by the difference — on a
+  800px pane with a 120px final paragraph, 56px short. The symptom is precise and
+  easy to misread: every reference works except the last one, and adding any
+  paragraph after it makes the problem vanish.
 - **A lead-in *and* a tail, both measured in JS.** The trigger sits 38% down the
   pane, which on a tall window is *below* the first paragraph or two at rest —
   so the reading would open at step 2, and how far in depended on the monitor.
@@ -1678,7 +1702,10 @@ its own side effects depend on.** Wrap the restore in `untrack`. And when a bug
 presents as a control that does nothing, check for a pinned thread before
 suspecting the control.
 
-`scripts/effect-audit.py` catches the simpler form, and knows that difference. It also strips
+`scripts/effect-audit.py` catches the simpler form, and knows that difference. It
+also treats a read inside `untrack(...)` as untracked — that is the sanctioned
+escape hatch for precisely this situation (restore some DOM state after a render,
+from state the effect must not depend on), so flagging it would be crying wolf. It also strips
 comments before matching — a comment using a state variable's own name read as a
 dependency and flagged a correct effect, and a check that cries wolf is one people
 learn to ignore:
