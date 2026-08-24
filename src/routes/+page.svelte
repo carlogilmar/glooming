@@ -96,6 +96,80 @@
 
   const file = $derived(byPath(files, currentPath) ?? files[0] ?? null);
   const origin = $derived(originOf(files));
+
+  /**
+   * The gloom's name.
+   *
+   * A gloom is one revision journey — a note and the files it led you through —
+   * and it is the only thing in the app that needs a name of its own: the files
+   * already have theirs, and "accounts.ex" says nothing about *why* you opened
+   * it. `docs.title` has existed since the first migration as "seeded from the
+   * module name, editable"; this is the editing.
+   *
+   * `null` when not renaming, so an empty string is a real value you can be
+   * holding mid-edit.
+   */
+  let renaming = $state<string | null>(null);
+  let renameEl = $state<HTMLInputElement | null>(null);
+  $effect(() => {
+    renameEl?.select();
+  });
+
+  /**
+   * What the title would be if you never touched it.
+   *
+   * Compared rather than stored, because a flag would have to be maintained by
+   * every path that writes a title and this cannot drift. An untouched name is
+   * shown as an invitation — the same idiom as the Explain section's, one level
+   * up: nothing is missing, there is just something worth doing.
+   */
+  const seededTitle = $derived(
+    origin?.outline?.tests?.module ??
+      origin?.outline?.modules?.[0]?.name ??
+      origin?.filename ??
+      "",
+  );
+
+  /**
+   * The moment a gloom stops being called after its module.
+   *
+   * Diffed against the *previous* title, so this fires on the transition rather
+   * than on the state — and the first paint of a gloom you named last week is
+   * seeded silently, because that is not an achievement. Exactly the file dot's
+   * rule, one level up. `lastTitle` is a plain `let`: bookkeeping only this
+   * effect reads, and a `$state` read and written in one effect is a freeze.
+   */
+  let named = $state(false);
+  let lastTitle = "";
+  $effect(() => {
+    const now = doc?.title ?? "";
+    const was = lastTitle;
+    lastTitle = now;
+    if (!was || !now || now === was) return;
+    named = true;
+    const off = setTimeout(() => (named = false), 900);
+    return () => clearTimeout(off);
+  });
+
+  function startRename() {
+    if (doc) renaming = doc.title;
+  }
+
+  async function commitRename() {
+    if (!doc || renaming === null) return;
+    const title = renaming.trim();
+    renaming = null;
+    if (!title || title === doc.title) return;
+    // An autosave may be in flight, so the server's markdown is not necessarily
+    // the sentence you are half-way through typing. Same one-payload habit as
+    // every other mutation here: take the row, put your own markdown back.
+    const keep = markdown;
+    try {
+      doc = { ...(await ipc.saveDoc({ id: doc.id, title })), markdown: keep };
+    } catch (e) {
+      error = String(e);
+    }
+  }
   const outline = $derived(file?.outline ?? null);
   /**
    * Staleness is per-file now, which is the whole reason there is a snapshot per
@@ -413,6 +487,12 @@
     // Re-read the reading rather than trusting the local shape: the origin's
     // file row is created server-side, and this is the one call that returns it.
     adopt(await ipc.openReading(doc.id), opened.path);
+
+    // A NEW gloom opens with its name selected, so naming it costs a sentence
+    // and skipping it costs one key. This is the only moment it happens: on a
+    // gloom you already named, stealing the caret would be an interruption
+    // rather than an invitation.
+    renaming = doc.title;
   }
 
   async function openExisting(summary: DocSummary, prefer?: string | null) {
@@ -701,9 +781,10 @@
        describing the file you just left, so it steps aside. -->
   {#if file && !loading}
     <div class="apphead">
-      <button class="btn home" onclick={goHome} title="Back to your recent readings">
+      <button class="btn home" onclick={goHome} title="Back to your recent glooms">
         ← Home
       </button>
+
 
       <!-- The file's identity lives in the code pane's own header, where the
            filename doubles as a copy-the-path button. This row is for the
@@ -720,7 +801,7 @@
         <button
           class="filebtn"
           onclick={() => (showReadingFiles = true)}
-          title="Files in this reading (⌘⇧T)"
+          title="Files in this gloom (⌘⇧T)"
         >
           <i class={fileState} class:earned={earnedPath === file?.path}></i>
           <span>{file?.filename ?? ""}</span>
@@ -760,7 +841,12 @@
     <div class="welcome">
       <img src="/app-icon.png" alt="" class="hero" />
       <h1>lgtm</h1>
-      <p>Open an Elixir file. The source goes left, your explanation goes right.</p>
+      <!-- Where the word is introduced, once, to someone who has never seen it.
+           A name nobody defines is a name nobody adopts. -->
+      <p>
+        Open an Elixir file to start a <b>gloom</b> — one revision journey. The
+        source goes left, your explanation goes right.
+      </p>
       <div class="actions">
         <button class="btn primary" onclick={() => (showFiles = true)}>
           Find a file… <kbd>⌘O</kbd><kbd>⌘T</kbd>
@@ -787,7 +873,7 @@
         <div class="recents">
           <div class="rhead">
             <span>Pick up where you left off</span>
-            <button class="more" onclick={() => (showLibrary = true)}>all readings →</button>
+            <button class="more" onclick={() => (showLibrary = true)}>all glooms →</button>
           </div>
           {#each recents as doc (doc.id)}
             <button class="recent" onclick={() => openExisting(doc)}>
@@ -802,6 +888,60 @@
       {/if}
     </div>
   {:else}
+    <!-- The gloom's own row: what this journey is *for*, in its own colour so it
+         is not read as one more control in the toolbar above it. A file's name
+         tells you what you are looking at; only this says why you opened it. -->
+    {#if doc}
+      <!-- Keyed on the id, so opening a gloom replays the band's arrival and
+           typing in it never does. A remount is cheaper than a class and a
+           timer, and there is nothing here to preserve across one. -->
+      {#key doc.id}
+        <div
+          class="gloombar arriving"
+          class:named
+          class:unnamed={doc.title === seededTitle && renaming === null}
+        >
+          {#if renaming !== null}
+            <input
+              class="gname"
+              bind:value={renaming}
+              bind:this={renameEl}
+              spellcheck="false"
+              placeholder="What is this gloom for?"
+              onblur={commitRename}
+              onkeydown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  commitRename();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  renaming = null;
+                }
+                e.stopPropagation();
+              }}
+            />
+          {:else}
+            <button class="gname" onclick={startRename} title="Rename this gloom">
+              {doc.title}<i>✎</i>
+            </button>
+          {/if}
+
+          <span class="spacer"></span>
+
+          {#if doc.title === seededTitle && renaming === null}
+            <!-- Still carrying the name the module gave it. An invitation, not an
+                 error — the same idiom as the Explain section's italic line. -->
+            <span class="nudge">say what you are here to find out</span>
+          {/if}
+
+          <!-- The wordmark, not a badge: at the right-hand end of the line the
+               name sits on, it reads as what the line *is* rather than as a chip
+               attached to it. -->
+          <span class="glabel">Gloom</span>
+        </div>
+      {/key}
+    {/if}
+
     <div class="split">
       <div class="pane" style:flex="0 0 {basis}%">
         {#if currentStale}
@@ -851,7 +991,7 @@
       <div class="pane grow">
         {#if chooser}
           <div class="chooser">
-            <h2>This file is already part of a reading</h2>
+            <h2>This file is already part of a gloom</h2>
             <ul>
               {#each chooser as c (c.id)}
                 <li>
@@ -993,6 +1133,272 @@
     overflow: hidden;
   }
 
+  /* Its own band, in its own colour: this is not another control in the toolbar,
+     it is the answer to "why am I reading all this". Tinted rather than filled —
+     a solid teal strip across a reading tool would be the loudest thing on
+     screen, and it is context, not an alarm. */
+  /* One line: the name at the left where a title belongs and reading starts, the
+     wordmark at the right end of it. Centring it needed a three-column grid and
+     56px of height to hold a stacked caption, and it bought nothing — a title is
+     the first thing on its line, not the middle of it. */
+  .gloombar {
+    position: relative;
+    /* Clips the opening sweep to the band. Nothing here is ever positioned
+       outside it — no popovers, no confirmations — so this cannot repeat the
+       file strip's bug, where `overflow` on one axis silently clipped a
+       confirmation that rendered every time and was visible never. */
+    overflow: hidden;
+    flex: none;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 14px;
+    background: var(--gloom-bg);
+    border-bottom: 1px solid color-mix(in srgb, black 25%, var(--gloom-bg));
+  }
+  .gloombar .spacer {
+    flex: 1;
+  }
+  .nudge {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nudge {
+    flex: none;
+    font-size: 10.5px;
+    font-style: italic;
+    color: var(--gloom-dim);
+  }
+  /* Lettering, not a chip. Condensed and spaced out, it reads as a wordmark —
+     the name of the thing you are in — where a filled pill read as a status. */
+  .glabel {
+    flex: none;
+    font-family: var(--display);
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.28em;
+    /* Tracking adds the gap on the RIGHT of the last letter too, which visually
+       pulls the word off the edge. Pull it back. */
+    margin-right: -0.28em;
+    /* The bright teal, which is only legible now that it sits on ink: 7.6:1
+       light, 9.5:1 dark. On the old pale band the same colour was 4.2:1 and had
+       to be pushed darker. */
+    color: var(--gloom);
+  }
+  .gname {
+    position: relative;
+    font-family: var(--serif);
+    font-size: 16.5px;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-align: left;
+    /* Near-white on the ink: a masthead's title. The original `color: var(--fg)`
+       sat further down this same rule and quietly won — one declaration block,
+       two colours, and the later one always takes it. */
+    color: var(--gloom-ink);
+    max-width: 620px;
+    min-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    padding: 3px 8px;
+    cursor: text;
+  }
+  .gname i {
+    font-style: normal;
+    margin-left: 8px;
+    opacity: 0;
+    font-size: 12px;
+    color: var(--gloom);
+  }
+  /* On ink, "you can edit this" is a lift, not a tint: white at 8% is the only
+     hover that works on a dark surface without inventing a second colour. */
+  .gname:hover {
+    border-color: color-mix(in srgb, white 18%, transparent);
+    background: color-mix(in srgb, white 8%, transparent);
+  }
+  .gname:hover i {
+    opacity: 1;
+  }
+  /* Still carrying the name its module gave it: greyed, because it is a
+     placeholder that happens to be true rather than something you decided — and
+     the colour is what a named gloom earns. */
+  .gloombar.unnamed .gname {
+    color: var(--gloom-dim);
+    font-style: italic;
+  }
+  /* Editing happens in place, not in a box. A white field dropped into a tinted
+     band is a form appearing in the middle of the chrome — and the name is one
+     line of prose, so while you change it, it should look like the line it
+     already was, with a rule underneath saying it is live. */
+  input.gname {
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-bottom: 2px solid var(--gloom);
+    border-radius: 0;
+    color: var(--gloom-ink);
+    outline: none;
+    padding: 2px 8px 1px;
+    /* Wide enough for a sentence, and it must not resize as you type: a field
+       that grows under the caret moves the text you are reading. */
+    width: min(620px, 46vw);
+  }
+  /* A gloom opens by settling into place: the band is the first thing that says
+     *which* journey you are in, and it arriving from above is what makes the
+     rest of the window read as its contents rather than as a new screen. */
+  .gloombar.arriving {
+    animation: bandIn var(--fast) var(--ease-out) both;
+  }
+  @keyframes bandIn {
+    from {
+      opacity: 0;
+      transform: translateY(-6px);
+    }
+  }
+  /* Opening a gloom says which one you are in — across the WHOLE band, not just
+     behind the name. The band is the thing that means "this session"; lighting
+     only the title made it read as a note about that one word.
+
+     180ms after the band lands, so it reads as the *consequence* of arriving
+     rather than as a second thing happening at the same time — the reach block's
+     arrival-ring timing argument, reused. Once, then nothing: a session starting
+     is an event, not a state that needs holding.
+
+     Opacity only, so nothing in the band moves while it happens — every label in
+     here is text you might already be reading. */
+  /* On ink, a wash does not read. A flat overlay at 18% over a dark band is a
+     change of about two percent luminance — it was there, and it was invisible.
+     Light moving across a dark surface is what a dark surface *can* show, so the
+     greeting is a sweep: one pass of the gloom's own teal, left to right, once.
+
+     Two layers, because either alone is weak: the sweep says something happened,
+     and a brief overall lift under it keeps the band from looking unlit while the
+     sweep is still at the left-hand end. */
+  .gloombar.arriving::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 45%;
+    pointer-events: none;
+    background: linear-gradient(
+      100deg,
+      transparent,
+      color-mix(in srgb, var(--gloom) 42%, transparent),
+      transparent
+    );
+    animation: bandSweep var(--greet) var(--ease-in-out) 0.18s both;
+  }
+  .gloombar.arriving::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: color-mix(in srgb, var(--gloom) 14%, transparent);
+    animation: bandLift var(--greet) var(--ease-in-out) 0.18s both;
+  }
+  /* -120% to 320% of a 45%-wide pane: fully off one edge to fully off the other,
+     checked rather than eyeballed. */
+  @keyframes bandSweep {
+    from {
+      transform: translateX(-120%);
+      opacity: 0;
+    }
+    18% {
+      opacity: 1;
+    }
+    82% {
+      opacity: 1;
+    }
+    to {
+      transform: translateX(320%);
+      opacity: 0;
+    }
+  }
+  /* Up quickly, down slowly. A symmetric fade reads as a flash; a long tail reads
+     as settling, which is what opening a gloom is. */
+  @keyframes bandLift {
+    from {
+      opacity: 0;
+    }
+    22% {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+
+  /* The name lands. One wipe under it, in the gloom's own colour, then gone —
+     the same underline idiom a reference uses when it becomes the current one,
+     and for the same reason: this is a state you just caused, and a state you
+     caused is the one place a small reward is honest. It does not persist,
+     because a permanent underline would be a decoration rather than an event. */
+  .gloombar.named .gname::after {
+    content: "";
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 1px;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--gloom);
+    transform-origin: left center;
+    animation: nameWipe var(--trace) var(--ease-out) both;
+  }
+  @keyframes nameWipe {
+    0% {
+      transform: scaleX(0);
+      opacity: 1;
+    }
+    58% {
+      transform: scaleX(1);
+      opacity: 1;
+    }
+    100% {
+      transform: scaleX(1);
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* The band is already in place; arriving was the whole motion. */
+    .gloombar.arriving {
+      animation: none;
+    }
+    /* The sweep hands its job to the lift: the band still greets you in the
+       gloom's colour, it just does not travel to do it. Deleting it would take
+       the signal with it, and on ink the signal is the only thing there is. */
+    .gloombar.arriving::before {
+      animation: bandLift var(--greet) ease 0.18s both;
+      width: 100%;
+    }
+    /* The wipe becomes a rule that appears and fades: the *event* survives, only
+       the travel is dropped. Deleting it would take the signal with it. */
+    .gloombar.named .gname::after {
+      animation: nameHold var(--trace) ease both;
+    }
+    @keyframes nameHold {
+      0%,
+      58% {
+        opacity: 1;
+      }
+      100% {
+        opacity: 0;
+      }
+    }
+  }
+  input.gname::placeholder {
+    color: var(--gloom-dim);
+    font-weight: 400;
+  }
   .titlebar {
     height: 38px;
     flex: none;
@@ -1423,9 +1829,14 @@
     background: var(--bg-inset);
     border-left-color: var(--accent);
   }
+  /* A gloom's name is set in the serif wherever it is *shown*, so the name you
+     gave it is recognisable as the same thing in the band, the library and here.
+     Only the name — the filename and the path stay mono and sans, since they are
+     data rather than something you wrote. */
   .recent .title {
-    font-size: 12.5px;
-    font-weight: 550;
+    font-family: var(--serif);
+    font-size: 13.5px;
+    font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

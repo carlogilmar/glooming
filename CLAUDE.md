@@ -173,6 +173,87 @@ src-tauri/
 
 ## Core concepts
 
+### To the user, a reading is a **gloom**
+
+The name is a UI label and nothing else: `Reading`, `ReadingFile` and
+`open_reading` stay as they are, and `reading` in the frontend still also means
+read mode. Renaming the internals was considered and declined as churn.
+
+**A gloom is one revision journey** — your note, and the files it led you
+through. It gets its own band under the app header, and the band is **filled with
+ink, not tinted**: `--gloom-bg` is a deep teal-black in both themes, with
+`--gloom-ink` (near-white) on it. A masthead is the one element that can be dark in
+either theme without looking like a mistake, and it gives the window a top edge to
+hang from — which a 9% wash never did.
+
+Teal because it is the one hue carrying no meaning in the chrome: not the accent,
+which means *selected* in both panes; not `--read` gold, which is a mode. `--gloom`
+itself is now the **bright** teal, and it survives as the accent *inside* the band —
+the wordmark, the rule under the name while you type, the wash when it opens. On
+ink it measures 7.6:1; on the old pale band the same colour was 4.2:1 and had to be
+pushed darker to be legible at all. Four tokens, because a dark surface needs its
+own ink and its own muted grey: `--gloom`, `--gloom-bg`, `--gloom-ink`,
+`--gloom-dim`.
+
+**One line: the name at the left, the wordmark at the right end of it.** A title is
+the first thing on its line, not the middle of it — centring it needed a
+three-column grid and 56px of height to hold a stacked caption, and bought nothing.
+A file count lived on the right briefly and was cut: the file button in the row
+above already says it, and the same fact in two places is one place too many.
+
+**`GLOOM` is lettering, not a badge.** Condensed and tracked out at `0.28em` in
+`--display`, it reads as the name of the thing you are in; a filled pill read as a
+status. The stack names Oswald first, so it is used if you have it, and falls back
+to the condensed faces macOS ships — the app is offline and its CSP blocks a
+webfont. Dropping a woff2 into `static/` and `@font-face`-ing it is same-origin and
+would work, if Oswald should be certain rather than likely. Tracking also adds its
+gap after the *last* letter, so the word carries `margin-right: -0.28em` or it
+floats off the edge.
+
+**The name is near-white on the ink**, which is the only thing in either pane set
+that way — a masthead's title, not a label. An unnamed gloom stays `--gloom-dim`
+and italic: the white is what naming it earns. Measured on the band: **12.5:1**
+light and **15.6:1** dark for the name, 7.6/9.5 for the wordmark, 6.2/7.8 for the
+invitation. Hover is white at 8%, because on a dark surface "you can edit this" is
+a lift rather than a tint, and a tint would have meant inventing a second colour.
+
+**Renaming happens in place, not in a box.** A white input dropped into a tinted
+band is a form appearing in the middle of the chrome. The field is transparent
+with a `--gloom` rule under it, so the name looks like the line of prose it
+already was and the rule is what says it is live.
+
+**The name is centred, and set in a serif.** `--serif` is a system stack (`ui-serif`
+→ New York → Georgia); the app is offline and its CSP blocks a webfont, so nothing
+is downloaded. In a tool made of monospace and UI sans, a serif reads as a *title*
+rather than as one more label — it is the one line here you wrote as prose. The
+band is `grid-template-columns: 1fr auto 1fr`, not flex, so the name sits in the
+middle of the **window**: with flex it would drift as the count went from "1 file"
+to "12 files", and a title that moves is not a title. The same serif is used
+wherever a gloom's name is *shown* — the library, the welcome recents — so it is
+recognisable as the same thing; filenames and paths stay mono and sans, because
+they are data rather than something you wrote.
+
+**A gloom has a name, and it is `docs.title`.** That column has said "seeded from
+the module name, editable" since the first migration and `save_doc` always took a
+title — nothing had ever done the editing. Click the name to rename it, `↵` to
+commit, `esc` to throw the edit away.
+
+**A new gloom opens with its name selected**, so naming it costs a sentence and
+skipping it costs one key. That is the only moment it happens: on a gloom you
+have already named, taking the caret is an interruption rather than an
+invitation. There is deliberately no dialog on the way in — asking for a name
+*before* you have read anything asks at the one moment you cannot answer, which
+is the same reason there is no "new group?" prompt.
+
+**An untouched name shows as an invitation**, dimmed with a line saying what it
+is for. `seededTitle` is *derived and compared* rather than stored as a flag: a
+flag would have to be maintained by every path that writes a title, and this one
+cannot drift. Same idiom as the Explain invitation and the hollow file dot.
+
+The rename takes the server's row but puts **your** markdown back — an autosave
+may be in flight, and adopting the server's copy would lose the sentence you are
+half-way through. Same one-payload habit as the file mutations.
+
 ### A doc is a *reading*, not a note
 
 One row in `docs` = one file + the markdown you wrote about it. It stores a
@@ -836,6 +917,7 @@ in `app.css` with the rest, in **two tiers**:
 | `--wipe` | 0.34s | transient — a thing arrived somewhere long |
 | `--trace` | 0.62s | transient — a connection being drawn |
 | `--ring` | 0.7s | transient — one pulse, then nothing |
+| `--greet` | 1.35s | transient — a session announcing itself |
 
 **Nothing added since the first pass is ambient**, and that is deliberate rather
 than incidental: the app's budget for infinite motion is already spent, and more
@@ -899,6 +981,40 @@ Each animation carries information rather than decorating:
   16ms in CSS, and **capped at row 12** — 200 functions would otherwise cascade
   for 3.4s, and waiting on an animation to look a name up is worse than no
   animation. Both columns share the index so they arrive together.
+- **A gloom announces which one it is.** One breath of `--gloom` across the
+  **whole band** when it opens, 180ms after the band lands so it reads as the
+  *consequence* of arriving rather than as a second thing happening at once — the
+  reach block's arrival-ring timing argument, reused. Lighting only the title read
+  as a note about that one word; the band is what means "this session". Opacity
+  only, so nothing moves while it happens — every label in there is text you might
+  already be reading. Once, then nothing: a session starting is an event, not a
+  state that needs holding.
+
+  It runs at `--greet`, its own token, and **not** at `--ring`: that is the beat of
+  a hit landing, and a greeting at that speed reads as a flicker — as though
+  something went wrong. The curve is asymmetric too, up in 22% and down over the
+  rest, because a symmetric fade is a flash where a long tail is something
+  settling.
+
+  **On ink, a wash does not read.** The flat overlay that worked on the pale band
+  moved the band's luminance by 4 points and was, in practice, invisible. Light
+  *moving across* a dark surface is what a dark surface can show, so the greeting
+  is a **sweep**: one pass of `--gloom` from left to right, `-120%` to `320%` of a
+  45%-wide pane — off one edge to off the other, computed rather than eyeballed —
+  with a brief overall lift under it so the band is not unlit while the sweep is
+  still at the left-hand end. Peak is 16 points of luminance, four times the wash.
+  Under reduced motion the sweep hands its job to the lift and simply stops
+  travelling.
+- **A gloom settles in, and its name lands.** The band arrives from 6px above —
+  it is the first thing that says *which* journey you are in, so the rest of the
+  window reads as its contents rather than as a new screen. It is keyed on the
+  doc id rather than gated by a class and a timer: a remount replays the arrival
+  exactly once per gloom and never while you type in it. Naming one then draws a
+  single wipe under the title in `--gloom` and lets it go — the reference chip's
+  underline idiom, for the same reason, and it does not persist, because a
+  permanent underline is a decoration rather than an event. Diffed against the
+  previous title, so it fires on the transition and a gloom you named last week
+  opens silently.
 - **The dot earns its colour.** The file button diffs `referenced` against the
   previous set, so this fires on the *transition* rather than the state — and the
   first paint of an already-written note is seeded silently, because that is not
@@ -957,7 +1073,16 @@ rendered already-open has no state to transition *from*.
 `scripts/motion-audit.py` enforces this, and it compares **selector text**, not
 just animation names — **per selector part on both sides**, since a grouped rule
 needs every part overridden and comparing a whole comma-joined selector against a
-set of parts matched nothing at all. It also covers **transitions that move something** — added
+set of parts matched nothing at all. A **finite** animation that only fades is exempt outright — the same exemption an
+opacity-only transition already gets, and for the same reason: reduced motion drops
+movement, and there is none. `infinite` is excluded from that, because an ambient
+fade that never stops is exactly what the setting is asking about even though
+nothing travels. It also accepts a reduced-motion override that **still fades** — an `animation` whose
+keyframes touch only opacity or colour — on the same grounds it already accepts an
+opacity-only transition: where an animation's end state is *gone*, replacing it
+with `animation: none` leaves the thing it was fading out permanently on screen,
+which is worse than the motion was. It also covers **transitions that move
+something** — added
 after three keyframe animations became transitions and silently left the audit's
 field of view. Opacity and colour transitions are exempt, since reduced motion
 keeps those, and an override counts if it *stops the movement*, whether by

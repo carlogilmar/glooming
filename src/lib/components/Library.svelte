@@ -153,7 +153,7 @@
         <p class="empty">Loading…</p>
       {:else if !flat.length}
         <p class="empty">
-          {query ? `Nothing matches “${query}”.` : "No docs yet — open a file to start one."}
+          {query ? `Nothing matches “${query}”.` : "No glooms yet — open a file to start one."}
         </p>
       {:else}
         {#each groups as group (group.label)}
@@ -173,7 +173,7 @@
               {#if confirming === doc.id}
                 <div class="confirm">
                   <div class="what">
-                    <b>Delete this explanation?</b>
+                    <b>Delete this gloom?</b>
                     <span>
                       Removes the markdown you wrote and the
                       {doc.fileCount > 1
@@ -191,7 +191,7 @@
                       Cancel
                     </button>
                     <button class="btn del" onclick={(e) => (e.stopPropagation(), confirmDelete(doc))}>
-                      Delete explanation
+                      Delete gloom
                     </button>
                   </div>
                 </div>
@@ -352,9 +352,12 @@
     min-width: 0;
     flex: 1;
   }
+  /* The gloom's name, in the same serif the band sets it in. */
   .main b {
     display: block;
-    font-weight: 550;
+    font-family: var(--serif);
+    font-size: 13.5px;
+    font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

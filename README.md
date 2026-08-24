@@ -24,6 +24,10 @@ rarely lives in one file.
 - **Two panes, one selection.** Click a function in your explanation and the
   code pane scrolls to it, highlights every clause of it, tints its `@spec` in
   its own colour, and dims the rest of the file to 32% so nothing else competes.
+- **A gloom is one revision journey.** Your note, and the files it led you
+  through. It gets a name — click it in the teal band under the header, or type
+  one the moment a gloom is created — so a week later you know why you opened
+  four files, not just which ones.
 - **Nothing is written for you.** Opening a file writes a title, the module's own
   `@moduledoc`, and a blank page. The explanation is the part you came to do, and a
   generated first draft would only give you something to skim.

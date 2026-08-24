@@ -164,9 +164,9 @@
        rule about scaling from a trigger is for popovers anchored to one. 200ms
        sits at the bottom of the 200–500ms budget a modal is allowed, because this
        one opens over work you were in the middle of. -->
-  <div class="panel" role="dialog" aria-label="Files in this reading">
+  <div class="panel" role="dialog" aria-label="Files in this gloom">
     <div class="top">
-      <h2>Files in this reading</h2>
+      <h2>Files in this gloom</h2>
       <span class="c">{hits.length} of {files.length}</span>
       <span class="spacer"></span>
       <button class="btn" onclick={onclose}>esc</button>
@@ -208,7 +208,7 @@
               class="x"
               role="button"
               tabindex="-1"
-              title="Remove from this reading"
+              title="Remove from this gloom"
               onclick={(e) => {
                 e.stopPropagation();
                 confirming = confirming === row.h.f.path ? null : row.h.f.path;
@@ -243,7 +243,7 @@
 
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
       <div class="addrow" onclick={onadd}>
-        + &nbsp;Add a file to this reading… <kbd>⌘T</kbd>
+        + &nbsp;Add a file to this gloom… <kbd>⌘T</kbd>
       </div>
     </div>
 

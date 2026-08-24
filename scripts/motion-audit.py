@@ -35,6 +35,21 @@ def selector_at(s, at):
     head = re.sub(r'/\*.*?\*/', ' ', head, flags=re.S)
     return ' '.join(head.split())
 
+MOVERS = r'\b(transform|translate|scale|rotate|height|width|top|left|right|bottom|margin|padding)\b'
+
+
+def still_only_fades(s, name):
+    """True if `@keyframes name` animates nothing that moves."""
+    m = re.search(r'@keyframes\s+' + re.escape(name) + r'\s*\{', s)
+    if not m:
+        return False
+    i, d = m.end(), 1
+    while i < len(s) and d:
+        d += 1 if s[i] == '{' else -1 if s[i] == '}' else 0
+        i += 1
+    return not re.search(MOVERS, s[m.end():i])
+
+
 live, covered, files = [], {}, {}
 for root, _, fs in os.walk('src'):
     for f in sorted(fs):
@@ -45,13 +60,28 @@ for root, _, fs in os.walk('src'):
         blocks = rm_blocks(s)
         inside = lambda i: any(a <= i < b for a, b in blocks)
 
-        for m in re.finditer(r'animation(?:-name)?:\s*([\w-]+)', s):
-            name, sel = m.group(1), selector_at(s, m.start())
+        for m in re.finditer(r'animation(?:-name)?:\s*([\w-]+)([^;}]*)', s):
+            name, rest, sel = m.group(1), m.group(2), selector_at(s, m.start())
             if inside(m.start()):
-                if name == 'none':
+                # `none` covers a rule, and so does an animation that no longer
+                # MOVES anything — one whose keyframes touch only opacity or
+                # colour. Same principle already applied to transitions: reduced
+                # motion means gentler, not nothing, and it is the better
+                # override where the animation's end state is "gone". Deleting
+                # such a rule outright would leave the thing it fades out
+                # permanently on screen, which is worse than the motion was.
+                if name == 'none' or still_only_fades(s, name):
                     for part in sel.split(','):
                         covered.setdefault(p, set()).add(part.strip())
             elif name != 'none':
+                # A FINITE animation that only fades needs no rule at all — the
+                # same exemption an opacity-only transition already gets, and for
+                # the same reason: reduced motion drops movement, and there is
+                # none here. `infinite` is excluded from the exemption, because an
+                # ambient fade that never stops is exactly what the setting is
+                # asking about even though nothing travels.
+                if 'infinite' not in rest and still_only_fades(s, name):
+                    continue
                 # Per selector PART, on both sides. A grouped rule needs every
                 # part overridden — covering three of four leaves one animation
                 # running under reduced motion, and comparing the whole comma

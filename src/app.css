@@ -28,6 +28,20 @@
      bright enough to need ink. 5.1:1 and 9.4:1 respectively. */
   --read:      #8a6a14;
   --read-ink:  #ffffff;
+  /* The gloom's own colour. Not the accent — that means "selected" in both
+     panes, and a full-width band in it would read as a selection rather than as
+     the name of what you are doing. Not `--read` gold either, which is a mode.
+     Teal is the one hue in the palette that carries no meaning in the chrome.
+
+     The band is FILLED with the deep tone, not tinted with the bright one. A
+     masthead in ink is the one element that can be dark in either theme without
+     looking like a mistake, and it gives the window a top edge to hang from —
+     which a 9% wash never did. `--gloom` itself survives as the accent inside
+     it: the rule under the name while you type, and the wash when it opens. */
+  --gloom:     #5fd6c4;
+  --gloom-bg:  #123634;
+  --gloom-ink: #f6faf9;
+  --gloom-dim: #9fb8b4;
   --sel:       #eaf1fd;
   --shadow:    0 1px 2px rgba(16, 24, 40, .04);
 
@@ -60,6 +74,19 @@
   --syn-doc:   #6b7280;   /* @doc / @moduledoc text — grey, like a comment */
 
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  /* The gloom's name, and nothing else. A serif in a tool made of monospace and
+     UI sans reads as a *title* rather than as another label — it is the one line
+     here you wrote as prose. System faces only: the app is offline and its CSP
+     blocks a webfont, and "New York" ships with macOS. */
+  /* The gloom wordmark, and nothing else. Condensed, so uppercase at this size
+     reads as lettering rather than as a shouting label. Oswald is named first so
+     it is used if you have it installed; everything after it ships with macOS —
+     the app is offline and its CSP blocks a webfont, so nothing is fetched. To
+     make Oswald certain, drop a woff2 in `static/` and @font-face it: that is
+     same-origin and the CSP allows it. */
+  --display: "Oswald", "Avenir Next Condensed", "HelveticaNeue-CondensedBold",
+    "Arial Narrow", var(--sans);
+  --serif: ui-serif, "New York", "Iowan Old Style", Georgia, "Times New Roman", serif;
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
 
   /* ---- motion, in two tiers (see mockup/motion.html) ----------------------
@@ -84,6 +111,11 @@
   --wipe:  0.34s;
   --trace: 0.62s;   /* transient: a connection being drawn */
   --ring:  0.7s;    /* transient: one pulse, then nothing */
+  /* transient: a session announcing itself. Longer than every other one-shot
+     here on purpose — --ring is the beat of a hit landing, and at that speed a
+     wash across a whole band reads as a flicker, like something went wrong. A
+     greeting has to be slow enough to be read as deliberate. */
+  --greet: 1.35s;
 
   /* ---- curves, by direction ------------------------------------------------
      One curve was doing four jobs. Easing is chosen by what the motion *is*,
@@ -123,6 +155,12 @@
   --mark:      #bb9af7;
   --read:      #d9b45a;
   --read-ink:  #17130c;
+  /* A shade deeper than the light theme's band, so it still reads as a step
+     ABOVE the app's own dark rather than merging into it. */
+  --gloom:     #5eead4;
+  --gloom-bg:  #0d2321;
+  --gloom-ink: #f2f7f6;
+  --gloom-dim: #93aeaa;
   --sel:       #232d45;
   --shadow:    none;
 
