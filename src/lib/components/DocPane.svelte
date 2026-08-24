@@ -15,7 +15,6 @@
     markdown = $bindable(""),
     files = [],
     current = null,
-    filename = "",
     dirty = false,
     stale = false,
     onreconcile,
@@ -30,7 +29,6 @@
     files: ReadingFile[];
     /** The file on screen in the code pane. */
     current: string | null;
-    filename: string;
     dirty: boolean;
     stale: boolean;
     onreconcile?: () => void;
@@ -1071,41 +1069,41 @@
       <span class="tag">Reader</span>
     </div>
   {/if}
+  <!-- The strip is controls and nothing else.
+       It used to open with `impact_stage.ex.md`, which named a file that does not
+       exist — the note is a row in a database, and the `.md` was an invention. The
+       gloom's name is in the band above and the source file's name is on the pane
+       beside it, so the only thing this row was adding was a third name for the
+       same reading. -->
   <div class="panehead">
     {#if dirty}<span class="dot" title="unsaved"></span>{/if}
-    <span>{filename ? `${filename}.md` : "no doc"}</span>
-    {#if note}<span class="note">{note}</span>{/if}
-    <span class="spacer"></span>
-    {#if stale}
-      <button class="btn icon warn" onclick={() => onreconcile?.()}>⟳ Code changed — reconcile</button>
-    {/if}
-    <FontStepper {font} label="text" />
+    <!-- Read is on the left, where the row starts. It is the one control here
+         that changes what the whole window does, and among four right-aligned
+         buttons it read as the third of them. -->
     {#if reading || (canRead && !editing && stops.length)}
       <button
         class="btn icon read"
         class:on={reading}
         onclick={toggleReading}
-        title="Scroll the doc and the code follows your reading"
+        title="Scroll the doc and the code follows your reading (⌘R)"
       >
         {reading ? "▶ Reading" : "▷ Read"}
       </button>
     {/if}
-    <div class="toggle">
-      <button
-        class:on={!editing}
-        onclick={() => {
-          editing = false;
-        }}>Preview</button
-      >
-      <button
-        class:on={editing}
-        onclick={() => {
-          // Scroll-driven state while typing is chaos.
-          editing = true;
-          if (reading) toggleReading();
-        }}>Edit</button
-      >
-    </div>
+    {#if note}<span class="note">{note}</span>{/if}
+    <span class="spacer"></span>
+    {#if stale}
+      <button class="btn icon warn" onclick={() => onreconcile?.()}>⟳ Code changed — reconcile</button>
+    {/if}
+    <!-- One button, not two. You are always in exactly one of the two modes, so a
+         segmented control spent half its width telling you where you already are.
+         The label is what the click DOES. -->
+    <button class="btn icon" onclick={toggleEdit} title="⌘E">
+      {editing ? "Preview" : "Edit"}
+    </button>
+    <!-- Last, as in the code pane's header: the same control in the same place on
+         both sides of the window. -->
+    <FontStepper {font} label="text" />
   </div>
 
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1271,12 +1269,6 @@
     border-bottom-color: var(--doc-line);
     transition: background 0.3s ease;
   }
-  /* The filename, which is what the strip is *about*. */
-  .panehead > span:not(.spacer):not(.note) {
-    font-family: var(--mono);
-    font-size: 11.5px;
-    color: var(--fg);
-  }
   /* Controls that read as controls.
      On the raised strip each one sits on the paper colour with a border of its
      own — an inset chip on a raised bar. Before this they were transparent text
@@ -1286,7 +1278,6 @@
      `:not(.read):not(.warn)` because those two carry their own fill and would
      lose it to a scoped selector. */
   .panehead .btn:not(.read):not(.warn),
-  .panehead .toggle,
   .panehead :global(.fontsize) {
     background: var(--doc-bg);
     border-color: var(--doc-line);
@@ -1299,14 +1290,6 @@
   }
   /* Preview / Edit is the most-read fact in the strip, so the active half is
      accent-tinted rather than one grey sitting next to another. */
-  .panehead .toggle button.on {
-    background: color-mix(in srgb, var(--accent) 13%, transparent);
-    color: var(--accent);
-    font-weight: 600;
-  }
-  .panehead .toggle button:not(.on):hover {
-    color: var(--fg);
-  }
   /* Read mode keeps its gold — it is the one control here that changes what
      scrolling *does*, so it gets weight and, when on, a fill that lifts. */
   .panehead .btn.read {
@@ -1351,26 +1334,48 @@
     border-color: color-mix(in srgb, var(--priv) 40%, transparent);
   }
 
-  .toggle {
-    display: flex;
-    border: 1px solid var(--line);
-    border-radius: 5px;
-    overflow: hidden;
+  /* Read mode keeps its gold — it is the one control here that changes what
+     scrolling *does*, so it gets weight and, when on, a fill that lifts. */
+  .panehead .btn.read {
+    font-weight: 600;
   }
-  .toggle button {
-    font: inherit;
-    font-size: 11px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    background: transparent;
-    color: var(--fg-faint);
-    border: 0;
-    padding: 3px 10px;
-    cursor: pointer;
+  .panehead .btn.read.on {
+    box-shadow: 0 1px 5px color-mix(in srgb, var(--read) 40%, transparent);
   }
-  .toggle button.on {
-    background: var(--bg-inset);
-    color: var(--fg);
+  /* The only control here that reports a *problem*, so it is filled: the others
+     are things you may do, this is a thing you should. */
+  .panehead .warn {
+    background: color-mix(in srgb, var(--priv) 14%, transparent);
+    border-color: color-mix(in srgb, var(--priv) 55%, transparent);
+    font-weight: 600;
+  }
+  .panehead .warn:hover {
+    background: color-mix(in srgb, var(--priv) 22%, transparent);
+    border-color: var(--priv);
+    color: var(--priv);
+  }
+  .panehead .spacer + * {
+    margin-left: 2px;
+  }
+  .panebody {
+    flex: 1;
+    overflow: auto;
+    background: var(--doc-bg);
+    color: var(--doc-fg);
+    transition:
+      background 0.3s ease,
+      color 0.3s ease;
+  }
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--priv);
+    display: inline-block;
+  }
+  .warn {
+    color: var(--priv);
+    border-color: color-mix(in srgb, var(--priv) 40%, transparent);
   }
 
   .editwrap {

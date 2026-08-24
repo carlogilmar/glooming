@@ -420,9 +420,12 @@
     })),
   );
 
-  // ---- sticky function header -------------------------------------------
-  // Deep inside a long function you lose track of which one you're in. This
-  // pins the enclosing signature to the top of the pane.
+  // ---- where the scroll is ----------------------------------------------
+  // `topLine` drives the vim motions (H, M, L, ⌃d) and nothing else now: the
+  // sticky signature that used to hang off it was removed. It named the function
+  // you were inside, which sounds useful and read as a fourth selection state —
+  // a highlighted bar at the top of the pane that was not the thing you had
+  // selected, in a pane whose whole job is to show you what you selected.
 
   /** First line currently visible at the top of the scroll container. */
   let topLine = $state(1);
@@ -471,29 +474,12 @@
     });
   }
 
-  // Resizing rewraps every line, so row heights change and the sticky header's
-  // answer goes stale until the next scroll. Recompute it directly.
+  // Resizing rewraps every line, so row heights change and `topLine` goes stale
+  // until the next scroll. Recompute it directly.
   $effect(() => {
     const onResize = () => onScroll();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  });
-
-  /**
-   * The function enclosing the top visible line — but only once its own `def`
-   * line has scrolled out of sight. While the definition is on screen the
-   * header would just be repeating it.
-   */
-  const sticky = $derived.by(() => {
-    const n = topLine;
-    for (const f of outline?.modules?.[0]?.functions ?? []) {
-      for (const r of f.clauseRanges ?? []) {
-        if (n > r.start && n <= r.end) {
-          return { sig: displaySig(f), visibility: f.visibility, line: r.start };
-        }
-      }
-    }
-    return null;
   });
 
   // Scroll the focused definition into view. scrollIntoView clamps at the end
@@ -727,6 +713,20 @@
   const guided = $derived(focus.reading && dimming);
 
   function onCodeClick(e: MouseEvent) {
+    // ⇧ again, in case mousedown never got it. `painted` makes the repeat free.
+    if (e.shiftKey) {
+      const n = lineOf(e.target);
+      if (n) extendTo(n);
+      return;
+    }
+
+    // A gutter drag ends in a click on the line it finished over; without this it
+    // would immediately drop the range it just made and set the cursor instead.
+    if (dragged) {
+      dragged = false;
+      return;
+    }
+
     // A drag that selects text ends in a click; don't treat that as a click.
     if (window.getSelection()?.toString()) return;
 
@@ -759,9 +759,145 @@
       focus.clear();
       return;
     }
+    const n = parseInt(row.dataset.line ?? "0", 10);
+
     // Anywhere else on a line puts the review cursor on it — one line at a
     // time, a different question from "show me this whole function".
-    focus.setCursor(parseInt(row.dataset.line ?? "0", 10));
+    focus.setCursor(n);
+  }
+
+  /**
+   * A run of lines, selected by hand.
+   *
+   * Clicking one line puts the review cursor on it, which answers "where am I";
+   * a *range* answers "this bit here", which is what you want when the thing you
+   * are reading about is four lines of a pipeline and not a whole function. It
+   * goes through `focus.set` like every other selection, so the doc pane, the
+   * dimming and the hint pill all treat it as one.
+   */
+  /** The range currently painted, so a drag does not re-select it 60× a second. */
+  let painted = "";
+
+  function selectLines(a: number, b: number) {
+    const start = Math.min(a, b);
+    const end = Math.max(a, b);
+    const sig = start === end ? `line ${start}` : `lines ${start}–${end}`;
+    if (sig === painted) return;
+    painted = sig;
+
+    // `select`, NOT `set`. `set` toggles: clicking the already-selected thing
+    // clears it, which is right for a function and fatal for a drag — a pointer
+    // moving inside one line fires dozens of mousemoves with the same range, so
+    // the selection flickered on and off and mostly landed off. The store says
+    // this in its own words: `select` is for "go here", where going where you
+    // already are must never mean going nowhere.
+    focus.select(sig, [{ start, end }]);
+  }
+
+  function lineOf(t: EventTarget | null): number | null {
+    const row = (t as HTMLElement | null)?.closest?.<HTMLElement>(".row[data-line]");
+    const n = row ? parseInt(row.dataset.line ?? "0", 10) : 0;
+    return n > 0 ? n : null;
+  }
+
+  /**
+   * Dragging happens in the GUTTER, not over the code.
+   *
+   * The source is selectable text — that is deliberate, you copy from it — so a
+   * drag across the glyphs has to keep meaning "select this text". The line
+   * numbers are the one column that is not text you would ever copy, which makes
+   * them the natural place for "select these lines", exactly as in an editor.
+   */
+  let dragFrom: number | null = null;
+  /** A drag happened, so the click that ends it is not a click. */
+  let dragged = false;
+
+  /**
+   * ⇧ extends the range from wherever you are.
+   *
+   * Run from **both** mousedown and click, and idempotent because `painted`
+   * swallows the repeat. Mousedown is where it belongs — the browser has not yet
+   * extended its own text selection over the gesture — but a shift-click that
+   * lands on a child element, or after a `preventDefault` the platform decides to
+   * ignore, can arrive as a click and nothing else. Doing it in one place meant
+   * the gesture worked or did not depending on where in a line you clicked.
+   */
+  function extendTo(n: number) {
+    window.getSelection()?.removeAllRanges();
+    const from = focus.cursorLine ?? focus.ranges[0]?.start ?? n;
+    selectLines(from, n);
+  }
+
+  function onCodeDown(e: MouseEvent) {
+    const n = lineOf(e.target);
+    if (!n) return;
+
+    if (e.shiftKey) {
+      e.preventDefault();
+      painted = "";
+      extendTo(n);
+      return;
+    }
+
+    // A drag in the gutter sweeps a range and never selects text.
+    if (!(e.target as HTMLElement).closest(".ln")) return;
+    e.preventDefault();
+    dragFrom = n;
+    painted = ""; // a fresh drag re-paints even the range that is already up
+    selectLines(n, n);
+  }
+
+  /**
+   * A text selection across several lines IS a line selection.
+   *
+   * Dragging the pointer over the code selects text — that has to keep working,
+   * you copy from this pane — but a drag that crosses three lines is unmistakably
+   * "these three lines", and making you repeat the gesture in the gutter to say so
+   * would be a tool arguing with you. So the native selection is read at mouseup
+   * and mapped onto the same `focus` range everything else uses: the text stays
+   * highlighted for the copy, and the file dims around the lines it spans.
+   */
+  function onCodeDrag(e: MouseEvent) {
+    if (dragFrom === null) return;
+    const n = lineOf(e.target);
+    if (!n) return;
+    if (n !== dragFrom) dragged = true;
+    selectLines(dragFrom, n);
+  }
+
+  function linesFromText() {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount || !body) return;
+    const range = sel.getRangeAt(0);
+
+    // Ask the ROWS which of them the range touches, rather than asking the range
+    // which rows its endpoints are in.
+    //
+    // That was the bug: a drag downward routinely ends with `focusNode` set to a
+    // container — `.code`, or the row element itself with an offset — and
+    // `closest(".row")` on a container is null, so the whole gesture was
+    // discarded. `intersectsNode` does not care where the endpoints landed.
+    let first: HTMLElement | null = null;
+    let last: HTMLElement | null = null;
+    for (const row of body.querySelectorAll<HTMLElement>(".row[data-line]")) {
+      if (!range.intersectsNode(row)) continue;
+      if (!first) first = row;
+      last = row;
+    }
+    if (!first || !last) return;
+
+    // A selection that stops at the very start of a row does not include it —
+    // dragging to the beginning of line 20 selects up to 19, which is what the
+    // highlight on screen shows.
+    if (last !== first && range.endOffset === 0) {
+      const rows = [...body.querySelectorAll<HTMLElement>(".row[data-line]")];
+      const back = rows[rows.indexOf(last) - 1];
+      if (back) last = back;
+    }
+
+    const x = parseInt(first.dataset.line ?? "0", 10);
+    const y = parseInt(last.dataset.line ?? "0", 10);
+    if (x > 0 && y > 0) selectLines(x, y);
   }
 
   function onCodeKey(e: KeyboardEvent) {
@@ -781,7 +917,13 @@
   }
 </script>
 
-<svelte:window onkeydown={onVimKey} />
+<svelte:window
+  onkeydown={onVimKey}
+  onmouseup={() => {
+    dragFrom = null;
+    linesFromText();
+  }}
+/>
 
 <div class="pane">
   <div class="panehead">
@@ -803,24 +945,16 @@
        search bar and footer live outside it, so an overlay anchored to the
        stage's bottom can never collide with them. -->
   <div class="stage">
-    {#if sticky}
-    <button
-      class="sticky"
-      class:priv={sticky.visibility === "private"}
-      onclick={() => {
-        const at = locate(sticky.sig, outline?.modules?.[0] ?? null);
-        if (at) focus.set(sticky.sig, at.ranges, at.related, at.spec, at.doc);
-      }}
-      title="Jump to the definition"
-    >
-      <span class="bar"></span>
-      <span class="sig">{sticky.sig}</span>
-      <span class="at">line {sticky.line}</span>
-    </button>
-    {/if}
-
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <div class="panebody" bind:this={body} onclick={onCodeClick} onkeydown={onCodeKey} onscroll={onScroll}>
+    <div
+      class="panebody"
+      bind:this={body}
+      onclick={onCodeClick}
+      onkeydown={onCodeKey}
+      onscroll={onScroll}
+      onmousedown={onCodeDown}
+      onmousemove={onCodeDrag}
+    >
       <div class="code" class:focusing={dimming} class:guided style:font-size="{font.value}px">
         {#each highlighted as html, i}
           {@const n = i + 1}
@@ -1051,50 +1185,6 @@
 
   /* Floats over the code rather than sitting in the flow, so appearing and
      disappearing never shifts the lines you are reading. */
-  .sticky {
-    position: absolute;
-    top: 0; /* the stage already starts below the pane header */
-    left: 0;
-    right: 0;
-    z-index: 3;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 12px;
-    border: 0;
-    border-bottom: 1px solid var(--line);
-    background: color-mix(in srgb, var(--bg-raised) 94%, transparent);
-    backdrop-filter: blur(6px);
-    font: inherit;
-    font-size: 11.5px;
-    text-align: left;
-    cursor: pointer;
-    animation: hintIn var(--fast) var(--ease-out);
-  }
-  .sticky:hover {
-    background: var(--bg-inset);
-  }
-  .sticky .bar {
-    width: 3px;
-    height: 12px;
-    border-radius: 2px;
-    background: var(--pub);
-    flex: none;
-  }
-  .sticky.priv .bar {
-    background: var(--priv);
-  }
-  .sticky .sig {
-    font-family: var(--mono);
-    color: var(--fg);
-  }
-  .sticky .at {
-    font-family: var(--mono);
-    font-size: 10.5px;
-    color: var(--fg-faint);
-    margin-left: auto;
-  }
-
   /* Search sits at the bottom, where vim puts it, and stays visible while a
      search is live so the match count and n/N are never invisible state. */
   .searchbar {
@@ -1204,6 +1294,10 @@
     color: var(--fg-faint);
     opacity: 0.6;
     user-select: none; /* keep line numbers out of a copied selection */
+    /* The gutter is the drag handle for selecting a run of lines, so it says so.
+       `cursor: text` is on the source beside it, and the two columns doing
+       different things is the whole point. */
+    cursor: ns-resize;
   }
   /* The file arrives in the GUTTER, never in the glyphs.
      Motion in the code pane's text is refused on purpose — that surface is for
@@ -1246,6 +1340,17 @@
     from {
       opacity: 0;
     }
+  }
+  /* The native text selection wears the SAME colour as a selected row.
+     Dragging over the code produces both — the browser's highlight on the glyphs
+     and our own tint on the rows it spans — and in two different colours that
+     reads as two selections arguing. `--accent` at 13% over the code surface is
+     exactly what `.row.hit` paints, so where they overlap there is nothing to
+     see, and a part-line selection still shows. Opaque on purpose: a translucent
+     one would stack with the row tint and print twice as strong. */
+  .code ::selection {
+    background: color-mix(in srgb, var(--accent) 13%, var(--code-bg));
+    color: inherit;
   }
   .row .src {
     flex: 1 1 auto;
@@ -1439,11 +1544,10 @@
       animation: none;
       box-shadow: inset 3px 0 0 var(--accent);
     }
-    /* The pills and the sticky header: they translate as they fade in, and a
-       translate is the part of "arrival" that reduced motion is actually asking
-       about. They still appear — just without travelling to get there. */
+    /* The pills: they translate as they fade in, and a translate is the part of
+       "arrival" that reduced motion is actually asking about. They still appear —
+       just without travelling to get there. */
     .copied,
-    .sticky,
     .focushint {
       animation: none;
     }

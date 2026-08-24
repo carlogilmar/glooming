@@ -40,6 +40,10 @@
      it: the rule under the name while you type, and the wash when it opens. */
   --gloom:     #5fd6c4;
   --gloom-bg:  #123634;
+  /* The app header, one step lighter than the gloom's own band. The two stack as
+     a single masthead — actions above, the name of the journey below — instead of
+     a pale toolbar sitting on top of a dark strip and reading as a seam. */
+  --head-bg:   #17403d;
   --gloom-ink: #f6faf9;
   --gloom-dim: #9fb8b4;
   --sel:       #eaf1fd;
@@ -166,6 +170,7 @@
      ABOVE the app's own dark rather than merging into it. */
   --gloom:     #5eead4;
   --gloom-bg:  #0d2321;
+  --head-bg:   #112b29;
   --gloom-ink: #f2f7f6;
   --gloom-dim: #93aeaa;
   --sel:       #232d45;

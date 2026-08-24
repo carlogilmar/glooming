@@ -576,19 +576,6 @@
     referenced = new Set();
   }
 
-  async function reparseNow() {
-    if (doc) {
-      const pending = markdown;
-      adopt(await ipc.openReading(doc.id), currentPath);
-      markdown = pending;
-      return;
-    }
-    if (file) {
-      files = [asReadingFile(await ipc.reparse(file.path))];
-      currentPath = files[0].path;
-    }
-  }
-
   /**
    * Reconcile the origin. Only it has an `lgtm:functions` block — every other
    * file joined the reading without being seeded — so it is the only one there
@@ -819,11 +806,14 @@
       <span class="spacer"></span>
 
       <span class="save" class:dirty>{saving ? "Saving…" : dirty ? "Unsaved" : doc ? "Saved ✓" : ""}</span>
-      <button class="btn" onclick={reparseNow}>Re-parse</button>
+      <!-- Two actions, both about *this* gloom: find a file in the project, or
+           open one from anywhere. Re-parse went — it re-read a file you had not
+           edited, since lgtm never writes; and Library went with it, because the
+           way to another gloom is ← Home, which is the first thing in this row and
+           now looks like it. `⌘K` still opens the library from anywhere. -->
       <button class="btn" onclick={() => (showFiles = true)} title="Find a file by name (⌘T)">
         Find…
       </button>
-      <button class="btn" onclick={() => (showLibrary = true)}>Library</button>
       <button class="btn primary" onclick={pickFile}>Open file…</button>
     </div>
   {/if}
@@ -1022,7 +1012,6 @@
             bind:markdown
             {files}
             current={currentPath}
-            filename={origin?.filename ?? file.filename}
             {dirty}
             {stale}
             onreconcile={reconcile}
@@ -1060,7 +1049,7 @@
       {#if outline?.modules?.[0]?.functions.length}
         <span class="keys">
           <kbd>↑</kbd><kbd>↓</kbd> lines · <kbd>[</kbd><kbd>]</kbd> fns ·
-          <kbd>↑</kbd><kbd>↓</kbd> lines · <kbd>/</kbd> find · <kbd>⌘⇧T</kbd> files ·
+          <kbd>⇧click</kbd> range · <kbd>/</kbd> find · <kbd>⌘⇧T</kbd> files ·
           <kbd>⌘R</kbd> read · <kbd>⌘E</kbd> edit · <kbd>?</kbd> help
         </span>
       {/if}
@@ -1430,18 +1419,49 @@
   }
 
   /* Row 2 — the file being read, with room to breathe. */
+  /* The header is a small THEME, not a set of overrides.
+     It redefines the neutral tokens for its own subtree, so every control in it —
+     `.btn`, `.btn.primary`, the branch pill, the file button — adapts without a
+     single component knowing it is on a dark strip. Exactly what makes read mode
+     work, at the scale of one row. */
   .apphead {
     flex: none;
-    height: 40px;
+    height: 42px;
     display: flex;
     align-items: center;
     gap: 10px;
     padding: 0 12px;
-    background: var(--bg);
-    border-bottom: 1px solid var(--line);
+    background: var(--head-bg);
+    border-bottom: 1px solid color-mix(in srgb, black 22%, var(--head-bg));
+
+    --fg: var(--gloom-ink);
+    --fg-dim: #c2d6d3;
+    /* 4.9:1 on the file button's own raised surface — the softer #93aeaa measured
+       3.8:1 there, and the file count is 11px. */
+    --fg-faint: #adc4c0;
+    --line: color-mix(in srgb, white 16%, transparent);
+    --line-soft: color-mix(in srgb, white 10%, transparent);
+    --bg: transparent;
+    --bg-raised: color-mix(in srgb, white 8%, transparent);
+    --bg-inset: color-mix(in srgb, white 6%, transparent);
+    --sel: color-mix(in srgb, white 12%, transparent);
+    --accent: var(--gloom);
+    --shadow: none;
   }
-  .home {
+  /* ← Home is how you leave one gloom for another, now that Library has gone from
+     this row. It was a text link among five buttons; it is the first thing here
+     and it should look like a way out. */
+  .apphead .home {
     flex: none;
+    font-weight: 600;
+    color: var(--gloom-ink);
+    background: color-mix(in srgb, white 10%, transparent);
+    border-color: color-mix(in srgb, white 22%, transparent);
+  }
+  .apphead .home:hover {
+    background: color-mix(in srgb, white 18%, transparent);
+    border-color: color-mix(in srgb, white 34%, transparent);
+    color: #fff;
   }
   /* The file you are in, and the way to the rest — 136px, constant whatever the
      file count. */
@@ -1454,7 +1474,12 @@
     font-family: var(--mono);
     font-size: 11.5px;
     color: var(--fg);
-    background: var(--code-bg);
+    /* `--bg-raised`, not `--code-bg`. It used to borrow the code pane's surface
+       to look like the file it names — which was white, and once the header
+       became a dark theme it stayed white while its label went near-white with
+       everything else. A control should take its surface from the surface it is
+       ON; the header defines `--bg-raised` for exactly that. */
+    background: var(--bg-raised);
     border: 1px solid var(--line);
     border-radius: 6px;
     cursor: pointer;
@@ -1462,6 +1487,7 @@
   }
   .filebtn:hover {
     border-color: var(--accent);
+    background: var(--sel);
   }
   .filebtn i {
     width: 5px;

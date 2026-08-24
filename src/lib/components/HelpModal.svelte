@@ -43,6 +43,15 @@
       rows: [
         { keys: ["↑", "↓"], what: "Move the review cursor one line. Also `j` / `k`, and `5j` for five" },
         { keys: ["[", "]"], what: "Previous / next function, selected whole. Does not wrap at either end" },
+        {
+          action: "⇧click, or drag the line numbers",
+          what:
+            "Select a run of lines. A click sets the review cursor — one line, \"where am I\" — " +
+            "where a range is \"this bit here\", which is what you want when the thing you are " +
+            "writing about is four lines of a pipeline rather than a whole function. Dragging " +
+            "happens in the gutter because the code itself is selectable text, and a drag over it " +
+            "has to keep meaning copy",
+        },
         { keys: ["⌘P"], what: "Jump to a function by name. Type a prefix, or an abbreviation like cu" },
         { keys: ["⌘R"], what: "Read mode on / off — scroll the note and the code follows your prose. `esc` also leaves it" },
         { keys: ["⌘E"], what: "Edit / preview the note. Entering edit leaves read mode; typing under a scroll-driven selection is chaos" },

@@ -1209,6 +1209,103 @@ where you are; it just stops hiding the author colours or the matches you asked
 for. Without this, turning on blame with a function selected leaves 68% of the
 authors invisible.
 
+### The app header is a small theme
+
+`.apphead` redefines the neutral tokens for its own subtree — `--fg`, `--fg-dim`,
+`--line`, `--bg-raised`, `--accent` — over `--head-bg`, a step lighter than the
+gloom band under it. Every control in the row adapts without knowing it is on a
+dark strip, which is read mode's trick at the scale of one row, and the two bars
+stack as a single masthead: actions above, the name of the journey below. Measured
+on the light head: ink 10.9:1, dim 7.5:1, the teal accent 6.5:1.
+
+**`← Home` is a way out and now looks like one** — filled, bolder, first in the
+row. **Re-parse is gone**: it re-read a file you had not edited, since lgtm never
+writes, and the two cases that matter have their own controls (*Code changed —
+reconcile* in the note, and the amber staleness row above a joined file).
+**Library is gone from this row too** — the way to another gloom is ← Home, and
+`⌘K` still opens the library from anywhere. What is left is about *this* gloom:
+where you are, which files it covers, and two ways to add one.
+
+### The code pane shows what you selected, and nothing else
+
+**The sticky function header was removed.** It pinned the enclosing signature to
+the top of the pane while you scrolled inside a long function — which sounds
+useful and read as a *fourth selection state*: a highlighted bar naming something
+that was not what you had selected, in a pane whose whole job is to show what you
+selected. `topLine` survives; it drives the vim motions.
+
+**A run of lines is selectable, three ways.** `⇧`-click extends from the review
+cursor (or the top of the current selection); dragging the **line numbers** sweeps
+a range, and the gutter carries `cursor: ns-resize` to say so; and **an ordinary
+text selection across several lines is one too**.
+
+**Ask the rows which of them the range touches**, not the range which rows its
+endpoints are in. A drag downward routinely ends with `focusNode` set to a
+*container* — `.code`, or a row element with a child offset — and
+`closest(".row")` on a container is `null`, so the whole gesture was discarded and
+the feature looked dead. `range.intersectsNode(row)` does not care where the
+endpoints landed. A selection stopping at the very start of a row does not include
+it, which is what the highlight on screen already shows.
+
+That third one matters more than it sounds. Dragging over the code selects text —
+that has to keep working, you copy from this pane — but a drag crossing three lines
+is unmistakably *"these three lines"*, and making you repeat the gesture in the
+gutter to say so would be the tool arguing with you. The native selection is read
+at `mouseup` and mapped onto the same `focus` range everything else uses: the text
+stays highlighted for the copy, and the file dims around the lines it spans.
+
+**`⇧` is handled at `mousedown` *and* on the click.** Mousedown is where it belongs:
+by the time the click arrives the browser has already extended its own text
+selection over the gesture, which is both ambiguous and — because `onCodeClick`
+opens by ignoring clicks that ended a text selection — swallowed outright. But a
+shift-click landing on a child element, or a `preventDefault` the platform decides
+to ignore, can arrive as a click and nothing else, so handling it in one place made
+the gesture work or not depending on where in a line you clicked. `extendTo` runs
+from both and the `painted` guard makes the repeat free.
+
+**The native text selection wears the same colour as a selected row.** Dragging over
+the code produces both highlights — the browser's on the glyphs, ours on the rows it
+spans — and in two different colours that reads as two selections arguing. `.code
+::selection` is `--accent` at 13% over the code surface, which is exactly what
+`.row.hit` paints, so the overlap is invisible and a part-line selection still shows.
+Opaque on purpose: a translucent one stacks with the row tint and prints twice as
+strong.
+
+**A drag selects with `focus.select`, never `focus.set`.** `set` toggles — clicking
+the already-selected thing clears it, which is right for a function and fatal for a
+drag: a pointer moving inside one line fires dozens of mousemoves carrying the same
+range, so the selection flickered on and off and mostly landed off. The store says
+as much in its own comment: `select` is for "go here", where going where you already
+are must never mean going nowhere. A `painted` guard skips the repeats as well, and
+resets on mousedown so a fresh drag can re-paint a range that is already up.
+
+A gutter drag sets a `dragged` flag for the same family of reasons — the click
+that ends it would otherwise drop the range and set the cursor instead. It
+goes through `focus.set` like every other selection, so the dimming, the hint pill
+and the doc pane treat it as one thing. Dragging is in the gutter on purpose: the
+source is selectable text — deliberately, you copy from it — so a drag across the
+glyphs has to keep meaning "select this text", and the line numbers are the one
+column nobody copies.
+
+### The note's header is controls, nothing else
+
+It used to open with `impact_stage.ex.md` — a filename for a file that does not
+exist, since the note is a row in a database and the `.md` was an invention. The
+gloom's name is in the band above it and the source file's name is on the pane
+beside it, so the third name was the only thing that row was adding.
+
+**Preview/Edit is one button, not a segmented control.** You are always in exactly
+one of the two modes, so half of that control's width was spent telling you where
+you already are. The label is what the click *does*: `Edit` while previewing,
+`Preview` while editing.
+
+**`▷ Read` is on the left**, where the row starts: it is the one control here that
+changes what the whole window does, and among four right-aligned buttons it read as
+the third of them.
+
+**The font stepper is last, as in the code pane.** The same control in the same
+place on both sides of the window; it had drifted into the middle of this one.
+
 ### The two mode toggles are keys as well as buttons
 
 `⌘R` for read mode and `⌘E` for edit/preview. Both live in `DocPane` as exported
