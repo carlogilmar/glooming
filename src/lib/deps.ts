@@ -89,7 +89,22 @@ const DOT_X = OUT_X - 18;
 /** Vertical pitch of one local function row. */
 const ROW = 62;
 
-export function renderDeps(body: string, module: ModuleInfo | null): string {
+/**
+ * Draw the boundary.
+ *
+ * `isolate` is a `Module.name` from the outside column. When it is set, the
+ * module is drawn with **only the functions that call it** inside, and only the
+ * lines that reach it — the answer to "where is this used", which a full
+ * boundary with two lines lit inside twelve grey rows does not really give you.
+ * The layout is re-run rather than the extra rows hidden: hiding them leaves the
+ * survivors at their old `y`, so the box keeps its full height and the lines
+ * point into the gaps where the others used to be.
+ */
+export function renderDeps(
+  body: string,
+  module: ModuleInfo | null,
+  isolate?: string | null,
+): string {
   const deps = parseDeps(body);
   if (!deps.length) {
     return `<div class="lgtm-deps empty">Empty reach block — re-seed this doc, or write <code>MyApp.Repo : app</code> rows here.</div>`;
@@ -98,13 +113,31 @@ export function renderDeps(body: string, module: ModuleInfo | null): string {
   // The left column is the module's own functions in source order. It comes
   // from the outline rather than the block: the block records the edges, and
   // listing every local function a fourth time would be noise.
+  // Who calls the isolated function. Read off the block, which is where the
+  // edges live — the outline knows the functions, never the call sites.
+  const callers = isolate
+    ? new Set(
+        deps.flatMap((d) =>
+          d.functions
+            .filter((fn) => `${d.module}.${fn.name}` === isolate)
+            .flatMap((fn) => fn.callers),
+        ),
+      )
+    : null;
+
   const locals = (module?.functions ?? [])
     .slice()
     .sort((a, b) => a.line - b.line)
-    .map((f) => ({ sig: displaySig(f), line: f.line, y: 0, pure: true }));
+    .map((f) => ({ sig: displaySig(f), line: f.line, y: 0, pure: true }))
+    .filter((f) => !callers || callers.has(f.sig));
 
   if (!locals.length) {
-    return `<div class="lgtm-deps empty">No outline for this file, so there is nothing to draw the reach against.</div>`;
+    // With an isolate set this means the block names a caller the outline does
+    // not have — a stale block, or a function since renamed. Say so rather than
+    // drawing an empty box.
+    return isolate
+      ? `<div class="lgtm-deps empty">Nothing in this file calls <code>${esc(isolate)}</code> any more.</div>`
+      : `<div class="lgtm-deps empty">No outline for this file, so there is nothing to draw the reach against.</div>`;
   }
 
   const index = new Map(locals.map((f, i) => [f.sig, i]));
@@ -148,6 +181,9 @@ export function renderDeps(body: string, module: ModuleInfo | null): string {
   const edges: { from: string; to: string; kind: DepKind; y1: number; y2: number }[] = [];
   for (const d of deps) {
     for (const fn of d.functions) {
+      // Only the lines that reach the isolated function. Keeping a caller's
+      // *other* calls would put back most of what isolating removed.
+      if (isolate && `${d.module}.${fn.name}` !== isolate) continue;
       for (const c of fn.callers) {
         const local = locals[index.get(c) ?? -1];
         if (!local) continue;
@@ -232,7 +268,7 @@ export function renderDeps(body: string, module: ModuleInfo | null): string {
     );
     for (const fn of d.functions) {
       parts.push(
-        `<g class="rfn" ${at()} data-to="${esc(`${d.module}.${fn.name}`)}" data-callers="${esc(fn.callers.join("|"))}" role="button" tabindex="0">`,
+        `<g class="rfn${`${d.module}.${fn.name}` === isolate ? " on" : ""}" ${at()} data-to="${esc(`${d.module}.${fn.name}`)}" data-callers="${esc(fn.callers.join("|"))}" role="button" tabindex="0">`,
         `<rect class="rfn-hit" x="${DOT_X - 8}" y="${(fn.y ?? 0) - 11}" width="330" height="22" rx="5"/>`,
         `<circle class="dot ${d.kind}" cx="${DOT_X}" cy="${fn.y ?? 0}" r="3"/>`,
         // The hit on arrival. A ring of its own rather than growing the dot,
@@ -247,10 +283,13 @@ export function renderDeps(body: string, module: ModuleInfo | null): string {
   }
 
   const reaching = new Set(edges.map((e) => e.from)).size;
-  const rest =
-    `${reaching} of ${locals.length} ${locals.length === 1 ? "function reaches" : "functions reach"} outside · ` +
-    `${deps.length} ${deps.length === 1 ? "module" : "modules"} · ` +
-    `${edges.length} ${edges.length === 1 ? "call site" : "call sites"}`;
+  const rest = isolate
+    ? `${esc(isolate)} · called by ${locals.length} ` +
+      `${locals.length === 1 ? "function" : "functions"} here · ` +
+      `${edges.length} ${edges.length === 1 ? "call site" : "call sites"}`
+    : `${reaching} of ${locals.length} ${locals.length === 1 ? "function reaches" : "functions reach"} outside · ` +
+      `${deps.length} ${deps.length === 1 ? "module" : "modules"} · ` +
+      `${edges.length} ${edges.length === 1 ? "call site" : "call sites"}`;
 
   return (
     `<div class="lgtm-deps" data-rest="${esc(rest)}">` +

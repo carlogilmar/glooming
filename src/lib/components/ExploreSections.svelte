@@ -55,6 +55,9 @@
     if (path === shown) return;
     shown = path;
     arriving = true;
+    // A different file is a different boundary; an isolate held across the
+    // switch would be answering a question about a module you have left.
+    isolated = null;
     const off = setTimeout(() => (arriving = false), 900);
     return () => clearTimeout(off);
   });
@@ -77,11 +80,43 @@
    * One set of layout arithmetic — the barycentre ordering, the both-columns
    * height, the pipe-shifted arities.
    */
+  /**
+   * Which outside function the boundary is currently answering *about*.
+   *
+   * Null is the whole picture: every local function, every line. Set, the module
+   * is redrawn with only the functions that call it — "where is this used", which
+   * is the question you actually have when your eye lands on `Repo.insert/1`, and
+   * which two lit lines inside twelve grey rows do not really answer.
+   */
+  let isolated = $state<string | null>(null);
+
   const diagram = $derived(
     module && module.deps.length
-      ? renderDeps(seedDepsBlock(module).split("\n").slice(1, -2).join("\n"), module)
+      ? renderDeps(
+          seedDepsBlock(module).split("\n").slice(1, -2).join("\n"),
+          module,
+          isolated,
+        )
       : "",
   );
+
+  /** The file an isolated function lives in, when it is one of ours. */
+  const isolatedFile = $derived.by(() => {
+    if (!isolated) return null;
+    const mod = isolated.slice(0, isolated.lastIndexOf("."));
+    return inReading.get(mod.split(".").pop() ?? "") ?? null;
+  });
+
+  function jumpTo(to: string) {
+    const mod = to.slice(0, to.lastIndexOf("."));
+    const fnName = to.slice(to.lastIndexOf(".") + 1);
+    const target = inReading.get(mod.split(".").pop() ?? "");
+    if (!target) return;
+    const hit = target.outline?.modules
+      ?.flatMap((m) => m.functions)
+      .find((f) => `${f.name}/${f.arity}` === fnName || f.name === fnName.split("/")[0]);
+    if (hit) onjump?.(target.path, hit.line);
+  }
 
   /** Modules this file reaches that are themselves under review. */
   const inReading = $derived.by(() => {
@@ -108,21 +143,25 @@
       return;
     }
 
-    // An outside function whose module is also under review: follow the call.
-    // This is the cross-file jump, moved onto the diagram now that the list it
-    // used to live in is gone — the picture can carry it, and one gesture beats
-    // the same fact in two places.
+    // An outside function: isolate the boundary on it, or clear it if it is the
+    // one already isolated.
+    //
+    // Click used to jump straight into the other file, which was the *second*
+    // question — you ask "who calls this" before you ask "what does it do". The
+    // jump did not go away; it moved to a control under the diagram that names
+    // the file it will open, which is more discoverable than an invisible click
+    // target on a dot.
     const rfn = t.closest<HTMLElement>(".rfn[data-to]");
-    if (!rfn) return;
+    if (!rfn) {
+      // Empty space *inside the diagram* is the third way out, alongside the
+      // button and clicking the isolated function again. Scoped to the diagram
+      // so a click on the hint below it — or on the jump button in it — is not
+      // silently an exit.
+      if (isolated && t.closest(".reachwrap")) isolated = null;
+      return;
+    }
     const to = rfn.dataset.to ?? "";
-    const mod = to.slice(0, to.lastIndexOf("."));
-    const fnName = to.slice(to.lastIndexOf(".") + 1);
-    const target = inReading.get(mod.split(".").pop() ?? "");
-    if (!target) return;
-    const hit = target.outline?.modules
-      ?.flatMap((m) => m.functions)
-      .find((f) => `${f.name}/${f.arity}` === fnName || f.name === fnName.split("/")[0]);
-    if (hit) onjump?.(target.path, hit.line);
+    isolated = isolated === to ? null : to;
   }
 </script>
 
@@ -239,12 +278,32 @@
            file, and a map behind a button is a map you forget you have.
            `renderDeps` returns its own `.lgtm-deps` frame and readout bar, which
            is why this is not wrapped again here. -->
-      {@html diagram}
-      {#if inReading.size}
+      <div class="reachwrap">
+        {@html diagram}
+        {#if isolated}
+          <!-- The way out, on the picture rather than under it: the diagram is
+               where you are looking, and an exit you have to go and find is the
+               reason a filtered view feels like a trap. -->
+          <button class="isoclose" onclick={() => (isolated = null)} title="Show the whole boundary">
+            <i>×</i> whole boundary
+          </button>
+        {/if}
+      </div>
+      {#if isolated}
+        <p class="hint act">
+          <b>{isolated}</b>
+          <span>— showing only what calls it</span>
+          {#if isolatedFile}
+            <button class="mini go" onclick={() => jumpTo(isolated!)}>
+              open {isolatedFile.filename} ↗
+            </button>
+          {/if}
+        </p>
+      {:else}
         <p class="hint">
-          {[...inReading.keys()].map((m) => m).join(", ")}
-          {inReading.size === 1 ? "is" : "are"} also in this reading — click
-          {inReading.size === 1 ? "its" : "their"} functions to follow the call
+          Click anything on the right to see just the functions here that call it{inReading.size
+            ? ` — ${[...inReading.keys()].join(", ")} ${inReading.size === 1 ? "is" : "are"} also in this reading`
+            : ""}
         </p>
       {/if}
     {:else}
@@ -621,6 +680,79 @@
     from {
       opacity: 0;
     }
+  }
+
+  .reachwrap {
+    position: relative;
+  }
+  /* Three ways out, like the focus pill's four: this button, clicking the
+     isolated function again, and clicking empty space in the diagram. One exit is
+     never enough — the discoverable one has to be visible where you are looking. */
+  .isoclose {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font: inherit;
+    font-size: 10px;
+    letter-spacing: 0.02em;
+    color: var(--fg-dim);
+    background: var(--code-bg);
+    border: 1px solid var(--doc-line);
+    border-radius: 5px;
+    padding: 3px 8px 3px 6px;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+  }
+  .isoclose i {
+    font-style: normal;
+    font-size: 13px;
+    line-height: 1;
+    color: var(--fg-faint);
+  }
+  .isoclose:hover {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  .isoclose:hover i {
+    color: var(--accent);
+  }
+
+  /* The isolate line: what the boundary is answering, and the way on from it. A
+     hint rather than a toolbar — it appears only while a question is being asked,
+     and it says in words what the picture is showing. */
+  .hint.act {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .hint.act b {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--fg-dim);
+  }
+  .mini {
+    font: inherit;
+    font-size: 10px;
+    color: var(--fg-dim);
+    background: var(--code-bg);
+    border: 1px solid var(--doc-line);
+    border-radius: 4px;
+    padding: 2px 7px;
+    cursor: pointer;
+  }
+  .mini:hover {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  .mini.go {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
   }
 
   .rule {

@@ -638,11 +638,40 @@ overlay reached by `⌥R`, on the argument that it needs 2.6–6.4× the room a 
 does. In one scrolling column that argument evaporates: room is free below the
 fold. A map you have to remember to open is a map you do not use.
 
+**Clicking an outside function isolates the boundary on it.** The module is
+redrawn with **only the functions that call it** inside, and only the lines that
+reach it. That is the question you actually have the moment your eye lands on
+`Repo.insert/1` — *where is this used* — and two lit lines inside twelve grey rows
+do not really answer it.
+
+**Three ways out, like the focus pill's four**: a `× whole boundary` button in the
+diagram's own top-right corner, clicking the isolated function again, and clicking
+empty space inside the diagram. The button is on the *picture*, not under it — the
+diagram is where you are looking, and an exit you have to go and find is what makes
+a filtered view feel like a trap. The empty-space exit is scoped to `.reachwrap`, so
+a click on the hint below it, or on the jump button, is not silently an exit.
+
+The layout is **re-run**, not hidden with CSS: hiding the other rows leaves the
+survivors at their old `y`, so the box keeps its full height and every line points
+into a gap where something used to be. `renderDeps` therefore takes an `isolate`
+argument and filters `locals` *before* laying out — and filters the edges to that
+one target, because keeping a caller's other calls puts back most of what
+isolating just removed.
+
+The outside column is never filtered: it is what you pick the next question from.
+A stale block that names a caller the outline no longer has says so rather than
+drawing an empty box.
+
 **Reach is the cross-file navigator**, and it is the best thing to come out of
 this. A call landing in a module that is *also* under review is a **jump**: one
 click switches file and focuses that function, which is what following a flow
 across files actually means. Calls landing outside the reading say so — and that
 marks the edge of what you are reviewing, which is worth seeing.
+
+**The jump moved off the click and onto a named control**, under the diagram,
+reading `open billing.ex ↗`. "Who calls this" is the question you ask *first*, so
+the click answers that one; and a button that names the file it will open is more
+discoverable than an invisible click target on a dot ever was.
 
 **Hidden in read mode.** `DocPane` renders the sections as a snippet and reports
 the mode with `onreading` rather than sharing it, because the pane owns it and two owners would eventually disagree with
