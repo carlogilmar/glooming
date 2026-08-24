@@ -573,6 +573,13 @@
    * Measured rather than guessed: on a tall window the trigger line sits below
    * the first paragraph or two at rest, and without this the reading opens
    * already at step 2 — how far in depending on the monitor.
+   *
+   * The spacer goes at the **top of the doc**, not immediately before the first
+   * step. Before the step it opened a hole between your title and the paragraph
+   * under it — the same pixels, but read as a missing section rather than as a
+   * margin, because a gap *between* two things looks like something was removed
+   * from between them. Above everything it is just the note starting lower down
+   * the page, which is what it always was.
    */
   function sizeLead() {
     if (!container || !body || !steps.length) return;
@@ -582,7 +589,7 @@
     if (!lead) {
       lead = document.createElement("div");
       lead.className = "reading-lead";
-      steps[0].parentNode?.insertBefore(lead, steps[0]);
+      container.insertBefore(lead, container.firstChild);
     }
     if (!tail) {
       tail = document.createElement("div");

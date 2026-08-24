@@ -1223,6 +1223,12 @@ Four rules, each of which replaced something that read worse:
   than "not the first reference", and the scroll handler reads
   `code.ref[data-line]:not(.mention)`. A reference is a mention from outside and
   a lead from inside.
+- **The lead-in sits at the top of the doc, not before the first step.** Both put
+  the same pixels on screen, and only one of them looks right: immediately before
+  the step it opened a hole between your title and the paragraph under it, which
+  reads as a *missing section* — a gap between two things looks like something was
+  removed from between them. At the top it is the note starting lower down the
+  page, which is what it always was.
 - **A lead-in *and* a tail, both measured in JS.** The trigger sits 38% down the
   pane, which on a tall window is *below* the first paragraph or two at rest —
   so the reading would open at step 2, and how far in depended on the monitor.
