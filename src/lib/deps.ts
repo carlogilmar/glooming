@@ -125,6 +125,21 @@ export function renderDeps(
       )
     : null;
 
+  // Isolating narrows BOTH columns. The outside stack was left whole at first, on
+  // the grounds that it is what you pick the next question from — but a boundary
+  // drawn to answer "who calls `Repo.insert/1`" with eleven other names still on
+  // the right is answering it while pointing somewhere else. Picking the next
+  // question is what leaving the isolate is for, and there are three ways to do
+  // that.
+  const view = isolate
+    ? deps
+        .map((d) => ({
+          ...d,
+          functions: d.functions.filter((fn) => `${d.module}.${fn.name}` === isolate),
+        }))
+        .filter((d) => d.functions.length)
+    : deps;
+
   const locals = (module?.functions ?? [])
     .slice()
     .sort((a, b) => a.line - b.line)
@@ -144,18 +159,18 @@ export function renderDeps(
 
   // Order the outside by the average position of its callers, so lines stay
   // roughly parallel instead of crossing.
-  for (const d of deps) {
+  for (const d of view) {
     const idx = d.functions.flatMap((fn) => fn.callers.map((c) => index.get(c) ?? 0));
     d.bary = idx.length ? idx.reduce((a, b) => a + b, 0) / idx.length : Number.MAX_SAFE_INTEGER;
   }
-  deps.sort((a, b) => (a.bary ?? 0) - (b.bary ?? 0));
+  view.sort((a, b) => (a.bary ?? 0) - (b.bary ?? 0));
 
   // **Both** columns decide the height. Sizing from the local functions alone
   // meant a small file with many aliases produced a stack taller than the
   // viewBox, and centring it then pushed the top and the bottom outside — where
   // SVG simply clips them, with nothing to say it had happened.
   const localsH = ROW * Math.max(locals.length - 1, 1) + 68;
-  const stackH = deps.reduce((h, d) => h + 22 + d.functions.length * 19 + 16, 0) - 16;
+  const stackH = view.reduce((h, d) => h + 22 + d.functions.length * 19 + 16, 0) - 16;
   const H = Math.max(320, 88 + Math.max(localsH, stackH));
   const boxH = H - 88;
 
@@ -168,7 +183,7 @@ export function renderDeps(
   });
 
   let y = BOX.y + (boxH - stackH) / 2 + 8;
-  for (const d of deps) {
+  for (const d of view) {
     d.y = y;
     y += 22;
     for (const fn of d.functions) {
@@ -179,7 +194,7 @@ export function renderDeps(
   }
 
   const edges: { from: string; to: string; kind: DepKind; y1: number; y2: number }[] = [];
-  for (const d of deps) {
+  for (const d of view) {
     for (const fn of d.functions) {
       // Only the lines that reach the isolated function. Keeping a caller's
       // *other* calls would put back most of what isolating removed.
@@ -253,7 +268,7 @@ export function renderDeps(
     }
   }
 
-  for (const d of deps) {
+  for (const d of view) {
     // Shortened for the same reason as the boundary — and the kind label is
     // offset from the *drawn* width, not the full name's, or it lands in the
     // middle of nowhere.
@@ -288,7 +303,7 @@ export function renderDeps(
       `${locals.length === 1 ? "function" : "functions"} here · ` +
       `${edges.length} ${edges.length === 1 ? "call site" : "call sites"}`
     : `${reaching} of ${locals.length} ${locals.length === 1 ? "function reaches" : "functions reach"} outside · ` +
-      `${deps.length} ${deps.length === 1 ? "module" : "modules"} · ` +
+      `${view.length} ${view.length === 1 ? "module" : "modules"} · ` +
       `${edges.length} ${edges.length === 1 ? "call site" : "call sites"}`;
 
   return (

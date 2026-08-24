@@ -697,7 +697,12 @@ argument and filters `locals` *before* laying out — and filters the edges to t
 one target, because keeping a caller's other calls puts back most of what
 isolating just removed.
 
-The outside column is never filtered: it is what you pick the next question from.
+**Isolating narrows both columns.** The outside stack was left whole at first, on
+the grounds that it is what you pick the next question from — but a boundary drawn
+to answer *"who calls `Repo.insert/1`"* with eleven other names still listed beside
+it is answering the question while pointing somewhere else. Picking the next
+question is what leaving the isolate is for, and there are three ways to do that.
+
 A stale block that names a caller the outline no longer has says so rather than
 drawing an empty box.
 
