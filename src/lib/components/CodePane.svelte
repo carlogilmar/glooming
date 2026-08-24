@@ -949,12 +949,82 @@
     flex: 1;
     overflow: auto;
     background: var(--code-bg);
+    /* The text colour has to be RE-DECLARED here, not inherited.
+       `body` sets `color: var(--fg)` once; what descends from it is the computed
+       colour — near-black — so redefining `--fg` on an ancestor of this pane
+       changed the token and repainted nothing. Every untokenised glyph in the
+       code stayed black on read mode's near-black surface. The doc pane never had
+       the bug because `.panebody` there always set `color: var(--doc-fg)`.
+
+       Same shape as the pane background: defining a token is not using it. */
+    color: var(--fg);
+    /* Read mode repaints this pane too, and the same 0.3s the doc pane uses:
+       the lights going out on both at once is the whole effect. Colour only, so
+       reduced motion keeps it — a hard cut between two themes is harsher than
+       the fade it replaces. */
+    transition:
+      background 0.3s ease,
+      color 0.3s ease;
   }
   .meta {
     white-space: nowrap;
   }
 
   /* The filename is a button, but must not read as one until you reach for it. */
+  /* Arriving in a file lights the header that already names it.
+     This replaces a gold pill that floated over the code: the filename was on
+     screen the whole time, two feet from the pill, so the pill was a second copy
+     of a fact rather than a signal about it. Lighting the real one points at
+     where the answer lives — and stops covering the first line of the file.
+
+     No gate: `CodePane` is keyed on the path, so a mount *is* a new file, and
+     this runs exactly once per arrival. */
+  .panehead {
+    animation: fileArrive var(--greet) var(--ease-out) both;
+  }
+  /* Full-strength `--read`, the gold the swap badge used — mixing it down into
+     the header's own surface turned it into a beige wash, which is not the same
+     signal. It is the peak that has to be the colour; the settle does the
+     softening. */
+  @keyframes fileArrive {
+    from,
+    22% {
+      background: var(--read);
+      border-bottom-color: var(--read);
+    }
+  }
+  .panehead .name {
+    animation: nameArrive var(--greet) var(--ease-out) both;
+  }
+  /* The controls step aside while the header is announcing.
+     A -/A+ on a gold fill is a control wearing someone else's colour — recolouring
+     it for 1.3s would mean a second set of states to maintain for a moment nobody
+     is clicking in. They fade out and come back as the gold recedes, which also
+     leaves the filename alone on the fill, which is the whole message. */
+  .panehead :global(.fontsize) {
+    animation: headAside var(--greet) var(--ease-out) both;
+  }
+  @keyframes headAside {
+    from,
+    22% {
+      opacity: 0;
+      pointer-events: none;
+    }
+  }
+  @keyframes nameArrive {
+    from,
+    22% {
+      color: var(--read-ink);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* Colour is all this ever was, so it survives whole — the audit's exemption
+       for a finite fade covers it, and there is nothing here that travels. */
+    .panehead {
+      animation: fileArrive var(--greet) ease both;
+    }
+  }
+
   .name {
     font: inherit;
     font-size: inherit;
@@ -1328,6 +1398,16 @@
   }
   .code.focusing .row:not(.hit):not(.related):not(.spec):not(.docsel):not(.leaving) {
     opacity: 0.32;
+  }
+  /* Read mode dims less. 32% is right on the app's own surfaces, where the
+     unfocused code still sits on white or a light-ish dark; on Nocturne's
+     near-black it takes body text to 2.4:1 and a comment to 1.5:1 — past quiet
+     and into unreadable, which matters because the file you are *not* focused on
+     is still the thing you are reading around. 45% is the same idea, legible. */
+  :global(.reading-surface)
+    .code.focusing
+    .row:not(.hit):not(.related):not(.spec):not(.docsel):not(.leaving) {
+    opacity: 0.45;
   }
   /* Deeper while a reading is driving: 32% is right for "show me this one
      function", but a guided reading should push the rest further back. */

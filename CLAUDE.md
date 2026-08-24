@@ -108,6 +108,7 @@ mockup/motion.html             the animation contract, replayable
 mockup/explore.html            the explore drawer: surface + reach beside the note
 mockup/files.html              ten mixed-kind files: the files modal, and the drawer per kind
 mockup/motion-audit.html       every motion finding, before and after
+mockup/reading-theme.html      read mode as a theme: five palettes, five faces, measured
 scripts/motion-audit.py        every animation vs its reduced-motion rule
 scripts/effect-audit.py        $effects that read and write the same $state
 scripts/component-audit.py     components imported but never rendered
@@ -417,8 +418,46 @@ string starting with `<div`.
 crossfade — outgoing ranges lingering under incoming ones — is what makes a jump
 read as a connection instead of a cut. Across two different files there is
 nothing shared to fade between, so the same treatment reads as a glitch. The pane
-dips instead and a badge names where you landed, and `focus.step` takes a `path`
-so it can skip the crossfade. `focus.path` exists for that one decision.
+dips instead and **the code pane's own header lights up in read-mode gold**, and
+`focus.step` takes a `path` so it can skip the crossfade. `focus.path` exists for
+that one decision.
+
+It is full-strength `--read` at the peak, not a mix into the header's own surface:
+mixed down it becomes a beige wash, which is a different signal. The controls in
+that header fade out for the announcement and come back as the gold recedes —
+`A−`/`A+` on a gold fill is a control wearing someone else's colour, and recolouring
+them would mean maintaining a second set of states for a moment nobody clicks in.
+It also leaves the filename alone on the fill, which is the message.
+
+Naming the landing used to be a gold pill floating over the code. The filename was
+on screen the whole time, two inches away — so the pill was a second copy of a fact
+rather than a signal about it, and it covered the first line of the file to tell you
+which file it was. Lighting the header points at where the answer already lives. No
+gate is needed: `CodePane` is keyed on the path, so a mount *is* a new file.
+
+**A pane must paint its own surface *and* its own text, not merely define the
+tokens.** Two bugs of one shape, found a day apart:
+
+- `body` sets `color: var(--fg)` **once**, and what descends from it is the
+  *computed* colour. Redefining `--fg` on an ancestor of the code pane therefore
+  changed the token and repainted nothing: every untokenised glyph stayed
+  near-black on read mode's near-black surface. `.panebody` in `CodePane` now
+  re-declares `color: var(--fg)`. The doc pane never had it, because its
+  `.panebody` always set `color: var(--doc-fg)`.
+- The same thing with the background, one level up. The swap dip faded
+  `.codewrap` to nothing over a `.pane` that set `--code-bg` and never used it, so
+  every cross-file jump revealed the app's `--bg` — a white flash, and in read mode
+  a white flash through a dark theme. `.pane:not(.grow)` now paints
+  `var(--code-bg)`.
+
+Defining a token is not using it, and a theme swap only repaints what some rule
+actually reads. Both bugs were invisible until a *subtree* was themed differently
+from the document, which is exactly what read mode does.
+
+**The dip goes to a tenth, not to nothing.** At zero the pane is blank for 130ms
+and reads as a *load*; a deep dip with 4px of downward travel reads as the same
+pane changing what it shows. The arriving file then plays its own gutter cascade
+for free, because `CodePane` is keyed on the path and a mount is a new file.
 
 **CodePane is keyed on the path.** Switching file remounts it, deliberately:
 blame and a search belong to the file they were run against, and carrying either
@@ -1100,7 +1139,9 @@ correct there. Both set a `mounted` class one frame after mount, because an elem
 rendered already-open has no state to transition *from*.
 
 `scripts/motion-audit.py` enforces this, and it compares **selector text**, not
-just animation names — **per selector part on both sides**, since a grouped rule
+just animation names. Inside `@keyframes` the movers are matched as *property
+names* at the start of a declaration, because `\b(bottom)\b` also matched
+`border-bottom-color` — a colour — and reported a pure fade as movement — **per selector part on both sides**, since a grouped rule
 needs every part overridden and comparing a whole comma-joined selector against a
 set of parts matched nothing at all. A **finite** animation that only fades is exempt outright — the same exemption an
 opacity-only transition already gets, and for the same reason: reduced motion drops
@@ -1178,6 +1219,15 @@ listeners would eventually disagree with the buttons about which mode is on.
 `⌘R` is `preventDefault`ed before anything else can see it: in a dev build it
 would reload the webview.
 
+**Entering read mode is gated; leaving it never is.** The conditions — a module in
+the reading, not editing, at least one step — decide whether there is anything to
+walk. They were applied to the toggle in *both* directions, so anything that
+emptied `steps` mid-read locked you in: the button disappeared and `⌘R` was refused
+by the same test. `Esc` exits too, for the same reason the focus pill exists — a
+mode needs an escape that does not depend on finding the control that started it,
+and clearing the focus underneath read mode would do nothing visible anyway, since
+the next scroll frame sets it again.
+
 `toggleEdit` leaves read mode on the way in, because scroll-driven selection while
 you type is chaos — the same rule the Edit button already followed.
 
@@ -1204,6 +1254,39 @@ type, and the text still reads correctly pasted into a PR comment.
   circle, then a dash. Three levels is more than any reading needs.
 - Hover lifts the row. The reference inside stays the click target — making the
   whole row clickable would take text selection away from a surface you edit.
+
+**A re-render wipes the step marks, and only a cross-file reference re-renders.**
+`md` depends on `current`, so crossing a file rebuilds the whole note's DOM. The
+scroll handler does not fire — nothing scrolled — and `activeStep` has not changed,
+so `.now` was never re-applied: the step you had just walked into dropped to 45%
+and stayed there, while `.here` returned on the next frame and tinted it. A dimmed
+row with a highlight on it, which is how the bug was spotted. `markSteps` now
+restores both marks after every render, and it never showed up on a same-file
+reference, because that is the only case that does not re-render.
+
+**The highlight follows the reading line; the step follows the references.** Two
+rates, because they answer two questions — *where am I reading* and *what should
+the code be showing*. A step only changes where a reference is, so between two
+referencing paragraphs the tint used to sit on the last one while the trigger was
+three paragraphs further down: you were reading one block and a different one was
+lit. `.here` is the block the line is actually inside, recomputed every scroll
+frame; `.now` stays on the step, which is what drives the code and what must not
+dim. When the line is inside a step the two coincide, which is the common case.
+
+Innermost wins, by taking the last block in document order that contains the line —
+a parent `li` is listed before the `p` inside it. The loop **breaks** once a block
+starts below the line: tops are non-decreasing in document order, and without that
+it reads every block's geometry on every frame.
+
+**Every step is a row, paragraph or list item.** A list item got a tinted row with
+an accent rule down its left edge and a plain paragraph got nothing but a change of
+opacity — so a note written as prose showed a flicker as the dimming swapped and no
+mark of where you were. The step is the unit read mode walks whatever shape it
+takes. The padding and the transparent left border sit on **every** step, not only
+the current one, so the geometry never moves and only the colours change; a
+negative margin keeps the text's left edge where it was, and the measure grows by
+the padding it gained, or a doc with no lists in it would rewrap on entering read
+mode.
 
 **Read mode marks the row, not just the block.** In a loose list the step is the
 inner `<p>`, so without this the number in the gutter stayed bright while the text
@@ -1258,6 +1341,13 @@ Four rules, each of which replaced something that read worse:
   reads as a *missing section* — a gap between two things looks like something was
   removed from between them. At the top it is the note starting lower down the
   page, which is what it always was.
+- **The band is placed every frame, not once.** A single measurement can be taken
+  before the pane has its height — and when it is, the band lands just under the
+  header and stays there for the whole session, reading as a stray rule at the top
+  of the page rather than as an instrument. `placeBand()` is two rects; running it
+  per scroll frame is cheaper than being wrong, and it re-runs after the frame
+  that read mode's own type change lays out. It is *meant* to stay still: the
+  trigger is a fixed height and the text moves past it.
 - **A lead-in *and* a tail, both measured in JS.** The trigger sits 38% down the
   pane, which on a tall window is *below* the first paragraph or two at rest —
   so the reading would open at step 2, and how far in depended on the monitor.
@@ -1275,14 +1365,44 @@ Four rules, each of which replaced something that read worse:
   that marks table rows and treemap tiles, not by the scroll handler. Two
   mechanisms meant clicking a reference selected the code but left the chip
   unmarked, and scrolling could disagree with clicking about which was current.
-- **The room goes dark, in its own colours.** Read mode puts *two* classes on
-  the doc pane: `.dark` for the semantic colours, and `.reading-surface` for a
-  set of **warm** neutrals. That is a third surface on purpose — the doc pane is
-  warm paper in light mode, so its lights-out form should still be warm, and it
-  has to be tellable from the app's own cool dark at a glance (`#1b1714` warm vs
-  `#191b21` cool). Only the neutrals are overridden, so `--accent`, `--pub`,
-  `--priv` and `--mark` keep their dark values and "current"/"public"/"private"
-  mean the same thing in both panes. Body text lands at 14.3:1.
+- **Read mode is a theme, not a darker note.** `.dark` plus `.reading-surface`,
+  on **both panes** — an earlier version themed only the doc pane, which in light
+  mode left a dark reading surface beside an untouched white code pane: two
+  surfaces disagreeing about whether the lights were out. The shell puts the same
+  two classes on the code pane's wrapper, so one token set paints both, and both
+  fade over the same 0.3s.
+
+  The palette is **Nocturne**, chosen in `mockup/reading-theme.html` — which draws
+  both panes at once and measures contrast live, because a palette that looks nice
+  and cannot ship should say so before it is built. Five were compared; this one
+  won on two grounds. It is the gloom band's teal carried into the reading, so
+  read mode inside a gloom is one identity rather than two unrelated dark modes;
+  and its accent clears **9.6:1** on the prose, the best of the five, which matters
+  because the accent is what the current step is drawn in. Measured: prose 14.4:1,
+  code 13.2:1, keywords 8.2:1, strings 11.0:1, and a dimmed step still at ~6.5:1.
+
+  **The faint tokens had to be lifted, and the dim softened.** On a near-black teal
+  the first cut put comments and line numbers at 3.8:1, and the code pane dims
+  everything that is not the current function *on top of that* — so at 32% they
+  composited to about 1.4:1, which is not quiet, it is gone. `--fg-faint`,
+  `--fg-dim`, `--syn-com` and `--syn-doc` are all a step brighter here than the
+  palette started, and read mode dims to **45%** rather than 32%: the file you are
+  not focused on is still the thing you are reading *around*. Dimmed now: body
+  3.6:1, comment 2.4:1, line numbers 2.2:1.
+
+  **`--accent` and the syntax colours are overridden here, deliberately.** The old
+  rule — inherit them from `.dark`, so "current" means one thing everywhere —
+  survives *within* a theme, and read mode is now its own theme: current is teal in
+  the prose and teal in the code, which is the consistency the rule was protecting.
+
+  **The type changes too, because that is most of what reading is.** `--book` is
+  Iowan Old Style — a *book* face, drawn for text at reading sizes, where
+  `ui-serif`/New York is a system UI face and Georgia was cut for 1996 screens.
+  Every fallback ships with macOS; the CSP blocks a webfont anyway. Line-height
+  goes to 1.75, the measure to 62ch (a book face fits the same 62–66 characters in
+  less room than a sans), and the size is `calc(var(--doc-font) * 1.14)` — derived,
+  not fixed, so the A−/A+ stepper still works and the default 14px lands at the
+  16px the mockup was judged at. Blocks keep their absolute sizes and their mono.
 
   (An earlier version reused dark mode outright, which is why the dark tokens in
   `app.css` are scoped to `.dark` and not `html.dark` — worth keeping regardless,
@@ -1543,7 +1663,22 @@ Only *synchronous* access counts: state touched inside a `.then()`, a `setTimeou
 or an event listener is not a tracked dependency and cannot loop, which is why the
 `recentProjects` effect in `+page.svelte` is correct despite looking similar.
 
-`scripts/effect-audit.py` catches it, and knows that difference. It also strips
+**The same loop can run through the DOM instead of the signal graph, and nothing
+catches that.** The effect that computes `steps` was made to restore read mode's
+`.now` / `.here` marks after a render — which meant reading `activeStep`. Every
+scroll step then re-ran it; each run rebuilt `steps` as a fresh array, which re-ran
+the measuring effect, which resized the lead and tail spacers, which moved the
+content under the reader, which fired the scroll handler again. Main thread pinned,
+and the symptom was "read mode will not exit" — because nothing responded at all,
+not because the exit was broken. `effect-audit.py` is blind to it: the read and the
+write are *different* `$state`s.
+
+The rule it leaves behind: **an effect that writes state must not track the state
+its own side effects depend on.** Wrap the restore in `untrack`. And when a bug
+presents as a control that does nothing, check for a pinned thread before
+suspecting the control.
+
+`scripts/effect-audit.py` catches the simpler form, and knows that difference. It also strips
 comments before matching — a comment using a state variable's own name read as a
 dependency and flagged a correct effect, and a check that cries wolf is one people
 learn to ignore:

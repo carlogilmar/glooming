@@ -86,6 +86,13 @@
      same-origin and the CSP allows it. */
   --display: "Oswald", "Avenir Next Condensed", "HelveticaNeue-CondensedBold",
     "Arial Narrow", var(--sans);
+  /* The reading face. A BOOK face, not a UI serif: Iowan Old Style was drawn for
+     text at reading sizes, where New York is a system UI face and Georgia was cut
+     for 1996 screens. Every fallback here ships with macOS, and the CSP blocks a
+     webfont anyway. Used only in read mode — the editor and preview stay in the
+     sans you write in. */
+  --book: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua",
+    ui-serif, Georgia, serif;
   --serif: ui-serif, "New York", "Iowan Old Style", Georgia, "Times New Roman", serif;
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
 
@@ -187,32 +194,59 @@
 }
 
 /* ============================================================
-   Read mode's surface: a WARM dark, layered over `.dark`.
+   Read mode's surface: NOCTURNE. A whole theme, not a darker doc pane.
 
-   Deliberately a third surface rather than reusing dark mode: the doc pane is
-   warm paper in light mode, so its lights-out counterpart should still be warm,
-   and it has to be distinguishable from the app's own cool dark at a glance.
+   Chosen from `mockup/reading-theme.html`, which draws both panes at once and
+   measures the contrast — five palettes were compared there and this one won on
+   two grounds. It is the gloom band's teal carried into the reading, so entering
+   read mode inside a gloom reads as one identity rather than two unrelated dark
+   modes; and its accent clears 9.6:1 on the prose, the best of the five, which
+   matters because the accent is what "the step you are on" is drawn in.
 
-   Only the neutrals are overridden. `--accent`, `--pub`, `--priv`, `--mark`
-   inherit their dark values from `.dark`, so "current", "public" and "private"
-   mean the same thing in both panes.
+   It covers BOTH panes. An earlier version themed only the doc pane, which left
+   a warm dark note beside an untouched white code pane in light mode — two
+   surfaces disagreeing about whether the lights were out.
+
+   **`--accent` and the syntax colours are overridden here, deliberately.** The
+   older note said they must inherit from `.dark` so "current" means the same
+   thing in both panes; that rule survives *within* a theme, and read mode is now
+   its own theme. Inside it, current is teal in the prose and teal in the code —
+   which is the consistency the rule was actually protecting.
    ============================================================ */
 .reading-surface {
-  --bg:        #1b1714;
-  --bg-raised: #231e19;
-  --bg-inset:  #13100d;
-  --line:      #362f26;
-  --line-soft: #2a241d;
-  --fg:        #ece6da;
-  --fg-dim:    #aba18f;
-  --fg-faint:  #7f7568;
-  --code-bg:   #16120f;
-  --doc-bg:    #1b1714;
-  --doc-fg:    #ece6da;
-  --doc-line:  #362f26;
-  --sel:       #2c2620;
+  --bg:        #101f1e;
+  --bg-raised: #162927;
+  --bg-inset:  #0b1918;
+  --line:      #1d3532;
+  --line-soft: #172a28;
+  --fg:        #e2efec;
+  --fg-dim:    #a3bab6;
+  /* Lifted from #5f7975. On a near-black teal the faint tokens measured 3.8:1 at
+     full strength, and the code pane dims everything that is not the current
+     function on top of that — so line numbers and comments landed at ~1.4:1,
+     which is not "quiet", it is gone. */
+  --fg-faint:  #7c9793;
+  --code-bg:   #0c1918;
+  --doc-bg:    #101f1e;
+  --doc-fg:    #e2efec;
+  --doc-line:  #1d3532;
+  --sel:       #16302d;
   --shadow:    none;
-  --doc-raised: #241f1a;
+  --doc-raised: #162927;
+
+  --accent:    #5fd6c4;
+  --pub:       #8fdc9b;
+  --priv:      #e3bd83;
+  --mark:      #b3a5f0;
+
+  --syn-kw:    #b3a5f0;
+  --syn-fn:    #5fd6c4;
+  --syn-at:    #7fcfd8;
+  --syn-str:   #8fdc9b;
+  --syn-com:   #89a6a1;
+  --syn-atom:  #e3bd83;
+  --syn-mod:   #7fcfd8;
+  --syn-doc:   #97b2ad;
 }
 
 /* Read mode's button: gold, filled, so an active mode never looks like a

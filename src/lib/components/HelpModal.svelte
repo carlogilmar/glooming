@@ -44,7 +44,7 @@
         { keys: ["↑", "↓"], what: "Move the review cursor one line. Also `j` / `k`, and `5j` for five" },
         { keys: ["[", "]"], what: "Previous / next function, selected whole. Does not wrap at either end" },
         { keys: ["⌘P"], what: "Jump to a function by name. Type a prefix, or an abbreviation like cu" },
-        { keys: ["⌘R"], what: "Read mode on / off — scroll the note and the code follows your prose" },
+        { keys: ["⌘R"], what: "Read mode on / off — scroll the note and the code follows your prose. `esc` also leaves it" },
         { keys: ["⌘E"], what: "Edit / preview the note. Entering edit leaves read mode; typing under a scroll-driven selection is chaos" },
         {
           action: "the top of the note",

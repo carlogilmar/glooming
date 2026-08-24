@@ -49,6 +49,10 @@ rarely lives in one file.
   when you read it, so a changed file is flagged per file, not vaguely. A
   reference in your prose to a function that has since been deleted renders struck
   through rather than quietly becoming plain text.
+- **Read mode has its own theme.** `⌘R` and the whole window changes: both panes
+  go to Nocturne — a deep teal dark, the same family as the gloom band — and your
+  prose is set in Iowan Old Style at a book's line-height and measure. Scrolling
+  the note then walks the code in the order your sentences take it.
 - **Reads, never writes.** The left pane is read-only, permanently. lgtm never
   modifies your source.
 - **One note, several files.** During a review you open file after file, and

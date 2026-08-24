@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { createMarkdownIt } from "$lib/markdownit";
   import { locate } from "$lib/select";
   import RefMenu from "$lib/components/RefMenu.svelte";
@@ -620,7 +621,23 @@
     const lastH = steps[steps.length - 1].getBoundingClientRect().height;
     tail.style.height = Math.max(0, H * (1 - TRIGGER) - lastH) + "px";
 
-    bandTop = H * TRIGGER + (paneTop - (pane?.getBoundingClientRect().top ?? paneTop));
+    placeBand();
+  }
+
+  /**
+   * Put the band where the trigger actually is.
+   *
+   * Split out of `sizeLead` and re-run on every scroll frame, because a single
+   * measurement can be taken before the pane has its height — and when it is, the
+   * band lands just under the header and stays there for the whole session, which
+   * looks like a stray rule at the top of the page rather than an instrument. It
+   * is two rects; running it per frame is cheaper than being wrong.
+   */
+  function placeBand() {
+    if (!body || !pane) return;
+    const b = body.getBoundingClientRect();
+    if (b.height < 1) return; // not laid out yet — a later frame will get it
+    bandTop = b.height * TRIGGER + (b.top - pane.getBoundingClientRect().top);
   }
 
   /**
@@ -635,6 +652,45 @@
     if (!block) return;
     block.classList.add("now");
     block.closest("li")?.classList.add("now");
+  }
+
+  /**
+   * Every prose block, innermost last — the same list `markSteps` filters steps
+   * out of, kept so the reading line can be located without re-querying the DOM
+   * on every frame.
+   */
+  let prose: HTMLElement[] = [];
+  let hereEl: HTMLElement | null = null;
+
+  /**
+   * Mark the block the reading line is actually *in*.
+   *
+   * A step only changes where a reference is, so between two referencing
+   * paragraphs the highlight used to sit on the last one while the trigger was
+   * three paragraphs further down — you were reading one block and a different
+   * one was lit. `.here` follows the line; `.now` stays on the step, which is
+   * what drives the code and what must not dim.
+   *
+   * Innermost wins, by taking the last block in document order that contains the
+   * line: a parent `li` is listed before the `p` inside it.
+   */
+  function markHere() {
+    const line = triggerY();
+    let hit: HTMLElement | null = null;
+    for (const b of prose) {
+      const r = b.getBoundingClientRect();
+      // Tops are non-decreasing in document order — a child block starts at or
+      // after its parent — so everything past the line is past the line. Without
+      // the break this reads every block's geometry on every scroll frame.
+      if (r.top > line) break;
+      if (r.bottom > line) hit = b;
+    }
+    if (hit === hereEl) return;
+    for (const el of container?.querySelectorAll(".here") ?? []) el.classList.remove("here");
+    hereEl = hit;
+    if (!hit) return;
+    hit.classList.add("here");
+    hit.closest("li")?.classList.add("here");
   }
 
   function stepAt(): number {
@@ -652,6 +708,11 @@
     ticking = true;
     requestAnimationFrame(() => {
       ticking = false;
+      // The highlight tracks the line on every frame; the step only changes when
+      // a new reference crosses. Two rates, because they answer two questions:
+      // "where am I reading" and "what should the code be showing".
+      placeBand();
+      markHere();
       const i = stepAt();
       if (i === activeStep) return;
       activeStep = i;
@@ -742,7 +803,12 @@
    * disagree with the buttons about state.
    */
   export function toggleRead() {
-    if (canRead && !editing && steps.length) toggleReading();
+    // Leaving is never gated. The conditions decide whether read mode can be
+    // *entered* — a note with no references has nothing to walk — and gating the
+    // exit on them too meant that anything which emptied `steps` mid-read (a
+    // re-render landing between two files, a note edited elsewhere) locked you
+    // in: the button vanished and ⌘R was refused by the same test.
+    if (reading || (canRead && !editing && steps.length)) toggleReading();
   }
 
   export function toggleEdit() {
@@ -762,12 +828,18 @@
     if (!reading) {
       activeStep = -1;
       focus.rest();
+      for (const el of container?.querySelectorAll(".here") ?? []) el.classList.remove("here");
+      hereEl = null;
     }
     // Wait for the class change to land before measuring.
     queueMicrotask(() => {
       sizeLead();
       activeStep = -2;
       onDocScroll();
+      // And once more after the frame has actually been laid out. Entering read
+      // mode changes the type and the spacing, so the height measured in the
+      // microtask is the height the pane had a moment ago.
+      requestAnimationFrame(placeBand);
     });
   }
 
@@ -845,6 +917,8 @@
     // holds directly, and the child keeps its own.
     const SEL = "code.ref[data-line]";
     const blocks = [...container.querySelectorAll<HTMLElement>("p, li, blockquote")];
+    prose = blocks;
+    hereEl = null;
     const carriers = blocks.filter((b) => b.querySelector(SEL));
     const allRefs = [...container.querySelectorAll<HTMLElement>(`.doc ${SEL}`)];
 
@@ -881,6 +955,29 @@
     }
     steps = found;
     activeRef = null;
+
+    // Re-render wipes the marks — put them back.
+    //
+    // `md` depends on `current`, so crossing a file re-renders the whole note.
+    // The scroll handler does not fire (nothing scrolled) and `activeStep` has
+    // not changed, so `.now` was never re-applied: the step you had just walked
+    // into went to 45% and stayed there, while `.here` came back on the next
+    // frame and tinted it.
+    //
+    // **`untrack` is load-bearing.** This effect WRITES `steps`; reading
+    // `activeStep` and `reading` here made it re-run on every scroll step, and
+    // each run rebuilt `steps` as a fresh array, which re-ran the measuring
+    // effect, which resized the lead and tail spacers, which moved the content
+    // under the reader, which fired the scroll handler again. A loop through the
+    // DOM rather than through the signal graph — so `effect-audit.py` cannot see
+    // it (the read and the write are different `$state`s) and the symptom is a
+    // pinned main thread: read mode that will not exit, because nothing responds.
+    untrack(() => {
+      if (!reading) return;
+      placeBand();
+      markNow(activeStep);
+      markHere();
+    });
 
     // Which files the prose actually reaches. The file strip draws a hollow dot
     // for the others: opening a file to check something and never referring to
@@ -928,7 +1025,9 @@
   {#if reading}
     <!-- Where one paragraph hands over to the next. Quiet on purpose: it makes
          the mechanic legible without becoming a debug overlay. -->
-    <div class="band" style:top="{bandTop}px" bind:this={bandEl}></div>
+    <div class="band" style:top="{bandTop}px" bind:this={bandEl}>
+      <span class="tag">Reader</span>
+    </div>
   {/if}
   <div class="panehead">
     {#if dirty}<span class="dot" title="unsaved"></span>{/if}
@@ -939,7 +1038,7 @@
       <button class="btn icon warn" onclick={() => onreconcile?.()}>⟳ Code changed — reconcile</button>
     {/if}
     <FontStepper {font} label="text" />
-    {#if canRead && !editing && steps.length}
+    {#if reading || (canRead && !editing && steps.length)}
       <button
         class="btn icon read"
         class:on={reading}
@@ -1056,7 +1155,33 @@
     height: 0;
     z-index: 3;
     pointer-events: none;
-    border-top: 1px solid color-mix(in srgb, var(--read) 30%, transparent);
+    /* 30% gold measured 1.9:1 on Nocturne — a hairline nobody could find, and on
+       a tinted step less than that. 60% is 3.9:1: still a hairline, still not a
+       debug overlay, but *there*. */
+    border-top: 1px solid color-mix(in srgb, var(--read) 60%, transparent);
+  }
+  /* The line says where; the tag says what.
+     A hairline crossing the pane reads as part of the page — a rule under a
+     heading, a divider you drew. Named at its left edge it is an instrument: the
+     height at which the reading hands over to the code. It replaces an unlabelled
+     tick, which was findable but still needed explaining. */
+  .band .tag {
+    position: absolute;
+    /* On the right, where it is out of the prose's way: the text starts at the
+       left margin, so a tag there sat in front of the first word of whatever line
+       the trigger happened to cross. */
+    right: 0;
+    top: -8px;
+    padding: 1px 8px 2px;
+    border-radius: 999px 0 0 999px;
+    background: var(--read);
+    color: var(--read-ink);
+    font-family: var(--sans);
+    font-size: 8.5px;
+    font-weight: 600;
+    line-height: 1.55;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
   }
   /* One flash per step. Without it the band shows you *where* the hand-over
      happens but never *that* it happened — which is the difference between "the
@@ -2678,6 +2803,43 @@
     cursor: not-allowed;
   }
 
+  /* Read mode sets the type, not just the colours.
+     A book face, a longer line-height and a slightly larger size — the three
+     things that separate reading from scanning. The size is derived from
+     `--doc-font` rather than fixed, so the A−/A+ stepper still works: a serif at
+     the same px looks smaller than the sans it replaces, and 1.14 is what puts
+     the default 14px back at the 16px the mockup was judged at.
+
+     Only the prose. Blocks keep their absolute sizes and their mono, because a
+     data display that reflows when you change the reading size is a table
+     behaving like text. */
+  :global(.doc.reading p),
+  :global(.doc.reading li),
+  :global(.doc.reading blockquote) {
+    font-family: var(--book);
+    font-size: calc(var(--doc-font, 14px) * 1.14);
+    line-height: 1.75;
+  }
+  :global(.doc.reading h1),
+  :global(.doc.reading h2),
+  :global(.doc.reading h3) {
+    font-family: var(--book);
+    letter-spacing: -0.01em;
+  }
+  /* A book face carries a slightly narrower measure than a sans at the same
+     size: the same 62–66 characters, in less room. */
+  :global(.doc.reading > p),
+  :global(.doc.reading > blockquote),
+  :global(.doc.reading > ol),
+  :global(.doc.reading > ul) {
+    max-width: 62ch;
+  }
+  /* Inline code inside reading prose is still mono, and has to come down a step
+     or it out-sizes the serif around it. */
+  :global(.doc.reading code) {
+    font-size: 0.82em;
+  }
+
   :global(.doc.reading p.step),
   :global(.doc.reading li.step),
   :global(.doc.reading blockquote.step) {
@@ -2697,15 +2859,42 @@
   :global(.doc.reading li.steprow .step) {
     opacity: 1;
   }
-  /* The current step, as a row. Covers both shapes: a tight list item is itself
-     the step, a loose one only contains it. */
-  :global(.doc.reading li.step.now),
-  :global(.doc.reading li.steprow.now) {
+  /* A paragraph step is a row too.
+     A list item got a tinted row with an accent rule and a paragraph got nothing
+     but a change of opacity — so a note written as prose showed a flicker as the
+     dimming swapped and no mark of where you actually were. The step is the unit
+     read mode walks whatever shape it takes, and it should look like one.
+
+     The padding and the transparent border are on EVERY step, not just the
+     current one, so the geometry never changes: only the colours do. The negative
+     margin keeps the text's left edge exactly where it was, and the measure grows
+     by the padding it just gained, or the line would rewrap on a doc that has no
+     lists at all. */
+  :global(.doc.reading > p),
+  :global(.doc.reading > blockquote) {
+    padding: 6px 12px;
+    margin-left: -14px;
+    max-width: calc(62ch + 26px);
+    border-left: 2px solid transparent;
+    border-radius: 8px;
+    transition:
+      opacity 0.25s var(--ease-in-out),
+      background 0.25s var(--ease-in-out),
+      border-color 0.25s var(--ease-in-out);
+  }
+  :global(.doc.reading > p.here),
+  :global(.doc.reading > blockquote.here) {
     background: color-mix(in srgb, var(--accent) 7%, transparent);
     border-left-color: var(--accent);
   }
-  :global(.doc.reading li.step.now::before),
-  :global(.doc.reading li.steprow.now::before) {
+
+  /* The current step, as a row. Covers both shapes: a tight list item is itself
+     the step, a loose one only contains it. */
+  :global(.doc.reading li.here) {
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+    border-left-color: var(--accent);
+  }
+  :global(.doc.reading li.here::before) {
     color: var(--accent);
   }
   /* These two exist only to push the first step below the trigger line and give

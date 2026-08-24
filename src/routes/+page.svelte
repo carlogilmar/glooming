@@ -227,11 +227,14 @@
    * Within one file the outgoing range lingers under the incoming one, and that
    * overlap is what makes a jump read as a connection. Across two different
    * files there is nothing shared to fade between, so the same treatment reads
-   * as a glitch — the pane dips instead, and a badge names where you landed.
+   * as a glitch — the pane dips instead, and the code pane's header lights up in
+   * read-mode gold around the filename it was already showing.
+   *
+   * Naming the landing used to be a pill floating over the code. It was a second
+   * copy of a fact that was on screen the whole time, and it covered the first
+   * line of the file to tell you which file it was.
    */
   let swapping = $state(false);
-  let swapped = $state("");
-  let swapTimer: ReturnType<typeof setTimeout> | null = null;
 
   async function showFile(path: string) {
     if (!path || path === currentPath) return;
@@ -239,9 +242,6 @@
     await new Promise((r) => setTimeout(r, 130));
     currentPath = path;
     swapping = false;
-    swapped = path.split("/").pop() ?? path;
-    if (swapTimer) clearTimeout(swapTimer);
-    swapTimer = setTimeout(() => (swapped = ""), 1100);
   }
 
   /** A click on a tab is a move out of whatever was selected in the old file. */
@@ -670,6 +670,10 @@
       else if (showPalette) showPalette = false;
       else if (showFiles) showFiles = false;
       else if (showLibrary) showLibrary = false;
+      // Read mode is a mode, and every mode needs an escape that does not depend
+      // on finding the button that started it. Clearing the focus underneath it
+      // would do nothing visible anyway — the next scroll frame sets it again.
+      else if (readingNow) docPane?.toggleRead();
       else focus.clear();
       return;
     }
@@ -943,7 +947,18 @@
     {/if}
 
     <div class="split">
-      <div class="pane" style:flex="0 0 {basis}%">
+      <!-- The code pane joins read mode's theme.
+           Read mode is a theme, not a darker note: before this, turning it on in
+           light mode left a dark reading pane beside an untouched white code
+           pane — two surfaces disagreeing about whether the lights were out. The
+           classes are the same two `DocPane` puts on itself, so one token set
+           paints both. -->
+      <div
+        class="pane"
+        class:dark={readingNow}
+        class:reading-surface={readingNow}
+        style:flex="0 0 {basis}%"
+      >
         {#if currentStale}
           <!-- Only for a file that joined the reading later. The origin's
                staleness is the note's business, and DocPane offers the richer
@@ -980,9 +995,6 @@
                 !showHelp}
             />
           {/key}
-          {#if swapped}
-            <div class="swapbadge">▸ {swapped}</div>
-          {/if}
         </div>
       </div>
 
@@ -1531,36 +1543,22 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    /* A crossfade between two files — something moving, not something arriving. */
-    transition: opacity 0.13s var(--ease-in-out);
+    /* A crossfade between two files — something moving, not something arriving.
+       It dips to a *tenth*, not to nothing: at zero the pane goes blank for 130ms
+       and reads as a load, where a deep dip reads as the same pane changing what
+       it is showing. The file that arrives then plays its own gutter cascade,
+       because `CodePane` is keyed on the path and a mount is a new file. */
+    transition:
+      opacity 0.13s var(--ease-in-out),
+      transform 0.13s var(--ease-in-out);
   }
   .codewrap.swapping {
-    opacity: 0;
+    opacity: 0.1;
+    /* Down, and back. A file swap is a move, and 4px is enough to say so without
+       the two files appearing to slide past one another. */
+    transform: translateY(4px);
   }
 
-  /* Names where you landed after a file swap. Without it a scroll-driven jump
-     across files just looks like the code changed under you. */
-  .swapbadge {
-    position: absolute;
-    z-index: 20;
-    top: 10px;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 4px 10px;
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--read-ink);
-    background: var(--read);
-    border-radius: 999px;
-    pointer-events: none;
-    animation: badge 1.1s var(--ease-out) forwards;
-  }
-  @keyframes badge {
-    0% { opacity: 0; transform: translate(-50%, -4px); }
-    14% { opacity: 1; transform: translate(-50%, 0); }
-    72% { opacity: 1; }
-    100% { opacity: 0; }
-  }
 
   .filenote {
     flex: none;
@@ -1642,6 +1640,19 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
+    /* The pane has to PAINT its surface, not merely define the token for it.
+       The file-swap dip fades `.codewrap` to nothing, and with a transparent pane
+       that revealed whatever was behind — the app's own `--bg`, which is white in
+       light mode. So every cross-file jump flashed white, and in read mode it
+       flashed white through a dark theme, which is where it was impossible to
+       miss. Both panes carry their own background for the same reason; DocPane
+       already did. */
+    transition: background 0.3s ease;
+  }
+  /* The LEFT pane paints the code surface; the right one is the doc pane's own
+     and `.panebody` there already paints it. */
+  .pane:not(.grow) {
+    background: var(--code-bg);
   }
   .pane.grow {
     flex: 1 1 auto;
@@ -1722,12 +1733,6 @@
     .orb {
       animation: none;
     }
-    /* The badge names which file you landed on after a swap — that is the whole
-       message, so it stays put instead of fading. It is cleared on a timer
-       either way. */
-    .swapbadge {
-      animation: none;
-    }
     /* And the pane swap itself: the dip is what makes a file change legible
        rather than looking like the code moved under you. Without motion it just
        changes, which is honest — but the fade must not leave it invisible. */
@@ -1736,6 +1741,7 @@
     }
     .codewrap.swapping {
       opacity: 1;
+      transform: none;
     }
   }
 

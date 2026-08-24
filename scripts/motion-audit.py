@@ -35,7 +35,13 @@ def selector_at(s, at):
     head = re.sub(r'/\*.*?\*/', ' ', head, flags=re.S)
     return ' '.join(head.split())
 
-MOVERS = r'\b(transform|translate|scale|rotate|height|width|top|left|right|bottom|margin|padding)\b'
+# Inside @keyframes the movers are PROPERTY NAMES, so they are matched at the
+# start of a declaration — `\b(bottom)\b` also matched `border-bottom-color`,
+# which is a colour, and that false positive reported a fade as movement.
+MOVERS = (
+    r'(?:^|[;{\s])(transform|translate|scale|rotate|height|width'
+    r'|top|left|right|bottom|margin|padding)(?:-[a-z]+)*\s*:'
+)
 
 
 def still_only_fades(s, name):
