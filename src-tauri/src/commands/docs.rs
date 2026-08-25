@@ -1,5 +1,5 @@
 //! Doc CRUD plus seeding. Thin wrappers — the logic lives in `db::docs`,
-//! `seed` and `reconcile`.
+//! `seed`.
 
 use crate::commands::files::{normalize_path, sha256};
 use crate::commands::AppState;
@@ -7,7 +7,7 @@ use crate::db::models::{Doc, DocSummary, Reading, ReadingFile};
 use crate::db::{doc_files as files_db, docs as docs_db};
 use crate::error::AppResult;
 use crate::parse::Outline;
-use crate::{reconcile, seed};
+use crate::seed;
 use std::path::Path;
 use tauri::State;
 
@@ -71,12 +71,24 @@ pub async fn create_doc(
 /// Disk wins when the file is readable, because you are reviewing the code as
 /// it is now; the snapshot is the fallback, which is what lets a reading survive
 /// one of its files being deleted or moved.
+/// One file of a gloom, as it was when you opened it.
+///
+/// **The snapshot is the file.** A gloom is a reading of a particular version, so
+/// the pane shows what `doc_files.source` holds and the outline is parsed from
+/// that — not from whatever is on disk now. That is what makes a line number in
+/// your prose mean the same thing next month as it did today.
+///
+/// Disk is still consulted for exactly one thing: whether it has *moved on*. That
+/// is worth saying — the code you are reading is no longer the code that runs —
+/// but it is a fact, not an offer. There is nothing to reconcile: to read the new
+/// version you start a new gloom, which is one gesture and leaves this reading
+/// intact.
 fn read_one(f: &crate::db::models::DocFile, origin: &str) -> ReadingFile {
     let p = Path::new(&f.path);
     let disk = std::fs::read_to_string(p).ok();
     let missing = disk.is_none();
-    let source = disk.unwrap_or_else(|| f.source.clone());
-    let source_sha = sha256(&source);
+    let source = f.source.clone();
+    let source_sha = f.source_sha.clone();
     let lang = crate::parse::lang_for_path(&f.path).map(str::to_string);
 
     // A parse failure must not stop you reading the file — you just get no
@@ -90,7 +102,10 @@ fn read_one(f: &crate::db::models::DocFile, origin: &str) -> ReadingFile {
         filename: f.filename.clone(),
         // Staleness is a property of *this* file, which is the whole reason
         // there is a row per file rather than one snapshot per doc.
-        stale: !missing && source_sha != f.source_sha,
+        stale: match &disk {
+            Some(now) => sha256(now) != f.source_sha,
+            None => false,
+        },
         missing,
         snapshot_sha: f.source_sha.clone(),
         has_git: crate::git::repo_root(p).is_some(),
@@ -228,25 +243,6 @@ pub async fn remove_doc_file(
     build_reading(&state, id).await
 }
 
-/// Accept the current state of one file as what you read.
-#[tauri::command]
-pub async fn resnapshot_doc_file(
-    state: State<'_, AppState>,
-    id: i64,
-    path: String,
-) -> AppResult<Reading> {
-    let source = std::fs::read_to_string(Path::new(&path))?;
-    let sha = sha256(&source);
-    files_db::resnapshot(&state.pool, id, &path, &source, &sha).await?;
-    // The origin's snapshot lives in two places, because `docs.source` is what
-    // the library and the chooser read. Keep them in step.
-    let doc = docs_db::get(&state.pool, id).await?;
-    if doc.path == path {
-        docs_db::update_source(&state.pool, id, &source, &sha, &doc.markdown).await?;
-    }
-    build_reading(&state, id).await
-}
-
 #[tauri::command]
 pub async fn save_doc(
     state: State<'_, AppState>,
@@ -286,21 +282,4 @@ pub async fn delete_doc(state: State<'_, AppState>, id: i64) -> AppResult<()> {
     docs_db::delete(&state.pool, id).await
 }
 
-/// Merge a doc with freshly-parsed source: your prose survives, new functions
-/// are appended, vanished ones are struck through. Then re-snapshot, so the
-/// doc stops reading as stale.
-#[tauri::command]
-pub async fn reconcile_doc(
-    state: State<'_, AppState>,
-    id: i64,
-    outline: Outline,
-    source: String,
-) -> AppResult<Doc> {
-    let doc = docs_db::get(&state.pool, id).await?;
-    let merged = reconcile::reconcile_markdown(&doc.markdown, &outline);
-    let sha = sha256(&source);
-    // Both places the origin's snapshot lives, or it would still read as stale
-    // in the file strip after a reconcile.
-    files_db::resnapshot(&state.pool, id, &doc.path, &source, &sha).await?;
-    docs_db::update_source(&state.pool, id, &source, &sha, &merged).await
-}
+

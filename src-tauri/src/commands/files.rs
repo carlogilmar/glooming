@@ -6,7 +6,7 @@ use crate::db::models::{BlameLine, OpenedFile};
 use crate::db::{docs as docs_db, models::DocSummary};
 use crate::error::{AppError, AppResult};
 use crate::git;
-use crate::parse::{self, Outline};
+use crate::parse;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use tauri::State;
@@ -98,32 +98,6 @@ pub async fn open_file(state: State<'_, AppState>, path: String) -> AppResult<Op
     })
 }
 
-/// Re-read and re-parse a file already on screen (the Re-parse button, and the
-/// staleness check when an existing doc is opened).
-#[tauri::command]
-pub async fn reparse(path: String) -> AppResult<OpenedFile> {
-    let path = normalize_path(&path);
-    let p = Path::new(&path);
-    let source = std::fs::read_to_string(p)?;
-    let source_sha = sha256(&source);
-    let lang = parse::lang_for_path(&path).map(str::to_string);
-    let outline: Option<Outline> = match &lang {
-        Some(l) => parse::parse(&source, l).ok(),
-        None => None,
-    };
-
-    Ok(OpenedFile {
-        filename: filename_of(&path),
-        branch: git::current_branch(p),
-        has_git: git::repo_root(p).is_some(),
-        path,
-        source,
-        source_sha,
-        lang,
-        outline,
-        existing: Vec::new(),
-    })
-}
 
 /// Lazy: only invoked when the Blame button is pressed.
 #[tauri::command]

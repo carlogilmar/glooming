@@ -53,8 +53,8 @@
             "has to keep meaning copy",
         },
         { keys: ["⌘P"], what: "Jump to a function by name. Type a prefix, or an abbreviation like cu" },
-        { keys: ["⌘R"], what: "Read mode on / off — scroll the note and the code follows your prose. `esc` also leaves it" },
-        { keys: ["⌘E"], what: "Edit / preview the note. Entering edit leaves read mode; typing under a scroll-driven selection is chaos" },
+        { keys: ["⌘R"], what: "LGTM: walk the code in the order your prose takes it. The pass you finish a gloom with — `esc` also leaves it" },
+        { keys: ["⌘E"], what: "Edit / preview the note. Entering edit leaves LGTM mode; typing under a scroll-driven selection is chaos" },
         {
           action: "the top of the note",
           what:
@@ -170,8 +170,12 @@
         },
         { keys: ["⌘S"], what: "Force a save. Autosave already runs 800ms after you stop typing" },
         {
-          action: "Code changed — reconcile",
-          what: "Appears when the file on disk no longer matches this reading. Merging keeps every word you wrote",
+          action: "“has changed on disk”",
+          what:
+            "A gloom holds the versions of the files it was read at — the pane shows the " +
+            "snapshot, and the note's line numbers keep meaning what they meant. When a file " +
+            "moves on, the strip above the code says so. Nothing merges: to read the new " +
+            "version, start a new gloom",
         },
       ],
     },
@@ -184,17 +188,19 @@
         "still reads correctly pasted into a PR comment.",
       rows: [
         {
-          action: "▷ Read",
+          action: "▷ LGTM",
           what:
             "Scroll the doc and the code follows your prose order — not the file's. The rest of " +
             "the file recedes further than usual, and what you are leaving lingers for a beat so " +
-            "the jump reads as a connection rather than a cut",
+            "the jump reads as a connection rather than a cut. It is named for what it is for: " +
+            "the pass at the end of which you can say looks good to me",
         },
         {
-          action: "one step per paragraph",
+          action: "one step per reference",
           what:
-            "The first reference in a paragraph is its step; later mentions stay clickable but " +
-            "don't re-trigger, so a paragraph naming three functions doesn't fire three jumps",
+            "Every reference is a stop, triggered as you reach the sentence naming it — so a " +
+            "paragraph that names three functions walks the code through all three, in the order " +
+            "your prose takes them, while the paragraph stays highlighted",
         },
         {
           action: "a struck-through reference",

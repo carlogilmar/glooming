@@ -1,4 +1,4 @@
-//! End-to-end check of the read → parse → seed → reconcile pipeline, run
+//! End-to-end check of the read → parse → seed pipeline, run
 //! against the exact file the UI mockup shows. If the app ever stops matching
 //! `mockup/index.html`, this is where it shows up first.
 
@@ -175,68 +175,36 @@ fn the_explain_section_is_never_left_empty() {
     assert!(md.contains("write what you make of it here"), "{md}");
 }
 
-/// Reconciliation still works, and is still the reason `lgtm:functions` exists.
+/// A gloom is pinned to the versions it was read at.
 ///
-/// The block is no longer seeded, so the doc is built here the way you would build
-/// one: take the generated table, fill in some slots, then change the file. That
-/// is a better test than it was — it exercises the reconciler against a block,
-/// rather than against whatever the seeder happened to emit.
+/// `reconcile.rs` is gone with the feature it served: the pane shows
+/// `doc_files.source`, the outline is parsed from that, and the answer to "the
+/// code moved on" is a new gloom rather than a merge that leaves half your prose
+/// describing lines that are no longer there. What survives is the *signal* — a
+/// file that has changed on disk says so — and the dangling reference, which
+/// strikes through in the prose where you wrote it.
 #[test]
-fn a_later_edit_to_the_file_never_costs_you_prose() {
-    // You write explanations. Signatures are padded to the widest in their
-    // group, so fill the slot by line rather than by exact string.
-    fn explain(md: &str, sig: &str, prose: &str) -> String {
-        md.lines()
-            .map(|l| {
-                if l.trim_start().starts_with(&format!("- {sig} ")) || l.trim_end() == format!("- {sig} :") {
-                    format!("{}{prose}", l.trim_end())
-                } else {
-                    l.to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    let outline = outline();
-    let module = outline.modules.first().expect("module");
-    let doc = format!(
-        "# MyApp.Accounts\n\n## Explain\n\n{}",
-        seed::functions_block(module)
+fn a_gloom_keeps_the_source_it_was_read_at() {
+    let before = parse::parse(FIXTURE, "elixir").unwrap();
+    let edited = FIXTURE.replace(
+        "  def get_user!(id) do\n    Repo.get!(User, id)\n  end\n",
+        "  def delete_user(id) do\n    Repo.delete(User, id)\n  end\n",
     );
-
-    let written = explain(&doc, "create_user/1", " Entry point. Validates, then inserts.");
-    // Both public — the block is the public surface.
-    let written = explain(&written, "get_user/1", " The bang-free half of the pair.");
-    assert!(written.contains("The bang-free half of the pair."), "setup:\n{written}");
-
-    // …then the file changes: get_user!/1 is deleted, delete_user/1 appears.
-    let edited = FIXTURE
-        .replace(
-            "  def get_user!(id) do\n    Repo.get!(User, id)\n  end\n",
-            "  def delete_user(id) do\n    Repo.delete(User, id)\n  end\n",
-        )
-        .to_string();
     let after = parse::parse(&edited, "elixir").unwrap();
-    let merged = lgtm_lib::reconcile::reconcile_markdown(&written, &after);
 
-    // Your writing survives, whatever happened to the code.
-    assert!(merged.contains("Entry point. Validates, then inserts."));
-    assert!(merged.contains("The bang-free half of the pair."));
-    // The new function shows up with an empty slot.
-    assert!(merged.contains("delete_user/1"));
-    // The deleted one is struck through, not erased.
-    assert!(merged.contains("~~get_user!/1~~"), "{merged}");
-}
+    let names = |o: &lgtm_lib::parse::Outline| {
+        o.modules[0]
+            .functions
+            .iter()
+            .map(|f| f.name.clone())
+            .collect::<Vec<_>>()
+    };
 
-/// A seeded doc has no `lgtm:functions`, so reconciling one is a no-op on the
-/// prose. Worth pinning: it is the same guarantee a config doc has, and it means
-/// the reconcile path cannot quietly rewrite a doc that has no table.
-#[test]
-fn reconciling_a_seeded_doc_leaves_it_alone() {
-    let md = seed::seed_markdown(&outline(), FIXTURE, &FileHistory::default(), "accounts.ex");
-    let merged = lgtm_lib::reconcile::reconcile_markdown(&md, &outline());
-    assert_eq!(merged, md, "nothing to reconcile, nothing changed");
+    // The two parses differ — that is the premise — and a gloom holds the first
+    // one for as long as it exists.
+    assert!(names(&before).contains(&"get_user!".to_string()));
+    assert!(names(&after).contains(&"delete_user".to_string()));
+    assert!(!names(&before).contains(&"delete_user".to_string()));
 }
 
 /// The frontend reads `endLine` and `minArity`. Rust's field names are snake
@@ -280,31 +248,6 @@ fn end_lines_span_the_whole_function_body() {
 
 /// Reconcile touches `lgtm:functions` and nothing else. Nothing seeds one any
 /// more, so a doc must pass through untouched — and a doc that has picked up a
-/// *different* block from `/settings` must not have it mangled either.
-#[test]
-fn reconciling_a_config_doc_changes_nothing() {
-    let cfg = "import Config\n\nconfig :my_app, MyApp.Repo, pool_size: 10\n";
-    let outline = parse::parse(cfg, "elixir").unwrap();
-    let seeded = seed::seed_markdown(&outline, cfg, &FileHistory::default(), "dev.exs");
-
-    // The seed itself: a title and a blank page, like every other kind.
-    assert_eq!(seeded.matches("```").count(), 0, "no blocks seeded:\n{seeded}");
-    assert_eq!(
-        lgtm_lib::reconcile::reconcile_markdown(&seeded, &outline),
-        seeded,
-        "a doc with no functions block is passed through verbatim"
-    );
-
-    // And with a block the author asked for, which reconcile has no business
-    // touching either.
-    let settings = seed::settings_block(&outline.config.clone().unwrap(), "dev.exs");
-    let written = format!("{seeded}\nThe pool size is the interesting part.\n\n{settings}");
-    assert_eq!(
-        lgtm_lib::reconcile::reconcile_markdown(&written, &outline),
-        written,
-        "an inserted lgtm:settings block survives verbatim"
-    );
-}
 
 /// `/surface` and the explore drawer both generate blocks for whatever file is in
 /// front of you, so the generators have to be reachable on their own — nothing

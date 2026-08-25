@@ -63,7 +63,7 @@ pub struct FnInfo {
 
 impl FnInfo {
     /// `create_user/1` — the key prose is stored against, and the identity used
-    /// when reconciling a doc with re-parsed source.
+    /// when matching a doc's prose to a function.
     pub fn signature(&self) -> String {
         format!("{}/{}", self.name, self.arity)
     }

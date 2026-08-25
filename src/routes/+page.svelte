@@ -9,9 +9,9 @@
   import FilePalette from "$lib/components/FilePalette.svelte";
   import FilesModal from "$lib/components/FilesModal.svelte";
   import ExploreSections from "$lib/components/ExploreSections.svelte";
+  import Sky from "$lib/components/Sky.svelte";
   import { byPath, origin as originOf } from "$lib/fileset";
   import { displaySig, locate } from "$lib/select";
-  import { when } from "$lib/when";
   import { theme } from "$lib/stores/theme.svelte";
   import { focus } from "$lib/stores/focus.svelte";
   import * as ipc from "$lib/ipc";
@@ -172,12 +172,12 @@
   }
   const outline = $derived(file?.outline ?? null);
   /**
-   * Staleness is per-file now, which is the whole reason there is a snapshot per
-   * file. The reconcile button in the note still belongs to the origin, though —
-   * it is the only file with an `lgtm:functions` block to merge.
+   * Whether the file on screen has moved on since you read it.
+   *
+   * Per file, which is the whole reason there is a snapshot per file — and now
+   * purely a *statement*: a gloom shows the version it was read at, and the way to
+   * read a newer one is a new gloom. Nothing here offers to merge or re-snapshot.
    */
-  const stale = $derived(!!origin?.stale);
-  const currentStale = $derived(!!file && !file.origin && (file.stale || file.missing));
   /**
    * The dot on the file button: the state of the file you are in.
    *
@@ -307,8 +307,7 @@
       .then((r) => (recents = r))
       .catch(() => (recents = []));
 
-  // The welcome screen is the only place these are shown, so only load them
-  // while it's up. Deleting from the library has to say so explicitly — it
+  // Home is the only place these are shown, so only load them while it is up. Deleting from the library has to say so explicitly — it
   // changes the same query without touching any state this effect reads.
   $effect(() => {
     if (files.length) return;
@@ -433,19 +432,6 @@
     }
   }
 
-  /** Accept the file's current state as what you read. */
-  async function acceptCurrent() {
-    if (!doc || !file) return;
-    try {
-      const r = await ipc.resnapshotDocFile(doc.id, file.path);
-      const pending = markdown;
-      adopt(r, file.path);
-      markdown = pending;
-    } catch (e) {
-      error = String(e);
-    }
-  }
-
   /** Chooser button: seeding and saving take the same beat as a fresh open. */
   async function startFreshFrom(opened: ReadingFile) {
     beginLoad(opened.path);
@@ -548,7 +534,6 @@
     referenced = new Set();
   }
 
-  /** Re-read every file in the reading from disk, and re-check staleness. */
   /**
    * A reading was deleted in the library.
    *
@@ -574,18 +559,6 @@
     chooser = null;
     dirty = false;
     referenced = new Set();
-  }
-
-  /**
-   * Reconcile the origin. Only it has an `lgtm:functions` block — every other
-   * file joined the reading without being seeded — so it is the only one there
-   * is anything to merge.
-   */
-  async function reconcile() {
-    if (!doc || !origin?.outline) return;
-    await ipc.reconcileDoc(doc.id, origin.outline, origin.source);
-    const r = await ipc.openReading(doc.id);
-    adopt(r, currentPath);
   }
 
   // ---- autosave -----------------------------------------------------------
@@ -757,7 +730,7 @@
     <!-- Only the element carrying the attribute is draggable, so the label and
          the empty stretch carry it too — otherwise the grabbable area is just
          the few pixels of gap between them. -->
-    <span class="brand" data-tauri-drag-region>LGTM</span>
+    <span class="brand" data-tauri-drag-region>Glooming</span>
     <span class="spacer" data-tauri-drag-region></span>
     <button class="btn icon" onclick={() => theme.cycle()} title="Cycle theme">
       {theme.label}
@@ -781,7 +754,20 @@
            filename doubles as a copy-the-path button. This row is for the
            reading's context and the actions. -->
       {#if file.branch}
-        <span class="branch" title="Branch, read from .git/HEAD">⑂ {file.branch}</span>
+        <!-- Keyed on the value: checking out another branch replays the arrival,
+             which is the one moment this label has something to say. Everything
+             below you may have changed, and the gloom did not. -->
+        <!-- The GLOOM's branch, not the working tree's.
+             A gloom is pinned to the versions it was read at, and the branch those
+             versions came from is part of that reading — it does not change when
+             you check something else out. Showing the live branch made the header
+             report the state of your tree, which is a different tool's job and was
+             a fact about *now* sitting in a window that is entirely about *then*. -->
+        {#key doc?.branch ?? file.branch}
+          <span class="branch" title="The branch this gloom was read on">
+            ⑂ {doc?.branch ?? file.branch}
+          </span>
+        {/key}
       {/if}
       {#if doc}
         <!-- One button instead of a strip of tabs. Ten filenames need about
@@ -832,54 +818,102 @@
       <span>{loadingStep}…</span>
     </div>
   {:else if !file}
-    <div class="welcome">
-      <img src="/app-icon.png" alt="" class="hero" />
-      <h1>lgtm</h1>
-      <!-- Where the word is introduced, once, to someone who has never seen it.
-           A name nobody defines is a name nobody adopts. -->
-      <p>
-        Open an Elixir file to start a <b>gloom</b> — one revision journey. The
-        source goes left, your explanation goes right.
-      </p>
-      <div class="actions">
-        <button class="btn primary" onclick={() => (showFiles = true)}>
-          Find a file… <kbd>⌘O</kbd><kbd>⌘T</kbd>
-        </button>
-        <button class="btn" onclick={pickFile}>Anywhere on disk… <kbd>⌘⇧O</kbd></button>
-        <button class="btn" onclick={() => (showLibrary = true)}>Library <kbd>⌘K</kbd></button>
-        <button class="btn" onclick={() => (showHelp = true)}>What it does <kbd>?</kbd></button>
+    <!-- Home, rebuilt around what the app makes. It has three jobs, in this order:
+         resume the gloom you were in, start one, and — for someone who has never
+         seen the word — say what a gloom is. The old screen was a launcher: an
+         icon, a product name and four buttons of equal weight, which told you what
+         the app could do and nothing about what you were doing.
+         `mockup/home.html` is the contract. -->
+    <div class="home">
+      <div class="masthead">
+        <!-- Bloom, cosmos or aurora, rolled fresh each time you land here. -->
+        <Sky />
+        <h1>Glo<span>o</span>ming</h1>
+        <p>
+          Read a change until you can say <b>looks good to me</b>. Each reading is a
+          <b>gloom</b> — one journey through the code, the files it led you through,
+          and what you worked out on the way.
+        </p>
       </div>
 
-      <div class="projects">
-        {#if project}
-          <button class="proj on" onclick={() => (showFiles = true)}>
-            <span class="folder">▸</span>
-            <b>{project.name}</b>
-            <span class="path">{project.path}</span>
-          </button>
-        {/if}
-        <button class="proj pick" onclick={chooseProject}>
-          {project ? "Open a different folder…" : "Open a folder…"}
-        </button>
-      </div>
+      <div class="homebody">
+        <div class="hwrap">
+          <section>
+            <div class="hsec">
+              <h2>Pick up where you left off</h2>
+              <span class="rule"></span>
+              <button class="more" onclick={() => (showLibrary = true)}>all glooms →</button>
+            </div>
+            {#if recents.length}
+              <div class="glooms">
+                {#each recents as d (d.id)}
+                  <button class="gloomcard" onclick={() => openExisting(d)}>
+                    <span class="name" class:unnamed={d.title === d.filename}>{d.title}</span>
+                    <span class="files">
+                      <span class="file">{d.filename}</span>
+                      {#if d.fileCount > 1}<span class="file more">+{d.fileCount - 1}</span>{/if}
+                    </span>
+                  </button>
+                {/each}
+              </div>
+            {:else}
+              <p class="noglooms">
+                No glooms yet. Open a file and the reading starts — everything you
+                write about it is kept with the version you read.
+              </p>
+            {/if}
+          </section>
 
-      {#if recents.length}
-        <div class="recents">
-          <div class="rhead">
-            <span>Pick up where you left off</span>
-            <button class="more" onclick={() => (showLibrary = true)}>all glooms →</button>
-          </div>
-          {#each recents as doc (doc.id)}
-            <button class="recent" onclick={() => openExisting(doc)}>
-              <span class="title">{doc.title}</span>
-              <span class="file">{doc.filename}</span>
-              <span class="spacer"></span>
-              {#if doc.branch}<span class="branch">⑂ {doc.branch}</span>{/if}
-              <span class="ago">{when(doc.updatedAt)}</span>
-            </button>
-          {/each}
+          <section>
+            <div class="hsec"><h2>Start a gloom</h2><span class="rule"></span></div>
+            <div class="start">
+              <button class="go" onclick={() => (showFiles = true)}>
+                Find a file… <kbd>⌘O</kbd>
+              </button>
+              {#if project}
+                <span class="where">
+                  <b>{project.name}</b>
+                  <span>{project.path}</span>
+                </span>
+              {/if}
+              <span class="alt">
+                <button onclick={chooseProject}>
+                  {project ? "Open a different folder…" : "Open a folder…"}
+                </button>
+                <button onclick={pickFile}>Anywhere on disk… ⌘⇧O</button>
+                <button onclick={() => (showHelp = true)}>What it does ?</button>
+              </span>
+            </div>
+          </section>
+
+          <section>
+            <div class="hsec"><h2>What a gloom is</h2><span class="rule"></span></div>
+            <div class="idea">
+              <div>
+                <h3>One journey</h3>
+                <p>
+                  You open a file; the files it sends you to join it. That set is the
+                  gloom — there is no group to create and manage.
+                </p>
+              </div>
+              <div>
+                <h3>Pinned in time</h3>
+                <p>
+                  Every file is kept as it was when you read it. If the code moves on,
+                  lgtm says so and leaves your reading intact.
+                </p>
+              </div>
+              <div>
+                <h3>Written by you</h3>
+                <p>
+                  The explanation is the work. Nothing here generates it — a reading
+                  you did not do is not a reading.
+                </p>
+              </div>
+            </div>
+          </section>
         </div>
-      {/if}
+      </div>
     </div>
   {:else}
     <!-- The gloom's own row: what this journey is *for*, in its own colour so it
@@ -949,23 +983,12 @@
         class:reading-surface={readingNow}
         style:flex="0 0 {basis}%"
       >
-        {#if currentStale}
-          <!-- Only for a file that joined the reading later. The origin's
-               staleness is the note's business, and DocPane offers the richer
-               action there: reconcile, which merges rather than overwrites. -->
-          <div class="filenote">
-            <span>
-              {file.missing
-                ? `${file.filename} is not on disk any more — this is the snapshot.`
-                : `${file.filename} has changed since you read it.`}
-            </span>
-            <span class="spacer"></span>
-            {#if !file.missing}
-              <button onclick={acceptCurrent}>Accept as read</button>
-            {/if}
-          </div>
-        {/if}
-
+        <!-- Nothing announces staleness over the code any more.
+             A gloom holds the version it was read at, so "this differs from disk"
+             is a fact about the world outside the reading — true, and not worth a
+             bar across the top of the thing you are reading. It still shows where
+             it costs nothing: the dot on the file button, and the words beside each
+             file in ⌘⇧T. -->
         <!-- Keyed on the path so switching file remounts the pane. Blame and a
              search belong to the file they were run against; carrying either
              across a switch would attribute one file's authors to another. -->
@@ -1013,8 +1036,6 @@
             {files}
             current={currentPath}
             {dirty}
-            {stale}
-            onreconcile={reconcile}
             {opened}
             onshowfile={showFile}
             onrefs={(paths) => (referenced = paths)}
@@ -1050,7 +1071,7 @@
         <span class="keys">
           <kbd>↑</kbd><kbd>↓</kbd> lines · <kbd>[</kbd><kbd>]</kbd> fns ·
           <kbd>⇧click</kbd> range · <kbd>/</kbd> find · <kbd>⌘⇧T</kbd> files ·
-          <kbd>⌘R</kbd> read · <kbd>⌘E</kbd> edit · <kbd>?</kbd> help
+          <kbd>⌘R</kbd> lgtm · <kbd>⌘E</kbd> edit · <kbd>?</kbd> help
         </span>
       {/if}
       {#if doc}
@@ -1411,10 +1432,15 @@
     border-bottom: 1px solid var(--line);
     user-select: none;
   }
+  /* The app is called Glooming, set in the wordmark face — it is the same name
+     the masthead carries, so the window strip and home agree. `lgtm` survives as
+     the *phrase*, on the button that ends a reading. */
   .brand {
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    font-size: 11px;
+    font-family: var(--display);
+    font-weight: 600;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    font-size: 12px;
     color: var(--fg-dim);
   }
 
@@ -1586,42 +1612,41 @@
   }
 
 
-  .filenote {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 10px;
-    font-size: 11px;
-    color: var(--priv);
-    background: color-mix(in srgb, var(--priv) 9%, transparent);
-    border-bottom: 1px solid var(--line);
-  }
-  .filenote .spacer {
-    flex: 1;
-  }
-  .filenote button {
-    padding: 2px 8px;
-    font-size: 11px;
-    color: var(--fg-dim);
-    background: var(--bg);
-    border: 1px solid var(--line);
-    border-radius: 5px;
-    cursor: pointer;
-  }
-  .filenote button:hover {
-    color: var(--fg);
-    border-color: var(--priv);
-  }
+  /* Which branch you are standing on. It was a grey pill among grey pills, and it
+     is the one piece of context that silently changes what every file under it
+     says. It now carries the gloom's own accent, and arrives when it changes. */
   .branch {
     font-family: var(--mono);
-    font-size: 10.5px;
-    color: var(--fg-dim);
-    background: var(--bg-inset);
-    border: 1px solid var(--line);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
     border-radius: 999px;
-    padding: 2px 9px;
+    padding: 2px 10px;
     white-space: nowrap;
+    animation: branchIn var(--greet) var(--ease-out) both;
+  }
+  /* One breath as it arrives — the label only re-mounts when the branch actually
+     changes, so this fires exactly when it has something to say. */
+  @keyframes branchIn {
+    from {
+      opacity: 0;
+      transform: translateY(-3px);
+    }
+    35% {
+      opacity: 1;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .branch {
+      animation: branchFade var(--greet) ease both;
+    }
+    @keyframes branchFade {
+      from {
+        opacity: 0;
+      }
+    }
   }
   .spacer {
     flex: 1;
@@ -1759,6 +1784,19 @@
     .orb {
       animation: none;
     }
+    /* The masthead still greets you; it just stops travelling to do it. */
+    .masthead::before {
+      animation: bandLift var(--greet) ease 0.18s both;
+      width: 100%;
+    }
+    /* A card still answers the pointer — in colour, which is what reduced motion
+       keeps — but it stops lifting off the page. */
+    .gloomcard {
+      transition: border-color 0.18s ease;
+    }
+    .gloomcard:hover {
+      transform: none;
+    }
     /* And the pane swap itself: the dip is what makes a file change legible
        rather than looking like the code moved under you. Without motion it just
        changes, which is honest — but the fade must not leave it invisible. */
@@ -1771,183 +1809,293 @@
     }
   }
 
-  .welcome {
+  /* ---- home ---------------------------------------------------------------
+     Ported from `mockup/home.html`. Three bands: an ink masthead saying what the
+     app makes, the glooms you were in, and one obvious way to start another. */
+  .home {
     flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
   }
-  .hero {
-    width: 168px;
-    height: 168px;
-    border-radius: 30px;
-    margin-bottom: 18px;
-    box-shadow: 0 10px 34px rgba(16, 24, 40, 0.14);
-    user-select: none;
-    -webkit-user-drag: none;
+  .masthead {
+    flex: none;
+    position: relative;
+    overflow: hidden;
+    padding: 34px 40px 30px;
+    background: var(--gloom-bg);
+    color: var(--gloom-ink);
+    border-bottom: 1px solid color-mix(in srgb, black 25%, var(--gloom-bg));
   }
-  :global(html.dark) .hero {
-    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
+  /* The words sit above the weather. */
+  .masthead h1,
+  .masthead p {
+    position: relative;
+    z-index: 1;
   }
-  .welcome h1 {
-    font-size: 34px;
+  .masthead h1 {
     margin: 0;
-    letter-spacing: -0.02em;
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 34px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
   }
-  .welcome p {
-    color: var(--fg-dim);
-    margin: 0 0 14px;
+  .masthead h1 span {
+    color: var(--gloom);
   }
-  .actions {
-    display: flex;
-    gap: 8px;
+  .masthead p {
+    margin: 10px 0 0;
+    max-width: 54ch;
+    font-family: var(--serif);
+    font-size: 16px;
+    line-height: 1.6;
+    color: var(--gloom-dim);
   }
-  kbd {
-    font-family: var(--mono);
-    font-size: 10px;
-    opacity: 0.7;
-    margin-left: 4px;
+  .masthead p b {
+    color: var(--gloom-ink);
+    font-weight: 500;
+  }
+  /* The same greeting the gloom band gives — same surface, same sweep. */
+  .masthead::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 45%;
+    pointer-events: none;
+    background: linear-gradient(
+      100deg,
+      transparent,
+      color-mix(in srgb, var(--gloom) 30%, transparent),
+      transparent
+    );
+    animation: bandSweep var(--greet) var(--ease-in-out) 0.18s both;
   }
 
-
-  /* Recent readings — the fastest route back into a file you were already in. */
-  .recents {
-    width: min(560px, 84vw);
-    margin-top: 28px;
-    border-top: 1px solid var(--line);
-    padding-top: 10px;
+  .homebody {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 26px 40px 44px;
   }
-  .rhead {
+  .hwrap {
+    max-width: 1080px;
+    margin: 0 auto;
+    display: grid;
+    gap: 26px;
+  }
+  .hsec {
     display: flex;
     align-items: baseline;
-    padding: 0 4px 6px;
-    font-size: 10.5px;
-    letter-spacing: 0.09em;
+    gap: 10px;
+    margin: 0 0 12px;
+  }
+  .hsec h2 {
+    margin: 0;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--fg-faint);
   }
-  .rhead .more {
-    margin-left: auto;
+  .hsec .rule {
+    flex: 1;
+    height: 1px;
+    background: var(--line-soft);
+  }
+  .hsec .more {
     font: inherit;
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: none;
+    font-size: 11px;
+    color: var(--fg-dim);
     background: none;
     border: 0;
-    color: var(--fg-faint);
+    padding: 0;
     cursor: pointer;
   }
-  .rhead .more:hover {
+  .hsec .more:hover {
     color: var(--accent);
   }
-  .recent {
-    display: flex;
-    align-items: baseline;
-    gap: 9px;
-    width: 100%;
+
+  /* A gloom is a thing with a name, a size and an age — not a filename in a list,
+     which is what the old recents row made it. */
+  .glooms {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+    gap: 12px;
+  }
+  /* A name and what it covers. Nothing else.
+     The card carried a file count, an age and a branch as well, and all three were
+     answers to questions you were not asking at the moment you scan this screen —
+     which one was I in? The name says that, and the badges say what it reached.
+     The count is in the badges already (`+2`), and the age only ever ordered the
+     list, which the order of the list already does. */
+  .gloomcard {
+    position: relative;
+    display: grid;
+    gap: 8px;
     text-align: left;
+    padding: 14px 15px 13px;
     font: inherit;
-    background: none;
-    border: 0;
-    border-left: 2px solid transparent;
-    border-radius: 5px;
-    padding: 6px 8px;
-    cursor: pointer;
     color: var(--fg);
+    background: var(--doc-bg);
+    border: 1px solid var(--doc-line);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    cursor: pointer;
+    transition:
+      border-color 0.18s ease,
+      transform 0.18s var(--ease-out);
   }
-  .recent:hover {
-    background: var(--bg-inset);
-    border-left-color: var(--accent);
+  .gloomcard:hover {
+    border-color: color-mix(in srgb, var(--gloom-deep) 55%, transparent);
+    transform: translateY(-2px);
   }
-  /* A gloom's name is set in the serif wherever it is *shown*, so the name you
-     gave it is recognisable as the same thing in the band, the library and here.
-     Only the name — the filename and the path stay mono and sans, since they are
-     data rather than something you wrote. */
-  .recent .title {
+  /* A stripe of the masthead the card belongs to. */
+  .gloomcard::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 12px;
+    bottom: 12px;
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+    background: var(--gloom-deep);
+  }
+  .gloomcard .name {
     font-family: var(--serif);
-    font-size: 13.5px;
-    font-weight: 500;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    font-size: 16px;
+    line-height: 1.3;
   }
-  .recent .file {
-    font-family: var(--mono);
-    font-size: 10.5px;
+  /* Still called after its module: the same invitation the gloom band shows. */
+  .gloomcard .name.unnamed {
     color: var(--fg-faint);
-    white-space: nowrap;
+    font-style: italic;
   }
-  .recent .spacer {
-    flex: 1;
+  .gloomcard .files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
   }
-  .recent .branch {
+  .gloomcard .file {
     font-family: var(--mono);
     font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--bg-inset);
     color: var(--fg-dim);
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    padding: 0 6px;
     white-space: nowrap;
   }
-  .recent .ago {
-    font-size: 10.5px;
+  .gloomcard .file.more {
+    background: transparent;
     color: var(--fg-faint);
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
+  }
+  .noglooms {
+    margin: 0;
+    padding: 22px;
+    border: 1px dashed var(--line);
+    border-radius: 12px;
+    color: var(--fg-faint);
+    font-size: 12.5px;
+    font-style: italic;
   }
 
-
-  /* Pick the folder once; after that it is ⌘T all the way down. */
-  .projects {
+  /* One primary way in, the rest as quiet text. Four buttons of equal weight is
+     four decisions before you have started. */
+  .start {
     display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 6px;
-    width: min(560px, 84vw);
-    margin-top: 22px;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding: 18px;
+    border: 1px dashed var(--line);
+    border-radius: 12px;
   }
-  .proj {
+  .start .go {
     display: flex;
-    align-items: baseline;
-    gap: 8px;
+    align-items: center;
+    gap: 9px;
     font: inherit;
-    text-align: left;
-    background: none;
-    border: 1px solid var(--line);
-    border-radius: 7px;
-    padding: 9px 12px;
-    cursor: pointer;
-    color: var(--fg-dim);
-    min-width: 0;
-  }
-  .proj:hover {
-    border-color: var(--accent);
-    color: var(--fg);
-  }
-  .proj .folder {
-    color: var(--accent);
-  }
-  .proj b {
     font-size: 13px;
-    color: var(--fg);
-    flex: none;
+    font-weight: 600;
+    color: var(--gloom-ink);
+    background: var(--head-bg);
+    border: 1px solid color-mix(in srgb, black 20%, var(--head-bg));
+    border-radius: 8px;
+    padding: 9px 16px;
+    cursor: pointer;
   }
-  .proj .path {
+  .start .go:hover {
+    background: var(--gloom-bg);
+  }
+  .start .go kbd {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: color-mix(in srgb, white 14%, transparent);
+    color: #b8f0e6;
+  }
+  .start .where {
+    display: grid;
+    gap: 2px;
+    font-size: 12px;
+  }
+  .start .where b {
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .start .where span {
     font-family: var(--mono);
     font-size: 10.5px;
     color: var(--fg-faint);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    direction: rtl;
-    text-align: left;
   }
-  .proj.pick {
-    justify-content: center;
-    border-style: dashed;
+  .start .alt {
+    margin-left: auto;
+    display: flex;
+    gap: 8px;
+  }
+  .start .alt button {
+    font: inherit;
+    font-size: 11.5px;
+    color: var(--fg-dim);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 6px 10px;
+    cursor: pointer;
+  }
+  .start .alt button:hover {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+
+  /* Three sentences, not a feature list: the features are discoverable, the idea
+     is not. */
+  .idea {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px;
+  }
+  .idea div {
+    display: grid;
+    gap: 5px;
+  }
+  .idea h3 {
+    margin: 0;
+    font-family: var(--display);
     font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--gloom-deep);
+  }
+  .idea p {
+    margin: 0;
+    max-width: 40ch;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--fg-dim);
   }
 
   .chooser {

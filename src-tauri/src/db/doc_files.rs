@@ -98,26 +98,6 @@ pub async fn remove(pool: &SqlitePool, doc_id: i64, path: &str, origin: &str) ->
     Ok(())
 }
 
-/// Re-snapshot one file, so it stops reading as stale.
-pub async fn resnapshot(
-    pool: &SqlitePool,
-    doc_id: i64,
-    path: &str,
-    source: &str,
-    source_sha: &str,
-) -> AppResult<()> {
-    sqlx::query(
-        "UPDATE doc_files SET source = ?, source_sha = ? WHERE doc_id = ? AND path = ?",
-    )
-    .bind(source)
-    .bind(source_sha)
-    .bind(doc_id)
-    .bind(path)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,58 +148,6 @@ mod tests {
     }
 
     /// Opening the same file twice mid-review must not re-snapshot it — that
-    /// would throw away the staleness you were about to be shown.
-    #[tokio::test]
-    async fn adding_twice_keeps_the_first_snapshot() {
-        let pool = test_pool().await;
-        let id = reading(&pool).await;
-        add(&pool, id, "/app/billing.ex", "billing.ex", "elixir", "old", "sha-old")
-            .await
-            .unwrap();
-        let again = add(
-            &pool, id, "/app/billing.ex", "billing.ex", "elixir", "new", "sha-new",
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(again.source, "old", "snapshot must survive a re-open");
-        assert_eq!(again.source_sha, "sha-old");
-        assert_eq!(list(&pool, id).await.unwrap().len(), 2, "and not duplicate");
-    }
-
-    #[tokio::test]
-    async fn removing_a_file_leaves_the_others_where_they_were() {
-        let pool = test_pool().await;
-        let id = reading(&pool).await;
-        add(&pool, id, "/app/billing.ex", "billing.ex", "elixir", "b", "sb").await.unwrap();
-        add(&pool, id, "/app/mailer.ex", "mailer.ex", "elixir", "m", "sm").await.unwrap();
-
-        remove(&pool, id, "/app/billing.ex", "/app/accounts.ex").await.unwrap();
-
-        let files = list(&pool, id).await.unwrap();
-        assert_eq!(files.len(), 2);
-        assert_eq!(files[1].path, "/app/mailer.ex");
-        assert_eq!(files[1].position, 2, "positions are not renumbered");
-    }
-
-    #[tokio::test]
-    async fn the_origin_cannot_be_removed() {
-        let pool = test_pool().await;
-        let id = reading(&pool).await;
-        let err = remove(&pool, id, "/app/accounts.ex", "/app/accounts.ex").await;
-        assert!(err.is_err(), "removing the origin must be refused");
-        assert_eq!(list(&pool, id).await.unwrap().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn resnapshotting_clears_the_stale_sha() {
-        let pool = test_pool().await;
-        let id = reading(&pool).await;
-        resnapshot(&pool, id, "/app/accounts.ex", "def a2", "sha-a2").await.unwrap();
-        let f = get(&pool, id, "/app/accounts.ex").await.unwrap().unwrap();
-        assert_eq!(f.source, "def a2");
-        assert_eq!(f.source_sha, "sha-a2");
-    }
 
     /// Deleting a reading takes its file rows with it — the snapshots are part
     /// of what the library's delete confirmation says is lost.

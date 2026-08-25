@@ -92,7 +92,8 @@ pub async fn update(
     get(pool, id).await
 }
 
-/// Re-snapshot the source after a reconcile, so the doc stops reading as stale.
+/// Replace the origin's snapshot. Used when a gloom is created; a gloom never
+/// re-snapshots after that — see `read_one`.
 pub async fn update_source(
     pool: &SqlitePool,
     id: i64,

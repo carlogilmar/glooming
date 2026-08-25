@@ -39,6 +39,10 @@
      which a 9% wash never did. `--gloom` itself survives as the accent inside
      it: the rule under the name while you type, and the wash when it opens. */
   --gloom:     #5fd6c4;
+  /* The same hue at a weight that survives on PAPER. The bright one is for ink
+     surfaces and measures 2.2:1 on a card; this is 5.2:1, and it is what the home
+     screen's cards and headings use. */
+  --gloom-deep: #0f766e;
   --gloom-bg:  #123634;
   /* The app header, one step lighter than the gloom's own band. The two stack as
      a single masthead — actions above, the name of the journey below — instead of
@@ -169,6 +173,7 @@
   /* A shade deeper than the light theme's band, so it still reads as a step
      ABOVE the app's own dark rather than merging into it. */
   --gloom:     #5eead4;
+  --gloom-deep: #5eead4;
   --gloom-bg:  #0d2321;
   --head-bg:   #112b29;
   --gloom-ink: #f2f7f6;

@@ -16,8 +16,6 @@
     files = [],
     current = null,
     dirty = false,
-    stale = false,
-    onreconcile,
     onshowfile,
     onrefs,
     onreading,
@@ -30,8 +28,6 @@
     /** The file on screen in the code pane. */
     current: string | null;
     dirty: boolean;
-    stale: boolean;
-    onreconcile?: () => void;
     /**
      * Bring a file to the front. Awaited, because a selection is only meaningful
      * once the code pane is actually showing the file it refers to.
@@ -1085,16 +1081,13 @@
         class="btn icon read"
         class:on={reading}
         onclick={toggleReading}
-        title="Scroll the doc and the code follows your reading (⌘R)"
+        title="Walk the code in the order your prose takes it — the pass at the end of which you say looks good to me (⌘R)"
       >
-        {reading ? "▶ Reading" : "▷ Read"}
+        {reading ? "▶ LGTM" : "▷ LGTM"}
       </button>
     {/if}
     {#if note}<span class="note">{note}</span>{/if}
     <span class="spacer"></span>
-    {#if stale}
-      <button class="btn icon warn" onclick={() => onreconcile?.()}>⟳ Code changed — reconcile</button>
-    {/if}
     <!-- One button, not two. You are always in exactly one of the two modes, so a
          segmented control spent half its width telling you where you already are.
          The label is what the click DOES. -->
@@ -1275,15 +1268,15 @@
      that happened to be clickable, which is fine in a toolbar and wrong here:
      this strip is the only place the note's modes live.
 
-     `:not(.read):not(.warn)` because those two carry their own fill and would
-     lose it to a scoped selector. */
-  .panehead .btn:not(.read):not(.warn),
+     `:not(.read)` because it carries its own gold fill and would lose it to a
+     scoped selector. */
+  .panehead .btn:not(.read),
   .panehead :global(.fontsize) {
     background: var(--doc-bg);
     border-color: var(--doc-line);
     box-shadow: var(--shadow);
   }
-  .panehead .btn:not(.read):not(.warn):hover:not(:disabled) {
+  .panehead .btn:not(.read):hover:not(:disabled) {
     background: var(--sel);
     border-color: color-mix(in srgb, var(--accent) 45%, transparent);
     color: var(--accent);
@@ -1300,16 +1293,6 @@
   }
   /* The only control here that reports a *problem*, so it is filled: the others
      are things you may do, this is a thing you should. */
-  .panehead .warn {
-    background: color-mix(in srgb, var(--priv) 14%, transparent);
-    border-color: color-mix(in srgb, var(--priv) 55%, transparent);
-    font-weight: 600;
-  }
-  .panehead .warn:hover {
-    background: color-mix(in srgb, var(--priv) 22%, transparent);
-    border-color: var(--priv);
-    color: var(--priv);
-  }
   .panehead .spacer + * {
     margin-left: 2px;
   }
@@ -1329,11 +1312,6 @@
     background: var(--priv);
     display: inline-block;
   }
-  .warn {
-    color: var(--priv);
-    border-color: color-mix(in srgb, var(--priv) 40%, transparent);
-  }
-
   /* Read mode keeps its gold — it is the one control here that changes what
      scrolling *does*, so it gets weight and, when on, a fill that lifts. */
   .panehead .btn.read {
@@ -1344,16 +1322,6 @@
   }
   /* The only control here that reports a *problem*, so it is filled: the others
      are things you may do, this is a thing you should. */
-  .panehead .warn {
-    background: color-mix(in srgb, var(--priv) 14%, transparent);
-    border-color: color-mix(in srgb, var(--priv) 55%, transparent);
-    font-weight: 600;
-  }
-  .panehead .warn:hover {
-    background: color-mix(in srgb, var(--priv) 22%, transparent);
-    border-color: var(--priv);
-    color: var(--priv);
-  }
   .panehead .spacer + * {
     margin-left: 2px;
   }
@@ -1373,11 +1341,6 @@
     background: var(--priv);
     display: inline-block;
   }
-  .warn {
-    color: var(--priv);
-    border-color: color-mix(in srgb, var(--priv) 40%, transparent);
-  }
-
   .editwrap {
     position: relative;
     height: 100%;

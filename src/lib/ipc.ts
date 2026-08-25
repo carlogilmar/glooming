@@ -194,9 +194,6 @@ export interface BlameLine {
 export const openFile = (path: string) =>
   invoke<OpenedFile>("open_file", { path });
 
-export const reparse = (path: string) =>
-  invoke<OpenedFile>("reparse", { path });
-
 export const blameFile = (path: string) =>
   invoke<BlameLine[]>("blame_file", { path });
 
@@ -230,9 +227,6 @@ export const listDocs = (query?: string, limit = 100) =>
 
 export const deleteDoc = (id: number) => invoke<void>("delete_doc", { id });
 
-export const reconcileDoc = (id: number, outline: Outline, source: string) =>
-  invoke<Doc>("reconcile_doc", { id, outline, source });
-
 // ---- the files a reading covers --------------------------------------------
 // Every one of these returns the whole reading, so the UI replaces its state
 // rather than patching it — the same one-payload habit as `open_file`.
@@ -258,8 +252,6 @@ export const addDocFile = (id: number, path: string) =>
 export const removeDocFile = (id: number, path: string) =>
   invoke<Reading>("remove_doc_file", { id, path });
 
-export const resnapshotDocFile = (id: number, path: string) =>
-  invoke<Reading>("resnapshot_doc_file", { id, path });
 
 // ---- projects --------------------------------------------------------------
 

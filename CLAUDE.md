@@ -38,6 +38,7 @@ These are deliberate, and pushing back on them needs a real argument:
 | Git diffs, PR fetching, branch checkout | Cut during design. You read committed files; lgtm just opens a path. |
 | Call graphs, cross-module analysis, "who calls this" | A reading may cover several files, but lgtm never reasons *across* them. It parses each one and lets your prose do the joining. |
 | Groups you create and manage | There is no gesture for making one. You open files during a review and those files are the reading; the `×` on a tab undoes an accident. Anything more is a project manager, not a reading tool. |
+| Reconciling a changed file into an existing gloom | lgtm reads committed code, not code in progress. A gloom is a reading of a particular version; merging a changed file into it produces a note half of which describes lines that no longer exist. Open the new version as a new gloom — the old reading stays intact beside it. |
 | Any AI/LLM involvement | The explanation is *yours*. Writing it is the point — generating it would defeat the tool. |
 | `import` in the reach block | It puts functions in scope unqualified, so a bare `cast(...)` can't be told from a local call. Showing it with zero call sites would read as a bug. |
 
@@ -109,6 +110,7 @@ mockup/explore.html            the explore drawer: surface + reach beside the no
 mockup/files.html              ten mixed-kind files: the files modal, and the drawer per kind
 mockup/motion-audit.html       every motion finding, before and after
 mockup/reading-theme.html      read mode as a theme: five palettes, five faces, measured
+mockup/home.html               the home screen rebuilt around glooms
 scripts/motion-audit.py        every animation vs its reduced-motion rule
 scripts/effect-audit.py        $effects that read and write the same $state
 scripts/component-audit.py     components imported but never rendered
@@ -127,6 +129,7 @@ src/
       DocPane.svelte           preview/edit/read, block styling, row wiring, treemap tooltip
       FontStepper.svelte       A− / A+, shared by both panes
       ExploreSections.svelte   surface table + the boundary, above the note in one scroll
+      Sky.svelte               the masthead's weather: bloom, cosmos or aurora, rolled per visit
       FilesModal.svelte        ⌘⇧T — the reading's files: switch, add, remove
       FilePalette.svelte       ⌘T — find a file, or add one to the reading
       FnPalette.svelte         ⌘P — jump to a function by name
@@ -141,11 +144,11 @@ src/
     explore.ts                 what the drawer shows: surface rows, reach lines
     fileset.ts                 the reading's file set: which file owns what
     markdownit.ts              markdown-it + the lgtm:* fence renderers
-    lgtmBlock.ts               parses the functions block (mirrors reconcile.rs)
+    lgtmBlock.ts               parses the functions block
     refs.ts                    references in prose, and which file each one means
     slash.ts                   the `/` menu's grammar: commands and their arguments
     select.ts                  one signature → every span worth highlighting
-    when.ts                    relative dates, shared so two views can't disagree
+    when.ts                    relative dates (the library's ages)
     treemap.ts                 parses + draws the treemap block
     stats.ts                   parses + draws the stats block
     deps.ts                    parses + draws the reach block (see mockup/deps.html)
@@ -159,7 +162,6 @@ src-tauri/
     parse/elixir.rs            tree-sitter → Outline   ← the load-bearing file
     parse/kinds.rs             config scripts and test suites
     seed.rs                    Outline + source + git history → starter markdown
-    reconcile.rs               doc + re-parsed source → merged doc
     git.rs                     .git/HEAD read + lazy blame + log for stats
     db/{mod,models,docs}.rs    pool, serde shapes, doc CRUD
     db/doc_files.rs            the files one reading covers
@@ -291,9 +293,8 @@ cannot be removed. Everything else in `doc_files` joined later.
 
 **One snapshot per file, so staleness is per-file.** A single `docs.source` could
 only ever say "something changed". `docs.source` is still maintained for the
-origin, because the library and the chooser read it — `resnapshot_doc_file` and
-`reconcile_doc` both write to *both* places, or the strip keeps showing amber
-after a reconcile.
+origin, because the library and the chooser read it — Both are written once, when the file
+joins, and never again.
 
 **Adding a file seeds nothing.** No blocks, no headings, no edit to your prose.
 The only thing it changes is what `/` can offer you. That is the whole feature:
@@ -536,9 +537,9 @@ function's name on a `def` line. The negative lookahead matters twice: it stops
 `setup` matching inside `setup_all`, and stops a test named `"the config test"`
 having the word in its *name* wrapped instead of the keyword.
 
-**Only `lgtm:functions` is reconciled**, and only module docs have one — so a
-config or test doc passes through `reconcile_markdown` verbatim. Pinned by
-`reconciling_a_config_doc_changes_nothing`.
+**No block is ever rewritten after it is written.** A block is a snapshot of what
+the code was when you read it, and a gloom holds the source that produced it — the
+two cannot drift, because neither one changes.
 
 **The config block's finding is `env` vs literal.** `System.get_env` versus a
 hardcoded string is the difference between a value you can change at deploy time
@@ -557,15 +558,15 @@ the same as "provides nothing"** — and the UI shows `+?` rather than guessing.
 
 ### Every block at a glance
 
-| Tag | File kind | Renderer | Seeded? | Reconciled? |
-|---|---|---|---|---|
-| `lgtm:stats` | all | `stats.ts` — key-agnostic, formats whatever keys it finds | yes | no |
-| `lgtm:surface` | module | `surface.ts` — two scrolling columns, sorted by name | yes | no |
-| `lgtm:treemap` | module | `treemap.ts` — squarified, top 3 labelled | **no** — write it when you want it | no |
-| `lgtm:functions` | module | `markdownit.ts` — a prose slot per function | **no** — write it when you want it | **yes** |
-| `lgtm:deps` | module | `deps.ts` — the boundary, omitted when nothing is reached | when it reaches something | no |
-| `lgtm:settings` | config | `settings.ts` — grouped by app, env vs literal | yes | no |
-| `lgtm:tests` | test | `tests.ts` — describes, setups, assertion strips | yes | no |
+| Tag | File kind | Renderer | Seeded? |
+|---|---|---|---|
+| `lgtm:stats` | all | `stats.ts` — key-agnostic, formats whatever keys it finds | yes |
+| `lgtm:surface` | module | `surface.ts` — two scrolling columns, sorted by name | yes |
+| `lgtm:treemap` | module | `treemap.ts` — squarified, top 3 labelled | **no** — write it when you want it |
+| `lgtm:functions` | module | `markdownit.ts` — a prose slot per function | **no** — write it when you want it |
+| `lgtm:deps` | module | `deps.ts` — the boundary, omitted when nothing is reached | when it reaches something |
+| `lgtm:settings` | config | `settings.ts` — grouped by app, env vs literal | yes |
+| `lgtm:tests` | test | `tests.ts` — describes, setups, assertion strips | yes |
 
 `lgtm:stats` serving four file kinds is why it renders whatever keys the text
 carries instead of expecting a fixed set — one renderer, no per-kind variants.
@@ -733,8 +734,8 @@ got the condition backwards as well, treating a named callback as readable. The
 probe caught both.
 
 The blocks themselves are untouched — all five still render, `lgtm:functions`
-still reconciles, and `/` inserts any of them. What changed is that **nothing puts
-one in your note but you**.
+still renders, and `/` inserts any of them. What changed is that **nothing puts one
+in your note but you**.
 
 ### What a seeded module doc actually is
 
@@ -814,7 +815,7 @@ one place lgtm lets you choose between them by hand.
 Insert one where you want it, delete it when you don't. That is the whole point of
 not seeding them: a block you asked for beats three you scroll past.
 
-**Two blocks are renderable, reconcilable and deliberately not seeded.** Both were
+**Two blocks are renderable and deliberately not seeded.** Both were
 seeded once and both were cut for the same reason — a generated section above the
 part you write in has to earn that space every single time you open a file:
 
@@ -828,18 +829,12 @@ part you write in has to earn that space every single time you open a file:
 Both generators (`treemap_block`, `functions_block`) stay, stay `pub`, and stay
 tested against their own output rather than against the seeder's, because a block
 whose only producer is a hand-typed guess drifts away from its renderer. Write
-either fence yourself when you want it, and `lgtm:functions` still reconciles.
+either fence yourself when you want it.
 
-**Reconciliation is therefore a no-op on a fresh doc**, and that is the real cost
-of the above. `reconcile_markdown` touches `lgtm:functions` and nothing else, so a
-seeded doc passes through unchanged — pinned by
-`reconciling_a_seeded_doc_leaves_it_alone`. What replaces it is the dangling
-reference: `` `Accounts.normalize/1` `` in your prose strikes through when
-`normalize/1` is deleted, which puts the signal *where you wrote about it* instead
-of in a table. The gap that remains is the other direction — **nothing tells you a
-function was added**, because no seeded block is regenerated. Re-seed for that.
-The "Code changed — reconcile" button still re-snapshots, so it clears staleness;
-it just has no table to merge.
+**A block is never regenerated, and neither is the source under it.** A gloom holds
+the version it was read at, so a block written on Tuesday still describes the code
+the pane is showing. What tells you the world moved on is the file's own "changed
+on disk" row — and, for the code you *wrote about*, the dangling reference.
 
 **Private helpers are not seeded anywhere.** They are in `lgtm:surface` (it is a
 directory, so it lists everything) and one `/` away when your explanation needs to
@@ -941,20 +936,37 @@ unqualified, so a bare `cast(...)` is indistinguishable from a local call
 without a symbol table for the imported module. Showing it with zero call sites
 would read as a bug.
 
-### Reconciliation: prose is never discarded
+### A gloom is pinned to the versions it was read at
 
-When the file changes, `reconcile.rs` merges the doc with a fresh parse:
-prose is kept keyed by `name/arity`, new functions append with empty slots,
-vanished ones are struck through **but keep their explanation**, and prose
-follows a function across a `def`↔`defp` change. A rename reads as a delete
-plus an add — the old prose survives struck through rather than silently
-re-attaching to a function it wasn't written about.
+**The pane shows the snapshot, not the file.** `read_one` returns
+`doc_files.source`, and the outline is parsed from *that* — so a line number in
+your prose means next month what it meant today, and the surface, the reach and
+every reference stay consistent with what is on screen.
 
-Only `lgtm:functions` is reconciled — and it is no longer seeded, so on most docs
-reconciliation does nothing at all. The stats, surface and deps blocks are left
-alone; re-seed the doc if you want them refreshed.
+Disk is read for exactly one thing: whether it has moved on. That is worth a row
+above the code — *"the code I am reading is no longer the code that runs"* is
+precisely what a reader needs to know — but it is **a statement, not an offer**.
 
-If you touch this file, the tests in it are the specification.
+**There is no reconciliation, no re-snapshot and no re-parse.** All three were
+built and all three are gone, along with `reconcile.rs`, `resnapshot_doc_file`,
+`reconcile_doc` and the `reparse` command. The argument that removed them:
+
+- **lgtm reads committed code, not code in progress.** A gloom is a reading of a
+  particular version. Merging a changed file into it produces a note half of which
+  describes lines that no longer exist, and no merge algorithm can tell you which
+  half.
+- **The alternative is one gesture.** ← Home, open the file, and you have a new
+  gloom of the new version — with the old reading still intact beside it in the
+  library, which is what you want when the question is "what changed".
+- **Reconciliation was already vestigial.** It only ever touched `lgtm:functions`,
+  which stopped being seeded, so on nearly every doc it did nothing at all.
+
+What survives is the *signal*, in two places: a file that has changed on disk says
+so above the code and on its dot in the files modal, and a **dangling reference**
+strikes through in the prose where you wrote it. Both put the fact where you are
+looking without pretending the tool can fix it.
+
+`a_gloom_keeps_the_source_it_was_read_at` pins the premise.
 
 ### Motion means something
 
@@ -1214,6 +1226,55 @@ where you are; it just stops hiding the author colours or the matches you asked
 for. Without this, turning on blame with a function selected leaves 68% of the
 authors invisible.
 
+### Home is about glooms, not about the app
+
+`mockup/home.html` is the contract. Three bands, in the order you need them:
+
+1. **An ink masthead** — `--gloom-bg`, the wordmark in `--display`, and one sentence
+   defining the word for someone who has never seen it. It plays the same accent
+   sweep the gloom band does: same surface, same greeting.
+2. **The glooms you were in** — as *cards*, not filenames in a list: the name you
+   gave it, and badges for the files it covers. Nothing else. A first cut carried a
+   file count, an age and a branch as well, and all three answered questions you are
+   not asking while scanning this screen — *which one was I in?* The name answers
+   that; the badges say what it reached; the count is already in the badges (`+2`);
+   and the age only ordered the list, which the order of the list does. A card still
+   called after its module is greyed and italic, the same invitation the band gives.
+3. **One way to start**, with the current project beside it and the rarer routes as
+   quiet text. The old screen offered four buttons of equal weight, which is four
+   decisions before you have started.
+
+Then three sentences on what a gloom is. The features are discoverable; the idea is
+not, and nothing else in the app has room to say it.
+
+**The masthead has weather, and it is the only ambient motion outside the two
+already budgeted.** `Sky.svelte` draws one of three on a canvas — **bloom** (rings
+opening from a point, which is where the *name* comes from: the swell when water
+first hits coffee grounds), **cosmos** (parallax drift with a faint twinkle), or
+**aurora** (three sine bands under soft gradients) — and **which one is rolled when
+home appears**. A surface you land on a dozen times a day should not be identical a
+dozen times a day, and since none of the three says anything, none can say the wrong
+thing by being picked.
+
+Home is the one place this is affordable: you are not reading code on it and nothing
+here has to be tracked. Everywhere else the rule stands.
+
+A fourth candidate, **constellation**, is kept in the mockup and was cut: it draws
+lines between dots, and the reach diagram is a real graph — teaching the eye that
+teal lines between dots are ornamental is the one thing worth not doing.
+
+Three things it does that a decorative canvas usually forgets: it **stops when the
+window is hidden**, it **disconnects its observer and cancels its frame on unmount**,
+and under `prefers-reduced-motion` it composes **one** frame and holds it — the
+picture survives, the movement does not. That last one is the same rule the CSS
+follows; `scripts/motion-audit.py` cannot see canvas, so it is written here instead.
+
+**`--gloom-deep` came out of this.** The bright teal is for ink surfaces and
+measures **2.2:1** on a card — the home screen needed the same hue at a weight that
+survives on paper (5.2:1 light; in dark it *is* the bright one). Measured on the
+rest: hero title 12.5:1, hero prose 6.2:1, card name 17.2:1, meta 6.1:1, the start
+button 10.9:1.
+
 ### The app header is a small theme
 
 `.apphead` redefines the neutral tokens for its own subtree — `--fg`, `--fg-dim`,
@@ -1223,10 +1284,29 @@ dark strip, which is read mode's trick at the scale of one row, and the two bars
 stack as a single masthead: actions above, the name of the journey below. Measured
 on the light head: ink 10.9:1, dim 7.5:1, the teal accent 6.5:1.
 
+**The header shows the GLOOM's branch, not the working tree's.** A gloom is pinned
+to the versions it was read at, and the branch those versions came from is part of
+that reading — it does not change when you check something else out. Showing the
+live branch made the header report the state of your tree, which is a different
+tool's job and was a fact about *now* sitting in a window entirely about *then*.
+**Nothing announces staleness over the code.** A bar above the pane said it for a
+while, in two wordings, and both were the same mistake: a gloom holds the version it
+was read at, so *"this differs from disk"* is a fact about the world **outside** the
+reading — true, and not worth a row across the top of the thing you are reading. It
+still shows where it costs nothing: the dot on the file button, and the words beside
+each file in `⌘⇧T` (*changed on disk*).
+
+**The branch is context, not decoration.** It was a grey pill among grey pills, and
+it names the versions everything under it is showing. It carries the accent now, and
+is keyed on its own value so it plays its arrival when it changes — which, since it
+is the gloom's branch, happens when you open a different gloom.
+
 **`← Home` is a way out and now looks like one** — filled, bolder, first in the
 row. **Re-parse is gone**: it re-read a file you had not edited, since lgtm never
 writes, and the two cases that matter have their own controls (*Code changed —
-reconcile* in the note, and the amber staleness row above a joined file).
+reconcile* in the note, and the amber staleness row above a joined file). Both of
+those have since gone the same way — see *A gloom is pinned to the versions it was
+read at*.
 **Library is gone from this row too** — the way to another gloom is ← Home, and
 `⌘K` still opens the library from anywhere. What is left is about *this* gloom:
 where you are, which files it covers, and two ways to add one.
@@ -1397,6 +1477,18 @@ because scrolling and clicking both set this and were already required never to
 disagree — puts `.now` on the block and on its row. Dimming then lives on the row
 with `li.steprow .step { opacity: 1 }` beside it, or the two multiply to 0.2 and
 the text nearly vanishes.
+
+### The app is Glooming; the button is LGTM
+
+The window title and the brand in the title strip say **Glooming**, set in
+`--display` — the same wordmark home carries, so the two agree. `lgtm` survives
+where it always meant the most: as the *phrase*, on the button that ends a reading.
+
+`▷ Read` is now **`▷ LGTM`**, and the rename is not decoration. That button starts
+the pass where you scroll your own note and watch the code follow it — which is
+exactly the pass at the end of which you either understand the change or find the
+sentence where you stopped understanding it. Naming it for the verdict names the
+thing it is for. The repo, the crate and the bundle id are untouched.
 
 ### Reading: the doc drives the code
 
@@ -1666,8 +1758,7 @@ siblings and stops at the first non-attribute — checking only the immediate
 previous sibling misses half of them.
 
 **Two blocks sort, and they follow opposite rules.** `lgtm:functions` is sorted
-in *both* `seed.rs` and `reconcile.rs`, which must agree or reconciling a doc
-reshuffles it. `lgtm:surface` is sorted in `seed.rs` *only*, and the renderer
+in `seed.rs` only, now that nothing re-writes a block after it is written. `lgtm:surface` is sorted in `seed.rs` *only*, and the renderer
 preserves the text's order — because two sorters did disagree there (Rust orders
 by `(name, arity)`, JS `localeCompare` reorders punctuation). If you add a
 sorted block, pick one of these two shapes deliberately.
@@ -1821,7 +1912,7 @@ python3 scripts/effect-audit.py    # exits non-zero on a read-write loop
 ## Testing
 
 ~90 Rust tests cover the parser (modules, configs, test suites), the seeder, the
-reconciler, git parsing and the DB layer. `tests/pipeline.rs` runs the whole
+git parsing and the DB layer. `tests/pipeline.rs` runs the whole
 chain against `tests/fixtures/accounts.ex`, which is the exact file
 `mockup/index.html` draws — asserting the click-target line numbers
 `12, 20, 24, 30, 36`, the full body spans `12–17, 20–22, 24–26, 36–41`, and the
@@ -1869,7 +1960,7 @@ habits load-bearing rather than optional:
   worse than a visible gap, and the gaps are the tool's whole method.
 - Rust owns parsing; the frontend never sees a syntax tree, only an `Outline`.
 - Commands in `commands/` stay thin; logic lives in `db/`, `parse/`, `seed.rs`,
-  `reconcile.rs`, `git.rs`.
+  `git.rs`.
 - **Each pane owns its font size, under its own key** (`codeFontSize`,
   `docFontSize`) via one shared `fontSize()` store. `--doc-font` sits on the doc
   pane's scroll container so **both** the rendered prose and the markdown editor

@@ -2,7 +2,7 @@
 //
 // Deliberately forgiving: you type this by hand, and a malformed block must
 // degrade to a plain code fence rather than lose your writing. The Rust side
-// has an equivalent parser for reconciliation (src-tauri/src/reconcile.rs) —
+// mirrors the shape `seed.rs` writes —
 // the two must agree on the grammar, which is why it is this simple.
 
 export interface FnEntry {

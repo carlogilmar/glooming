@@ -45,10 +45,12 @@ rarely lives in one file.
 - **Follow a call across files.** When a reached module is also one of the files
   you are reviewing, clicking its function in the diagram switches file and
   focuses it.
-- **Tells you when the code moves.** Each file carries a snapshot of how it was
-  when you read it, so a changed file is flagged per file, not vaguely. A
-  reference in your prose to a function that has since been deleted renders struck
-  through rather than quietly becoming plain text.
+- **A gloom is pinned to the version you read.** Each file is stored with the
+  source as it was when you opened it, and that is what the pane shows — so a line
+  number in your prose means the same thing next month. If a file moves on, lgtm
+  says so and leaves the reading alone: there is no merge, no re-parse. To read the
+  new version, start a new gloom; the old one stays beside it in the library, which
+  is what you want when the question is *what changed*.
 - **Read mode has its own theme.** `⌘R` and the whole window changes: both panes
   go to Nocturne — a deep teal dark, the same family as the gloom band — and your
   prose is set in Iowan Old Style at a book's line-height and measure. Scrolling
@@ -103,7 +105,7 @@ pnpm dev              # frontend only in a browser (panes render, IPC fails)
 pnpm check            # svelte-check — must be clean
 pnpm build            # frontend production build
 
-cargo test   --manifest-path src-tauri/Cargo.toml    # parser, seeder, reconciler, DB
+cargo test   --manifest-path src-tauri/Cargo.toml    # parser, seeder, DB
 cargo clippy --manifest-path src-tauri/Cargo.toml
 
 python3 scripts/motion-audit.py   # every animation has a reduced-motion rule
@@ -269,10 +271,9 @@ part you write in has to earn that space every time you open a file:
 
 - **`lgtm:treemap`** draws function sizes as area. It answers a question you ask
   occasionally — "is anything in here disproportionate?"
-- **`lgtm:functions`** gives every function a prose slot of its own, and is the
-  one block that gets *reconciled* when the file changes: your prose stays keyed
-  to `name/arity`, new functions append, deleted ones are struck through but keep
-  what you wrote.
+- **`lgtm:functions`** gives every function a prose slot of its own — an
+  alphabetical index, which turned out to be the wrong shape for an explanation
+  that follows a path through a module.
 
 Write either fence yourself when you want it.
 
@@ -317,7 +318,6 @@ src/                       SvelteKit frontend
 src-tauri/                 Rust + Tauri backend
   src/parse/elixir.rs      tree-sitter → Outline   ← the load-bearing file
   src/seed.rs              Outline → starter markdown
-  src/reconcile.rs         doc + re-parsed source → merged doc
   src/db/doc_files.rs      the files one reading covers
   src/git.rs               .git/HEAD read + lazy git blame + git log
 ```
