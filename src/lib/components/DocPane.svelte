@@ -586,9 +586,20 @@
     if (readout) readout.innerHTML = `<span class="muted">${host.dataset.rest ?? ""}</span>`;
   }
 
+  /**
+   * `sig` is an identity — `name/arity`.
+   *
+   * `focus.sig` is the *display* form and ranges for default arguments
+   * (`decode_message/1..2`), while an edge records its caller as the plain top
+   * arity, which is what Rust writes. Narrowing here is what lets a selected
+   * default-arg function hold its connections; the diagram had the same mismatch
+   * and drew such a function as reaching nothing at all.
+   */
   function paintFunction(host: HTMLElement, sig: string): boolean {
-    const fn = host.querySelector<HTMLElement>(`.fn[data-fn="${CSS.escape(sig)}"]`);
+    const key = sig.replace(/\/\d+\.\.(\d+)$/, "/$1");
+    const fn = host.querySelector<HTMLElement>(`.fn[data-fn="${CSS.escape(key)}"]`);
     if (!fn) return false;
+    sig = key;
 
     host.querySelector("svg")?.classList.add("focusing");
     fn.classList.add("on");

@@ -178,6 +178,15 @@
         },
         { keys: ["⌘S"], what: "Force a save. Autosave already runs 800ms after you stop typing" },
         {
+          action: "one gloom, one branch",
+          what:
+            "A file may only join a gloom from the branch the gloom was read on. A gloom is a " +
+            "reading of one version of a change, and a file snapshotted from another branch is " +
+            "a second version of the world in the same note — with line numbers your prose " +
+            "describes as though they were the same. Check out that branch to carry on, or " +
+            "start a new gloom for where you are",
+        },
+        {
           action: "“has changed on disk”",
           what:
             "A gloom holds the versions of the files it was read at — the pane shows the " +

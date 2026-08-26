@@ -26,6 +26,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::files::open_file,
+            commands::files::branch_of,
             commands::files::blame_file,
             commands::docs::seed_doc,
             commands::docs::create_doc,

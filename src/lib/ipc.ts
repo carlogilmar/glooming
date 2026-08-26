@@ -194,6 +194,9 @@ export interface BlameLine {
 export const openFile = (path: string) =>
   invoke<OpenedFile>("open_file", { path });
 
+/** The branch a path is on right now — asked for, never remembered. */
+export const branchOf = (path: string) => invoke<string | null>("branch_of", { path });
+
 export const blameFile = (path: string) =>
   invoke<BlameLine[]>("blame_file", { path });
 

@@ -100,6 +100,17 @@ pub async fn open_file(state: State<'_, AppState>, path: String) -> AppResult<Op
 
 
 /// Lazy: only invoked when the Blame button is pressed.
+/// The branch a path is on, right now.
+///
+/// A gloom's own branch is recorded once; this is the other half of the
+/// comparison, and it has to be asked for rather than remembered — you check out
+/// another branch in a terminal, and nothing in the app has any reason to notice.
+/// Cheap: one read of `.git/HEAD`.
+#[tauri::command]
+pub fn branch_of(path: String) -> Option<String> {
+    crate::git::current_branch(Path::new(&normalize_path(&path)))
+}
+
 #[tauri::command]
 pub async fn blame_file(path: String) -> AppResult<Vec<BlameLine>> {
     git::blame(Path::new(&path))

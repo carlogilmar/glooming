@@ -143,8 +143,28 @@ export function renderDeps(
   const locals = (module?.functions ?? [])
     .slice()
     .sort((a, b) => a.line - b.line)
-    .map((f) => ({ sig: displaySig(f), line: f.line, y: 0, pure: true }))
-    .filter((f) => !callers || callers.has(f.sig));
+    /**
+     * `key` is the function's IDENTITY; `sig` is how it is drawn.
+     *
+     * They differ for exactly one shape, and that shape shipped a bug: a function
+     * with default arguments displays as `decode_message/1..2`, while Rust records
+     * a call site's caller as `Def::signature()` — plain `name/arity`. Every edge
+     * whose caller had default args therefore failed to find its local, was
+     * dropped by `if (!local) continue`, and the remote function it called was
+     * drawn in the outside column **with no line at all** — a dependency that
+     * looks unused while the call is right there in the source.
+     *
+     * The identity of a default-arg function is its top arity, which is what Rust
+     * writes, so that is what the lookups use. Only the label ranges.
+     */
+    .map((f) => ({
+      key: `${f.name}/${f.arity}`,
+      sig: displaySig(f),
+      line: f.line,
+      y: 0,
+      pure: true,
+    }))
+    .filter((f) => !callers || callers.has(f.key));
 
   if (!locals.length) {
     // With an isolate set this means the block names a caller the outline does
@@ -155,7 +175,7 @@ export function renderDeps(
       : `<div class="lgtm-deps empty">No outline for this file, so there is nothing to draw the reach against.</div>`;
   }
 
-  const index = new Map(locals.map((f, i) => [f.sig, i]));
+  const index = new Map(locals.map((f, i) => [f.key, i]));
 
   // Order the outside by the average position of its callers, so lines stay
   // roughly parallel instead of crossing.
@@ -256,7 +276,12 @@ export function renderDeps(
     // ahead of everything on a zero delay.
     const fi = at();
     parts.push(
-      `<g class="fn${f.pure ? " pure" : ""}" ${fi} data-fn="${esc(f.sig)}" data-sig="${esc(f.sig)}" data-line="${f.line}" role="button" tabindex="0">`,
+      // `data-fn` is the identity, because hovering matches it against an edge's
+      // `data-from`; `data-sig` is the display form, because clicking matches it
+      // against `focus.sig`. They are the same string for every function without
+      // default arguments, which is why one field did the work of two until one
+      // turned up that had them.
+      `<g class="fn${f.pure ? " pure" : ""}" ${fi} data-fn="${esc(f.key)}" data-sig="${esc(f.sig)}" data-line="${f.line}" role="button" tabindex="0">`,
       `<rect class="fn-hit" x="${BOX.x + 6}" y="${f.y - 13}" width="${BOX.w - 12}" height="26" rx="5"/>`,
       `<text class="fn-name" x="${BOX.x + 18}" y="${f.y + 4}">${esc(f.sig)}</text>`,
       `<text class="fn-line" x="${BOX.x + BOX.w - 18}" y="${f.y + 4}" text-anchor="end">${f.line}</text>`,

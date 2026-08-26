@@ -296,6 +296,76 @@ only ever say "something changed". `docs.source` is still maintained for the
 origin, because the library and the chooser read it — Both are written once, when the file
 joins, and never again.
 
+**One gloom, one branch.** A file may only join a gloom from the branch the gloom
+was read on. A gloom is a reading of *one version* of a change; a file snapshotted
+from another branch is a second version of the world sitting silently in the same
+note, with line numbers your prose will describe as though they were the same —
+and nothing later can untangle that, so `add_doc_file` refuses at the door with a
+sentence that says what to do (*check out `main` to keep going, or start a new
+gloom for `fix/x`*).
+
+`branch_mismatch` is deliberately **narrow**: it refuses only when it is sure. Both
+sides must be in a repository and the **same** repository — a file from another
+checkout has branch names that mean nothing here — and both branch names must be
+readable. A detached HEAD, a repo with no commits, a file outside git: all pass,
+because *"I cannot tell"* is not *"no"*. A false refusal blocks work; a false pass
+costs one confusing note. Pinned by `a_gloom_without_a_branch_accepts_anything` and
+`a_file_outside_git_is_not_refused`.
+
+**The live branch has to be asked for, not remembered.** `ReadingFile.branch` is
+sampled when the reading is *built*, so it says where you were when you opened the
+gloom — and the case this guard exists for is checking out another branch in a
+terminal afterwards, which nothing in the app has any reason to notice. The first
+cut compared against that stale value and blocked nothing at all. `branch_of` is a
+command of its own (one read of `.git/HEAD`), re-asked when the reading changes,
+whenever the window comes back to the front — you switched branches in the terminal
+you just came from — and **awaited at the gesture itself**, because a check only as
+fresh as the last focus is not fresh enough for the one action it guards.
+
+**The UI stops offering what the guard refuses.** A rule enforced only in Rust is a
+rule you learn by tripping over it, so `offBranch` — `docs.branch` against the live
+branch — disables *Find…* and *Open file…*, short-circuits `⌘T`,
+`⌘O` and `⌘⇧O` into the same explanation, replaces the files modal's **Add a file**
+row with why it is missing, and turns the branch chip **quiet** — neutral ink, dashed
+edge. Amber said *something is wrong*, and nothing is: the reading is intact and
+reads normally from here, it simply cannot grow. Quiet says the same thing the
+disabled buttons beside it are saying, in the same language, and avoids a third
+meaning in a row that already has two. The chip still names only the gloom's
+branch, because that is the fact it is for; where *you* are is in its tooltip and
+in the banner. One sentence, at whichever gesture you reached
+for.
+
+**And the banner says what to do rather than what happened.** Opening a gloom whose
+files are not on the current branch used to report *"Not on disk any more: … —
+showing the snapshot"*, which is true, already handled, and not news: the snapshot
+is the whole design. It now says, in one line, *"You are on `fix/x` — check
+out `main` to add files to this gloom."* — and it says it as a **notice**, not as
+the error banner: teal rather than amber, arriving from just above, holding long
+enough to read twice, and leaving on its own after 5.8s.
+
+That split is the point. The banner is for things that went wrong and stay wrong
+until you deal with them — a failed save, a missing file — so it waits to be
+dismissed. Being on another branch is a *state* you are standing in, visible in the
+chip and in the disabled buttons, and a strip that stays across the top saying so
+becomes furniture within a minute. `noticeLeaving` gives it a fade rather than a
+disappearance; under reduced motion it still appears and still goes, it just does
+not travel to get here.
+
+**The notice is structured, not a sentence.** `{ here, gloom }` rather than
+pre-formatted text, so the two branch names can be drawn as **badges** — the
+sentence is scaffolding, the names are what you read — and so they can be *copied*.
+
+**Every branch name in the app is a copy button**, the chip included. The reply to
+this notice is a `git checkout` in another window, so the name is something you are
+about to type somewhere else. The confirmation lands on the name itself (`copied ✓`
+for 1.4s): a toast for two words would be louder than the thing it confirms. Same trigger, useful sentence, and the same
+sentence every refused gesture gives — a banner is a glance, and the reassurance
+that the reading still works belongs in `?`.
+
+Opening an existing gloom on the wrong branch is **not** restricted — the reading
+is made of snapshots and shows the same thing whatever you have checked out. It is
+only *adding* that mixes versions.
+
 **Adding a file seeds nothing.** No blocks, no headings, no edit to your prose.
 The only thing it changes is what `/` can offer you. That is the whole feature:
 by the second file the note is yours, and generating more of it would be writing
@@ -983,6 +1053,20 @@ Parser notes, all confirmed by dumping the tree rather than guessing:
 | `alias X.Y, as: S` | `args[ alias, keywords[ pair ] ]` |
 | `Repo.insert(cs)` | `call[ dot[ alias, identifier ], arguments ]` |
 | `%User{}` | `map[ struct[ alias ] ]` |
+
+**A function's identity is not its label, and the diagram has to match on the
+identity.** A function with default arguments displays as `decode_message/1..2`
+(`displaySig`), while Rust records a call site's caller as `Def::signature()` —
+plain `name/arity`, the top one. `deps.ts` keyed its local functions by the *label*,
+so every edge whose caller had default args failed its lookup, was dropped by
+`if (!local) continue`, and the module it called was drawn in the outside column
+**with no line at all**: a dependency that looks unused while the call sits in the
+source. Locals now carry `key` (identity, what edges and hovers match) beside `sig`
+(the label, what is drawn and what `focus.sig` matches). `paintFunction` narrows a
+display sig to its identity for the same reason.
+
+The two are the same string for every function without default arguments, which is
+why one field did the work of two until a file turned up that had them.
 
 **The pipe shifts arity.** `attrs |> Repo.insert()` is written with no arguments
 but calls `insert/1`. `call_arity` adds one when the call is the *right* operand

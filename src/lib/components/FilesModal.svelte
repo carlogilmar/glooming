@@ -24,6 +24,7 @@
     onremove,
     onadd,
     onclose,
+    offBranch = null,
   }: {
     files: ReadingFile[];
     current: string | null;
@@ -33,6 +34,12 @@
     onremove: (path: string) => void;
     /** Find a file in the project and add it — ⌘T. */
     onadd: () => void;
+    /**
+     * Set when you are standing on a different branch from the one this gloom was
+     * read on, in which case nothing may join it — the row says so instead of
+     * offering a gesture that will be refused.
+     */
+    offBranch: { gloom: string; here: string } | null;
     onclose: () => void;
   } = $props();
 
@@ -241,10 +248,19 @@
         <p class="none">no file matches “{query}”</p>
       {/each}
 
-      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-      <div class="addrow" onclick={onadd}>
-        + &nbsp;Add a file to this gloom… <kbd>⌘T</kbd>
-      </div>
+      {#if offBranch}
+        <!-- A gloom holds one version of a change, so it can only grow from the
+             branch it was read on. Said here rather than discovered by trying. -->
+        <div class="addrow off">
+          Nothing can join this gloom from <b>{offBranch.here}</b> — it was read on
+          <b>{offBranch.gloom}</b>. Check that branch out, or start a new gloom.
+        </div>
+      {:else}
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+        <div class="addrow" onclick={onadd}>
+          + &nbsp;Add a file to this gloom… <kbd>⌘T</kbd>
+        </div>
+      {/if}
     </div>
 
     <footer>
@@ -467,6 +483,18 @@
     font-size: 12px;
     color: var(--accent);
     border: 1px dashed color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+  .addrow.off {
+    cursor: default;
+    color: var(--priv);
+    background: color-mix(in srgb, var(--priv) 9%, transparent);
+    border-color: color-mix(in srgb, var(--priv) 30%, transparent);
+    font-style: normal;
+    line-height: 1.5;
+  }
+  .addrow.off b {
+    font-family: var(--mono);
+    font-weight: 600;
   }
   .addrow:hover {
     background: color-mix(in srgb, var(--accent) 8%, transparent);

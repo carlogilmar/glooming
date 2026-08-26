@@ -208,6 +208,12 @@ pub async fn open_reading(state: State<'_, AppState>, id: i64) -> AppResult<Read
 /// **Nothing is seeded.** The note is yours from the first file onward; what an
 /// added file contributes is source to read and functions to reference, which
 /// is exactly what a review needs and no more.
+///
+/// **And it must come from the branch the gloom was read on.** A gloom is a
+/// reading of one version of a change; a file snapshotted from a different branch
+/// is a different version of the world sitting silently in the same note, with
+/// line numbers your prose will describe as if they were the same. Nothing later
+/// can untangle that, so it is refused at the door.
 #[tauri::command]
 pub async fn add_doc_file(state: State<'_, AppState>, id: i64, path: String) -> AppResult<Reading> {
     let path = normalize_path(&path);
@@ -217,6 +223,12 @@ pub async fn add_doc_file(state: State<'_, AppState>, id: i64, path: String) -> 
             "no file at {path}"
         )));
     }
+
+    let doc = docs_db::get(&state.pool, id).await?;
+    if let Some(problem) = branch_mismatch(&doc, p) {
+        return Err(crate::error::AppError::BadInput(problem));
+    }
+
     let source = std::fs::read_to_string(p)?;
     let sha = sha256(&source);
     let filename = p
@@ -227,6 +239,33 @@ pub async fn add_doc_file(state: State<'_, AppState>, id: i64, path: String) -> 
 
     files_db::add(&state.pool, id, &path, &filename, lang, &source, &sha).await?;
     build_reading(&state, id).await
+}
+
+/// Why this file may not join this gloom, if it may not.
+///
+/// Deliberately narrow — it refuses only when it is **sure**, because a false
+/// refusal blocks work and a false pass costs one confusing note:
+///
+/// - both the gloom and the candidate must be in a repository, and the **same**
+///   one: a file from another checkout has branch names that mean nothing here;
+/// - both branches must be readable. A detached HEAD, a fresh repo with no
+///   commits, a file outside git — all pass, because "I cannot tell" is not "no".
+fn branch_mismatch(doc: &Doc, candidate: &Path) -> Option<String> {
+    let want = doc.branch.as_deref()?;
+    let here = crate::git::current_branch(candidate)?;
+    if here == want {
+        return None;
+    }
+    let origin_root = crate::git::repo_root(Path::new(&doc.path))?;
+    let candidate_root = crate::git::repo_root(candidate)?;
+    if origin_root != candidate_root {
+        return None;
+    }
+    Some(format!(
+        "This gloom was read on {want}, and you are on {here}. \
+         Adding a file now would put two versions of the same code in one reading. \
+         Check out {want} to keep going, or start a new gloom for {here}."
+    ))
 }
 
 /// Drop a file you opened by accident. The prose is untouched — a reference to
@@ -283,3 +322,42 @@ pub async fn delete_doc(state: State<'_, AppState>, id: i64) -> AppResult<()> {
 }
 
 
+
+#[cfg(test)]
+mod branch_tests {
+    use super::*;
+    use crate::db::models::Doc;
+
+    fn doc(path: &str, branch: Option<&str>) -> Doc {
+        Doc {
+            id: 1,
+            path: path.into(),
+            filename: "accounts.ex".into(),
+            lang: "elixir".into(),
+            title: "Accounts".into(),
+            branch: branch.map(str::to_string),
+            label: None,
+            markdown: String::new(),
+            source: String::new(),
+            source_sha: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    /// A gloom with no branch — a file outside git, a fresh repo — never refuses.
+    /// "I cannot tell" is not "no": a false refusal blocks work, and a false pass
+    /// costs one confusing note.
+    #[test]
+    fn a_gloom_without_a_branch_accepts_anything() {
+        assert!(branch_mismatch(&doc("/tmp/a.ex", None), Path::new("/tmp/b.ex")).is_none());
+    }
+
+    /// And a candidate outside git passes for the same reason: `current_branch`
+    /// returns `None`, and the guard only fires on two known, differing names.
+    #[test]
+    fn a_file_outside_git_is_not_refused() {
+        let d = doc("/tmp/a.ex", Some("main"));
+        assert!(branch_mismatch(&d, Path::new("/tmp/definitely/not/a/repo/b.ex")).is_none());
+    }
+}

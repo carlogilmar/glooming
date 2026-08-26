@@ -1,5 +1,6 @@
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import CodePane from "$lib/components/CodePane.svelte";
   import DocPane from "$lib/components/DocPane.svelte";
   import Divider from "$lib/components/Divider.svelte";
@@ -179,6 +180,138 @@
    * read a newer one is a new gloom. Nothing here offers to merge or re-snapshot.
    */
   /**
+   * Which branch the working tree is on *now*.
+   *
+   * Not `origin.branch`: that is sampled when the reading is built, so it says
+   * where you were when you opened the gloom. Check out another branch in a
+   * terminal and nothing in the app has any reason to notice — which is exactly
+   * the case this guard exists for, and exactly the case it missed. Re-asked when
+   * the reading changes and whenever the window comes back to the front, since
+   * switching branches happens in the terminal you just came from.
+   */
+  let liveBranch = $state<string | null>(null);
+
+  async function checkBranch() {
+    const p = origin?.path;
+    if (!p) {
+      liveBranch = null;
+      return;
+    }
+    try {
+      liveBranch = await ipc.branchOf(p);
+    } catch {
+      liveBranch = null; // cannot tell is not a refusal
+    }
+  }
+
+  $effect(() => {
+    origin?.path;
+    void checkBranch();
+  });
+
+  $effect(() => {
+    const back = () => void checkBranch();
+    window.addEventListener("focus", back);
+    document.addEventListener("visibilitychange", back);
+    return () => {
+      window.removeEventListener("focus", back);
+      document.removeEventListener("visibilitychange", back);
+    };
+  });
+
+  /**
+   * Standing somewhere other than where this gloom was read.
+   *
+   * `doc.branch` is the branch the gloom holds; `liveBranch` is where the tree is
+   * now. `add_doc_file` refuses in that state, and the UI has to stop offering it —
+   * otherwise the only way to learn the rule is to trip over it.
+   */
+  const offBranch = $derived(
+    doc?.branch && liveBranch && doc.branch !== liveBranch
+      ? { gloom: doc.branch, here: liveBranch }
+      : null,
+  );
+
+  /**
+   * A passing remark, as opposed to a problem.
+   *
+   * The banner is for things that went wrong and stay wrong until you deal with
+   * them — a save that failed, a file that is not there — so it waits to be
+   * dismissed. Being on another branch is neither: it is a *state* you are
+   * standing in, you can see it in the chip and the disabled buttons, and a strip
+   * that stays across the top saying so becomes furniture within a minute. So it
+   * flashes in, holds long enough to read twice, and leaves.
+   *
+   * `leaving` exists so the exit is a fade rather than a disappearance; the timer
+   * is one `let`, not `$state`, because nothing renders it.
+   */
+  /**
+   * Structured, not a sentence: the two branch names are the readable part, and a
+   * badge is what makes them scannable in a line of prose. Keeping them apart also
+   * means they can be *copied* — which is the thing you actually want next, since
+   * the reply to this notice is a `git checkout` in another window.
+   */
+  let notice = $state<{ here: string; gloom: string } | null>(null);
+  let noticeLeaving = $state(false);
+  let noticeTimers: ReturnType<typeof setTimeout>[] = [];
+
+  /** Take it back. A notice belongs to the gloom it is about. */
+  function hush() {
+    noticeTimers.forEach(clearTimeout);
+    noticeTimers = [];
+    notice = null;
+    noticeLeaving = false;
+  }
+
+  function say(here: string, gloom: string) {
+    noticeTimers.forEach(clearTimeout);
+    noticeTimers = [];
+    noticeLeaving = false;
+    notice = { here, gloom };
+    noticeTimers.push(
+      setTimeout(() => (noticeLeaving = true), 5200),
+      setTimeout(() => {
+        notice = null;
+        noticeLeaving = false;
+      }, 5800),
+    );
+  }
+
+  /**
+   * A branch name is something you are about to type somewhere else.
+   *
+   * Every place one is shown is therefore a copy button, with the confirmation on
+   * the name itself — a toast for two words would be louder than the thing it is
+   * confirming.
+   */
+  let copiedBranch = $state("");
+  let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function copyBranch(name: string) {
+    try {
+      await writeText(name);
+      copiedBranch = name;
+      if (copiedTimer) clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => (copiedBranch = ""), 1400);
+    } catch {
+      /* no clipboard outside the app shell — not worth interrupting for */
+    }
+  }
+
+  /**
+   * Say why, once, wherever a blocked gesture is attempted.
+   *
+   * Awaited at the gesture, because a check that is only as fresh as the last
+   * window focus is not fresh enough for the one action it guards.
+   */
+  async function refuseOffBranch(): Promise<boolean> {
+    await checkBranch();
+    if (!offBranch) return false;
+    say(offBranch.here, offBranch.gloom);
+    return true;
+  }
+
+  /**
    * The dot on the file button: the state of the file you are in.
    *
    * Hollow means your prose has not mentioned it — the same nudge an unwritten
@@ -317,6 +450,7 @@
   // ---- opening ------------------------------------------------------------
 
   async function pickFile() {
+    if (doc && (await refuseOffBranch())) return;
     const picked = await openDialog({
       multiple: false,
       filters: [{ name: "Elixir", extensions: ["ex", "exs"] }],
@@ -388,7 +522,10 @@
         await startFreshDoc(files[0]);
       }
     } catch (e) {
-      error = String(e);
+      // The branch guard's refusal is a sentence written for you — "this gloom was
+      // read on main, and you are on fix/x…" — so it goes to the banner as it is,
+      // without the `Error:` a raw `String(e)` would prepend.
+      error = String(e).replace(/^Error:\s*/, "");
     } finally {
       endLoad();
     }
@@ -400,6 +537,10 @@
    */
   async function addFile(path: string) {
     if (!doc) return;
+    // The last gate before the snapshot is taken. Rust refuses too — this one is
+    // here so the message is the app's sentence rather than a caught error, and
+    // so the loading state never starts for something that cannot finish.
+    if (await refuseOffBranch()) return;
     focus.clear();
     beginLoad(path);
     loadingStep = "Adding it to this reading";
@@ -501,13 +642,16 @@
     adopt(r, prefer ?? null);
     chooser = null;
 
-    // A reading survives its files moving: each one carries its own snapshot,
-    // which is exactly what gets shown when the path no longer resolves.
-    const gone = r.files.filter((f) => f.missing).map((f) => f.filename);
-    if (gone.length) {
-      error =
-        `Not on disk any more: ${gone.join(", ")} — showing the snapshot saved ` +
-        `with this reading.`;
+    // A reading survives its files moving — each carries its own snapshot, which
+    // is what gets shown when the path no longer resolves — so "not on disk" is
+    // not news worth a banner. What *is* worth saying is the thing you cannot do
+    // from here and how to fix it, and the overwhelmingly common reason a file has
+    // vanished is that you are standing on another branch.
+    await checkBranch();
+    if (offBranch) {
+      // One line. A banner is a glance, and the reassurance that the reading
+      // still works belongs in `?`, not across the top of the window.
+      say(offBranch.here, offBranch.gloom);
     }
   }
 
@@ -531,6 +675,9 @@
     chooser = null;
     dirty = false;
     error = null;
+    // The notice is about the gloom you just left — it has no meaning on home, and
+    // its own timer would have taken 5s to work that out.
+    hush();
     referenced = new Set();
   }
 
@@ -558,6 +705,7 @@
     currentPath = null;
     chooser = null;
     dirty = false;
+    hush();
     referenced = new Set();
   }
 
@@ -659,6 +807,13 @@
     if (meta && e.key.toLowerCase() === "k") {
       e.preventDefault();
       showLibrary = !showLibrary;
+      return;
+    }
+    // Every way of adding a file goes through the same refusal, so the rule is
+    // learned once rather than per gesture.
+    if (meta && (e.key.toLowerCase() === "t" || e.key.toLowerCase() === "o") && doc && offBranch) {
+      e.preventDefault();
+      void refuseOffBranch();
       return;
     }
     if (meta && e.key.toLowerCase() === "t") {
@@ -778,9 +933,18 @@
              report the state of your tree, which is a different tool's job and was
              a fact about *now* sitting in a window that is entirely about *then*. -->
         {#key doc?.branch ?? file.branch}
-          <span class="branch" title="The branch this gloom was read on">
-            ⑂ {doc?.branch ?? file.branch}
-          </span>
+          <button
+            class="branch"
+            onclick={() => copyBranch(doc?.branch ?? file.branch ?? "")}
+            class:off={!!offBranch}
+            title={offBranch
+              ? `This gloom was read on ${offBranch.gloom}. You are on ${offBranch.here}, so nothing can join it from here.`
+              : "The branch this gloom was read on"}
+          >
+            ⑂ {copiedBranch && copiedBranch === (doc?.branch ?? file.branch)
+              ? "copied ✓"
+              : (doc?.branch ?? file.branch)}
+          </button>
         {/key}
       {/if}
       {#if doc}
@@ -811,10 +975,49 @@
            edited, since lgtm never writes; and Library went with it, because the
            way to another gloom is ← Home, which is the first thing in this row and
            now looks like it. `⌘K` still opens the library from anywhere. -->
-      <button class="btn" onclick={() => (showFiles = true)} title="Find a file by name (⌘T)">
+      <button
+        class="btn"
+        disabled={!!offBranch}
+        onclick={async () => {
+          if (await refuseOffBranch()) return;
+          showFiles = true;
+        }}
+        title={offBranch
+          ? `This gloom was read on ${offBranch.gloom}; you are on ${offBranch.here}`
+          : "Find a file by name (⌘T)"}
+      >
         Find…
       </button>
-      <button class="btn primary" onclick={pickFile}>Open file…</button>
+      <button
+        class="btn primary"
+        disabled={!!offBranch}
+        onclick={pickFile}
+        title={offBranch
+          ? `This gloom was read on ${offBranch.gloom}; you are on ${offBranch.here}`
+          : "Open a file from anywhere on disk (⌘⇧O)"}
+      >
+        Open file…
+      </button>
+    </div>
+  {/if}
+
+  <!-- Guarded on `file` as well as on the message: a notice is about the gloom on
+       screen, and every path that closes one — Home, a delete from the library —
+       has to leave it behind. -->
+  {#if notice && file}
+    <div class="notice" class:leaving={noticeLeaving}>
+      <span class="mark" aria-hidden="true">⑂</span>
+      <span>
+        You are on
+        <button class="bbadge" onclick={() => copyBranch(notice!.here)} title="Copy branch name">
+          {copiedBranch === notice.here ? "copied ✓" : notice.here}
+        </button>
+        — check out
+        <button class="bbadge" onclick={() => copyBranch(notice!.gloom)} title="Copy branch name">
+          {copiedBranch === notice.gloom ? "copied ✓" : notice.gloom}
+        </button>
+        to add files to this gloom.
+      </span>
     </div>
   {/if}
 
@@ -1131,6 +1334,7 @@
 
   {#if showReadingFiles && doc}
     <FilesModal
+      {offBranch}
       {files}
       current={currentPath}
       {referenced}
@@ -1139,7 +1343,8 @@
         switchTo(p);
       }}
       onremove={(p) => removeFile(p)}
-      onadd={() => {
+      onadd={async () => {
+        if (await refuseOffBranch()) return;
         showReadingFiles = false;
         showFiles = true;
       }}
@@ -1631,10 +1836,14 @@
   /* Which branch you are standing on. It was a grey pill among grey pills, and it
      is the one piece of context that silently changes what every file under it
      says. It now carries the gloom's own accent, and arrives when it changes. */
+  /* A button, because a branch name is something you are about to type somewhere
+     else — the tooltip says copy, and the confirmation lands on the name itself. */
   .branch {
+    font: inherit;
     font-family: var(--mono);
     font-size: 11px;
     font-weight: 500;
+    cursor: pointer;
     color: var(--accent);
     background: color-mix(in srgb, var(--accent) 14%, transparent);
     border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
@@ -1643,6 +1852,22 @@
     white-space: nowrap;
     animation: branchIn var(--greet) var(--ease-out) both;
   }
+  .branch:hover {
+    background: color-mix(in srgb, var(--accent) 24%, transparent);
+  }
+  /* Wandered off it.
+     Amber said "something is wrong", and nothing is: the reading is intact and
+     reads normally from here, it just cannot grow. So the chip goes *quiet* —
+     neutral ink, a dashed edge — which is the same thing the disabled buttons
+     beside it are saying, in the same language. A second colour would have been
+     a third meaning in a row that already has two. */
+  .branch.off {
+    color: var(--fg-dim);
+    background: color-mix(in srgb, white 7%, transparent);
+    border-style: dashed;
+    border-color: color-mix(in srgb, white 26%, transparent);
+  }
+
   /* One breath as it arrives — the label only re-mounts when the branch actually
      changes, so this fires exactly when it has something to say. */
   @keyframes branchIn {
@@ -1676,6 +1901,67 @@
   }
   .save.dirty {
     color: var(--priv);
+  }
+
+  /* A remark, in the gloom's own colour rather than the warning amber: nothing
+     here has gone wrong. It arrives from just above and leaves on its own. */
+  .notice {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 6px 14px;
+    font-size: 12px;
+    color: var(--gloom-deep);
+    background: color-mix(in srgb, var(--gloom-deep) 10%, var(--bg));
+    border-bottom: 1px solid color-mix(in srgb, var(--gloom-deep) 28%, transparent);
+    animation: noticeIn var(--fast) var(--ease-out) both;
+  }
+  /* The names, as badges: the sentence is scaffolding, these are what you read —
+     and what you click, since the reply to this notice is a checkout elsewhere. */
+  .bbadge {
+    font: inherit;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: inherit;
+    background: color-mix(in srgb, var(--gloom-deep) 16%, transparent);
+    border: 1px solid color-mix(in srgb, var(--gloom-deep) 30%, transparent);
+    border-radius: 4px;
+    padding: 1px 6px;
+    cursor: pointer;
+  }
+  .bbadge:hover {
+    background: color-mix(in srgb, var(--gloom-deep) 26%, transparent);
+  }
+
+  .notice .mark {
+    font-family: var(--mono);
+    opacity: 0.7;
+  }
+  .notice.leaving {
+    animation: noticeOut 0.6s ease both;
+  }
+  @keyframes noticeIn {
+    from {
+      opacity: 0;
+      transform: translateY(-6px);
+    }
+  }
+  @keyframes noticeOut {
+    to {
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* It still appears and still goes; it just does not travel to get here. */
+    .notice {
+      animation: noticeFade var(--fast) ease both;
+    }
+    @keyframes noticeFade {
+      from {
+        opacity: 0;
+      }
+    }
   }
 
   .banner {
