@@ -679,6 +679,20 @@
       docPane?.toggleRead();
       return;
     }
+    // ⌥1 / ⌥2 are the split's two ends, driven from the keyboard: navigation only,
+    // note only, and the same key again to come back. They are the two tabs the
+    // other design would have given, on a control that also does everything in
+    // between.
+    if (e.altKey && (e.key === "1" || e.code === "Digit1") && doc) {
+      e.preventDefault();
+      docPane?.toggleExplore();
+      return;
+    }
+    if (e.altKey && (e.key === "2" || e.code === "Digit2") && doc) {
+      e.preventDefault();
+      docPane?.toggleNote();
+      return;
+    }
     // ⌘E flips preview/edit. A toggle rather than two bindings: you are always in
     // one of the two, so there is nothing for a second key to say.
     if (meta && e.key.toLowerCase() === "e") {
@@ -1033,6 +1047,7 @@
           <DocPane
             bind:this={docPane}
             bind:markdown
+            docId={doc?.id ?? null}
             {files}
             current={currentPath}
             {dirty}
@@ -1071,7 +1086,8 @@
         <span class="keys">
           <kbd>↑</kbd><kbd>↓</kbd> lines · <kbd>[</kbd><kbd>]</kbd> fns ·
           <kbd>⇧click</kbd> range · <kbd>/</kbd> find · <kbd>⌘⇧T</kbd> files ·
-          <kbd>⌘R</kbd> lgtm · <kbd>⌘E</kbd> edit · <kbd>?</kbd> help
+          <kbd>⌥1</kbd><kbd>⌥2</kbd> split · <kbd>⌘R</kbd> lgtm · <kbd>⌘E</kbd> edit ·
+          <kbd>?</kbd> help
         </span>
       {/if}
       {#if doc}

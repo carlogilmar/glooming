@@ -13,6 +13,7 @@
 
   let {
     markdown = $bindable(""),
+    docId = null,
     files = [],
     current = null,
     dirty = false,
@@ -23,6 +24,8 @@
     opened = 0,
   }: {
     markdown: string;
+    /** Which gloom this is, so the split can be remembered per gloom. */
+    docId: number | null;
     /** Every file the reading covers — references may point into any of them. */
     files: ReadingFile[];
     /** The file on screen in the code pane. */
@@ -136,6 +139,104 @@
 
   let editing = $state(false);
   let container = $state<HTMLDivElement | null>(null);
+
+  /**
+   * The split between what you navigate by and what you write.
+   *
+   * The pane has two jobs that want the same height. One column optimised for
+   * looking things up, which is what this was, made *writing* the thing you have
+   * to travel to — on a long surface the note started a screen and a half down.
+   *
+   * So the height is yours: drag the grip, collapse either side to nothing,
+   * double-click to reset. A fixed 270px drawer with a collapse toggle was cut
+   * from this app once and the toggle was the tell — but it was cut for being
+   * **fixed**. A band you can abolish costs you nothing, and its two ends are
+   * exactly the two tabs the alternative design would have given you (⌥1 / ⌥2),
+   * with every position in between that tabs cannot express.
+   *
+   * Remembered per gloom: a config script and a forty-function module want
+   * different balances, and a split you re-make every time is one you stop using.
+   */
+  const SPLIT_DEFAULT = 300;
+  /** Must match `.grip`'s height, or the drag clamps against the wrong maximum. */
+  const GRIP_H = 16;
+  let split = $state(SPLIT_DEFAULT);
+  let exploreOnly = $state(false);
+  let stack = $state<HTMLDivElement | null>(null);
+
+  const splitKey = $derived(docId ? `gloomSplit:${docId}` : "");
+  $effect(() => {
+    const key = splitKey;
+    if (!key) return;
+    const raw = localStorage.getItem(key);
+    const n = raw === null ? NaN : Number(raw);
+    // `-1` is the explore-only end; anything else is a height in px.
+    exploreOnly = n === -1;
+    split = Number.isFinite(n) && n >= 0 ? n : SPLIT_DEFAULT;
+  });
+
+  function remember() {
+    if (splitKey) localStorage.setItem(splitKey, String(exploreOnly ? -1 : split));
+  }
+
+  function maxSplit(): number {
+    return Math.max(0, (stack?.getBoundingClientRect().height ?? 600) - GRIP_H);
+  }
+
+  /**
+   * Clamped, and it SNAPS at both ends: six pixels of surface is never what you
+   * meant, and neither is a note you cannot see a line of.
+   */
+  function setSplit(px: number) {
+    const max = maxSplit();
+    let h = Math.min(Math.max(px, 0), max);
+    if (h < 40) h = 0;
+    if (h > max - 90) h = max;
+    exploreOnly = h >= max;
+    split = h;
+  }
+
+  function onGripDown(e: PointerEvent) {
+    if ((e.target as HTMLElement).closest("button")) return;
+    e.preventDefault();
+    const grip = e.currentTarget as HTMLElement;
+    grip.setPointerCapture(e.pointerId);
+    const startY = e.clientY;
+    const startH = exploreOnly ? maxSplit() : split;
+    const move = (ev: PointerEvent) => setSplit(startH + (ev.clientY - startY));
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      remember();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+
+  /** ⌥1 — the navigation end. Exported, because the shell owns the window keys. */
+  export function toggleExplore() {
+    if (exploreOnly) {
+      exploreOnly = false;
+      split = SPLIT_DEFAULT;
+    } else {
+      exploreOnly = true;
+    }
+    remember();
+  }
+
+  /** ⌥2 — the note end. */
+  export function toggleNote() {
+    exploreOnly = false;
+    split = split === 0 ? SPLIT_DEFAULT : 0;
+    remember();
+  }
+
+  function resetSplit() {
+    exploreOnly = false;
+    split = SPLIT_DEFAULT;
+    remember();
+  }
+
   let body = $state<HTMLDivElement | null>(null);
   let pane = $state<HTMLDivElement | null>(null);
   let bandTop = $state(0);
@@ -146,6 +247,10 @@
   // exact geometry scrollytelling wants — so this is one wire, not a rewrite.
   // Only for modules: a config or a test suite is a directory, not a narrative.
   let reading = $state(false);
+
+  /** Explore stands down while you write or read — neither is navigating. */
+  const showExplore = $derived(!!explore && !reading && !editing && split > 0);
+  const showNote = $derived(!exploreOnly || reading || editing);
   /** Paragraphs carrying a reference, in prose order — the steps. */
   let steps = $state<HTMLElement[]>([]);
   /** Every reference the reading walks, in document order. */
@@ -1099,18 +1204,43 @@
     <FontStepper {font} label="text" />
   </div>
 
+  <!-- Two regions and a grip. `body` — what read mode measures and what the
+       scroll handler listens to — is the NOTE's scroller, so every measurement in
+       here still describes the thing being read. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="panebody"
     style:--doc-font="{font.value}px"
-    bind:this={body}
-    onscroll={onDocScroll}
+    bind:this={stack}
     onmousemove={onMove}
     onmouseleave={() => {
       tip = null;
       for (const reach of reachHosts()) litReach(reach, null);
     }}
   >
+    {#if showExplore}
+      <div class="exploreregion" style:height="{exploreOnly ? maxSplit() : split}px">
+        {@render explore?.()}
+      </div>
+    {/if}
+
+    {#if !reading && !editing && explore}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="grip"
+        onpointerdown={onGripDown}
+        ondblclick={resetSplit}
+        title="Drag to resize · double-click to reset · ⌥1 navigation only · ⌥2 note only"
+      >
+        <span class="bars" aria-hidden="true"><i></i><i></i></span>
+        <span class="side">
+          <button class:on={exploreOnly} onclick={toggleExplore} title="Navigation only (⌥1)">▲</button>
+          <button class:on={split === 0 && !exploreOnly} onclick={toggleNote} title="Note only (⌥2)">▼</button>
+        </span>
+      </div>
+    {/if}
+
+    <div class="noteregion" class:hidden={!showNote} bind:this={body} onscroll={onDocScroll}>
     {#if editing}
       <div class="editwrap">
         <textarea
@@ -1142,9 +1272,8 @@
         {/if}
       </div>
     {:else}
-      {#if explore && !reading}
-        {@render explore()}
-      {/if}
+      <!-- The sections are rendered ONCE, in the region above the grip. This
+           branch used to render them too, from when the pane was one column. -->
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
       <div
         class="doc"
@@ -1162,6 +1291,7 @@
         {/if}
       </div>
     {/if}
+    </div>
   </div>
 </div>
 
@@ -1296,8 +1426,43 @@
   .panehead .spacer + * {
     margin-left: 2px;
   }
+  /* The stack: explore, the grip, the note. Only the two regions scroll — the
+     container itself must not, or the grip would scroll away from the split it
+     controls. */
   .panebody {
     flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--doc-bg);
+    color: var(--doc-fg);
+    transition:
+      background 0.3s ease,
+      color 0.3s ease;
+  }
+  /* The navigation half is WARM, like everything else in this pane.
+     Two tries failed here and both failed the same way — by being a different
+     *hue* rather than a different level. A grey mix read as dirty paper; a teal
+     wash read as a green panel dropped into a warm room, arguing with the gold
+     `▷ LGTM` sits in and with the header above it. This pane is warm paper and
+     warm chrome; the navigation half is simply more of the chrome, one step
+     deeper than the header so the two are distinguishable but related.
+
+     `--read` at 9% rather than `--doc-raised` flat: same warmth, 1.12:1 against
+     the note instead of 1.09:1, which is the difference between a step you can
+     see and one you can only measure. Teal stays where it means something — the
+     boundary's outside, the gloom band, the file button. */
+  .exploreregion {
+    flex: none;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    background: color-mix(in srgb, var(--read) 9%, var(--doc-bg));
+  }
+  .noteregion {
+    flex: 1;
+    min-height: 0;
     overflow: auto;
     background: var(--doc-bg);
     color: var(--doc-fg);
@@ -1305,6 +1470,72 @@
       background 0.3s ease,
       color 0.3s ease;
   }
+  .noteregion.hidden {
+    display: none;
+  }
+
+  /* The handle is a SEAM, not a header.
+     At 28px with a label it was a third band between two others, in a tone close
+     enough to the navigation half that the eye could not tell which side it was
+     on. Thin and deeper than both halves, it reads as the join — and the label
+     went with the height, because a divider that has to be captioned is not
+     dividing anything.
+
+     `--read` at 26%: 1.29:1 against the navigation half above it, 1.45:1 against
+     the paper below. Deeper than both, which is what a seam is. */
+  .grip {
+    flex: none;
+    position: relative;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    background: color-mix(in srgb, var(--read) 26%, var(--doc-bg));
+    cursor: ns-resize;
+    user-select: none;
+  }
+  .grip .bars {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    pointer-events: none;
+  }
+  .grip .bars i {
+    width: 18px;
+    height: 2px;
+    border-radius: 1px;
+    background: color-mix(in srgb, var(--read) 62%, transparent);
+    transition: background 0.15s ease;
+  }
+  .grip:hover .bars i {
+    background: var(--read);
+  }
+  .grip .side {
+    margin-left: auto;
+    display: flex;
+    gap: 1px;
+    z-index: 1;
+  }
+  .grip .side button {
+    font: inherit;
+    font-size: 8px;
+    line-height: 1;
+    color: color-mix(in srgb, var(--read) 75%, transparent);
+    background: transparent;
+    border: 0;
+    border-radius: 3px;
+    padding: 3px 5px;
+    cursor: pointer;
+  }
+  .grip .side button:hover,
+  .grip .side button.on {
+    color: var(--read-ink);
+    background: var(--read);
+  }
+
   .dot {
     width: 6px;
     height: 6px;

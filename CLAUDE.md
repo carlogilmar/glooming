@@ -571,7 +571,70 @@ the same as "provides nothing"** — and the UI shows `+?` rather than guessing.
 `lgtm:stats` serving four file kinds is why it renders whatever keys the text
 carries instead of expecting a fixed set — one renderer, no per-kind variants.
 
-### The right pane is one column
+### The right pane is a split you own
+
+The pane has two jobs that want the same height, and for a while it was one
+column — surface, boundary, then your note — so you could scroll up to look
+something up without leaving what you were writing. A day of real use found the
+cost: on a module with a long surface and a busy boundary the note starts a screen
+and a half down, and **writing** becomes the thing you travel to.
+
+So the height is yours. A **grip** between the two regions: drag it anywhere,
+collapse either side to nothing, double-click to reset, `⌥1` / `⌥2` for the two
+ends from the keyboard.
+
+**This is not the drawer that was cut.** That one was *fixed* — a band permanently
+taking 270px from the pane you write in, with a collapse toggle as the workaround,
+and the toggle was the tell. A band you can drag to zero and abolish with one click
+costs you nothing. What the earlier argument got right and still holds: two scroll
+regions in one column is a real cost, and the collapse is what pays it.
+
+**Its two ends are the tabs the alternative would have been.** Tabs (`Explore` /
+`Gloom`) were mocked beside it in `mockup/panes.html` and lose on two counts: a map
+behind a mode change is a map you forget — the argument that already killed the
+`⌥R` reach overlay — and the two jobs genuinely overlap, since writing *"…then it
+hands off to `changeset/2`"* is the moment you want the surface in view. A split
+does everything tabs do and everything in between; if it turns out nobody ever
+sits between the ends, the drag can be deleted and nothing is lost.
+
+**Read mode and edit mode both take the whole pane.** Neither is navigating. That
+was mocked as its own arrangement and folded in here instead of shipped alone.
+
+**The navigation half is warm, and it took two wrong answers to get there.** A grey
+mix (`--doc-raised` toward `--doc-line`) read as *dirty paper*. A teal wash read as a
+green panel dropped into a warm room, arguing with the gold `▷ LGTM` sits in and with
+the pane header above it. Both failed the same way: they made it a different **hue**
+where what it needed was a different **level**.
+
+This pane is warm paper and warm chrome. The navigation half is simply more of the
+chrome — `--read` at 9%, one step deeper than the header, 1.12:1 against the note
+(1.16:1 dark) — and the grip carries the same warmth at 15%, so it belongs to the
+half it controls. Teal stays where it means something: the boundary's outside, the
+gloom band, the file button.
+
+**The grip is a seam, not a header.** At 28px with a label it was a third band
+between two others, in a tone close enough to the navigation half that the eye could
+not tell which side it belonged to. It is 16px now and *deeper than both* — `--read`
+at 26%, 1.29:1 against the navigation above it and 1.45:1 against the paper below —
+which is what a seam is. The label went with the height: a divider that has to be
+captioned is not dividing anything. `GRIP_H` in the script must match its CSS height,
+or the drag clamps against the wrong maximum.
+
+**The labelled rule at the end of the sections is gone.** It said *"your note"*
+across the seam; the grip says it four pixels away. The same fact in two places is
+one place too many, and the grip's version also moves.
+
+**The split is remembered per gloom** (`gloomSplit:<id>` in `localStorage`): a
+config script and a forty-function module want different balances, and a split you
+re-make every time is one you stop using.
+
+**`body` is the note's scroller**, not the pane. Read mode's lead-in, tail, band and
+step tests all measure `body`, so pointing it at the region that actually holds the
+prose keeps every one of those measurements describing the thing being read. The
+grip lives outside both scrollers, or it would scroll away from the split it
+controls.
+
+### The right pane was one column
 
 Surface, then the boundary diagram, then your note — **one scrollbar**, scroll
 down to write and up to look something up. `ExploreSections.svelte` is rendered as

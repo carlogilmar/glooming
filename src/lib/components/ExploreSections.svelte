@@ -313,27 +313,19 @@
       </p>
     {/if}
   {/if}
-
-  <div class="rule"></div>
 </div>
 
 <style>
-  /* Normal flow, no height of its own, no scrollbar. It ends at a labelled rule
-     and the note carries on below it in the same scroll.
+  /* The navigation half's contents. It has no height of its own — the region
+     around it owns that, and the grip below owns where it ends, so the labelled
+     rule that used to close it went with the duplication: the grip already says
+     "your note" and saying it twice, four pixels apart, is one place too many.
 
-     **No max-width.** Prose is capped and pictures are not — capping the section
-     squeezed the boundary diagram, which is the one thing here that wants the
-     whole pane. The cap lives on the text elements instead. */
+     The inset matches the note's (`.doc` is `26px 30px 40px`), because the two
+     halves have to line up on the same left edge to read as one column split in
+     two rather than as two unrelated panels. */
   .explore {
-    /* The same inset the note has (`.doc` is `26px 30px 40px`), because the two
-       are one column: the surface, the diagram and the prose below the rule all
-       have to start on the same left edge. Without it the sections sat flush
-       against the pane while the note was indented 30px, which made them read as
-       a separate panel that had lost its padding.
-
-       No bottom padding — the rule ends the section and `.doc`'s own top padding
-       is the gap after it, so the space is owned in one place. */
-    padding: 22px 30px 0;
+    padding: 22px 30px 26px;
   }
   .head {
     display: flex;
@@ -753,27 +745,6 @@
     color: var(--accent);
     border-color: color-mix(in srgb, var(--accent) 35%, transparent);
     background: color-mix(in srgb, var(--accent) 8%, transparent);
-  }
-
-  .rule {
-    position: relative;
-    height: 1px;
-    /* Nothing below it: `.doc`'s 26px top padding is the space between the rule
-       and your first line. */
-    margin: 30px 0 0;
-    background: var(--doc-line);
-  }
-  .rule::after {
-    content: "your note";
-    position: absolute;
-    left: 0;
-    top: -7px;
-    padding-right: 9px;
-    background: var(--doc-bg);
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--fg-faint);
   }
 
   @media (prefers-reduced-motion: reduce) {

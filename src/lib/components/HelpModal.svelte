@@ -53,6 +53,14 @@
             "has to keep meaning copy",
         },
         { keys: ["⌘P"], what: "Jump to a function by name. Type a prefix, or an abbreviation like cu" },
+        {
+          keys: ["⌥1", "⌥2"],
+          what:
+            "The right pane's split: navigation only, note only, the same key again to come " +
+            "back. Or drag the grip between them to any height — double-click resets it. " +
+            "Remembered per gloom, since a config script and a forty-function module want " +
+            "different balances",
+        },
         { keys: ["⌘R"], what: "LGTM: walk the code in the order your prose takes it. The pass you finish a gloom with — `esc` also leaves it" },
         { keys: ["⌘E"], what: "Edit / preview the note. Entering edit leaves LGTM mode; typing under a scroll-driven selection is chaos" },
         {

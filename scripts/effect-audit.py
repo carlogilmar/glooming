@@ -117,8 +117,13 @@ for root, _, fs in os.walk('src'):
                 # the write sites first so `x = x + 1` still counts as a read.
                 blanked = re.sub(rf'(?<![\w.$]){re.escape(name)}\s*=(?!=)',
                                  lambda m: ' ' * len(m.group(0)), body)
+                # Bounded on BOTH sides. Without the trailing boundary, `split`
+                # matched inside `splitKey` and reported a read that was a
+                # different variable's name — a check that cries wolf is one
+                # people learn to ignore. Assignment targets are already blanked
+                # above, so nothing else needs excluding here.
                 reads = [m.start() for m in re.finditer(
-                    rf'(?<![\w.$]){re.escape(name)}(?![\w$]\s*=)', blanked)]
+                    rf'(?<![\w.$]){re.escape(name)}(?![\w$])', blanked)]
 
                 # A loop needs BOTH to be tracked: a synchronous read to become a
                 # dependency, and a write to invalidate it.
