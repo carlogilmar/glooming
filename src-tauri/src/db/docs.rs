@@ -145,6 +145,10 @@ pub async fn for_path(pool: &SqlitePool, path: &str) -> AppResult<Vec<DocSummary
 }
 
 /// The library list. `query` matches title, filename, path and branch.
+/// Search across everything a gloom is *called*: its name, its origin file, its
+/// path, the branch it was read on — and its **tags**, which live in `label` as a
+/// comma-separated list. Tags exist to be searched by; leaving them out of the one
+/// query that searches would have made them decoration.
 pub async fn list(pool: &SqlitePool, query: Option<&str>, limit: i64) -> AppResult<Vec<DocSummary>> {
     match query.map(str::trim).filter(|q| !q.is_empty()) {
         Some(q) => {
@@ -153,9 +157,11 @@ pub async fn list(pool: &SqlitePool, query: Option<&str>, limit: i64) -> AppResu
                 "SELECT {SUMMARY_COLS} FROM docs
                   WHERE title LIKE ? OR filename LIKE ? OR path LIKE ?
                      OR COALESCE(branch, '') LIKE ?
+                     OR COALESCE(label, '') LIKE ?
                   ORDER BY updated_at DESC LIMIT ?"
             );
             Ok(sqlx::query_as::<_, DocSummary>(&sql)
+                .bind(&like)
                 .bind(&like)
                 .bind(&like)
                 .bind(&like)
@@ -271,6 +277,24 @@ mod tests {
     /// It is why the library tells the shell what it deleted: leaving the reading
     /// open means the next autosave lands here, and the error surfaces seconds
     /// later with nothing on screen to connect it to the delete.
+    /// Tags are searched, because a tag you cannot find by is a decoration. They
+    /// live in `label` as a comma-separated list — the column has always been the
+    /// "free field", and this is what it was free for.
+    #[sqlx::test]
+    async fn a_tag_is_something_you_can_search_for(pool: SqlitePool) {
+        let id = create(&pool, "/app/a.ex", "a.ex", "elixir", "A", None, "# A", "src", "sha")
+            .await
+            .unwrap()
+            .id;
+        update(&pool, id, None, None, None, Some("perf, retry")).await.unwrap();
+
+        let hit = list(&pool, Some("retry"), 10).await.unwrap();
+        assert_eq!(hit.len(), 1, "a tag has to be findable");
+        assert_eq!(hit[0].label.as_deref(), Some("perf, retry"));
+
+        assert!(list(&pool, Some("nothing-like-this"), 10).await.unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn saving_to_a_deleted_doc_is_an_error_not_a_silent_no_op() {
         let pool = test_pool().await;

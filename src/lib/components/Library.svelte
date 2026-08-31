@@ -4,6 +4,7 @@
   // and full keyboard navigation — a flat list stops being usable at about ten.
   import { listDocs, deleteDoc, type DocSummary } from "$lib/ipc";
   import { when } from "$lib/when";
+  import { parseTags, tagHue } from "$lib/tags";
 
   let {
     onopen,
@@ -137,7 +138,7 @@
   <div class="panel" onclick={(e) => e.stopPropagation()} onkeydown={onKey}>
     <header>
       <!-- svelte-ignore a11y_autofocus -->
-      <input placeholder="Search title, file, path or branch…" bind:value={query} autofocus />
+      <input placeholder="Search name, tag, file, path or branch…" bind:value={query} autofocus />
 
       <div class="seg" role="group" aria-label="Sort">
         <button class:on={sort === "recent"} onclick={() => (sort = "recent")}>Recent</button>
@@ -196,25 +197,31 @@
                   </div>
                 </div>
               {:else}
-                <div class="main">
-                  <b>{doc.title}</b>
-                  <span class="path">
-                    {doc.filename}{doc.fileCount > 1 ? ` +${doc.fileCount - 1}` : ""} ·
-                    {prettyFolder(folderOf(doc))}
+                <!-- The same row home uses: the name, its tags, then the counts and
+                     the age in fixed columns at the right so they line up down the
+                     list. The origin filename went with the redesign — the name is
+                     what identifies a gloom, and the folder is the group header. -->
+                <span class="rname" class:unnamed={doc.title === doc.filename}>{doc.title}</span>
+                {#if doc.label}
+                  <span class="rtags">
+                    {#each parseTags(doc.label).slice(0, 4) as t (t)}
+                      <span class="rtag" style="--hue:{tagHue(t)}">{t}</span>
+                    {/each}
                   </span>
-                </div>
-                <div class="meta">
-                  {#if doc.branch}<span class="branch">⑂ {doc.branch}</span>{/if}
-                  <span class="ago">{when(doc.updatedAt)}</span>
-                  <button
-                    class="del"
-                    title="Delete this explanation"
-                    aria-label="Delete this explanation"
-                    onclick={(e) => (e.stopPropagation(), (confirming = doc.id))}
-                  >
-                    ×
-                  </button>
-                </div>
+                {/if}
+                <span class="rcount">
+                  {doc.fileCount}
+                  {doc.fileCount === 1 ? "file" : "files"}
+                </span>
+                <span class="rwhen">{when(doc.updatedAt)}</span>
+                <button
+                  class="del"
+                  title="Delete this gloom"
+                  aria-label="Delete this gloom"
+                  onclick={(e) => (e.stopPropagation(), (confirming = doc.id))}
+                >
+                  ×
+                </button>
               {/if}
             </div>
           {/each}
@@ -223,7 +230,7 @@
     </div>
 
     <footer>
-      <span>{flat.length} {flat.length === 1 ? "doc" : "docs"}</span>
+      <span>{flat.length} {flat.length === 1 ? "gloom" : "glooms"}</span>
       <span class="spacer"></span>
       <span class="keys"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>↵</kbd> open · <kbd>esc</kbd> close</span>
     </footer>
@@ -348,68 +355,11 @@
     border-left-color: var(--priv);
     cursor: default;
   }
-  .main {
-    min-width: 0;
-    flex: 1;
-  }
-  /* The gloom's name, in the same serif the band sets it in. */
-  .main b {
-    display: block;
-    font-family: var(--serif);
-    font-size: 13.5px;
-    font-weight: 500;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .path {
-    display: block;
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--fg-faint);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    direction: rtl;
-    text-align: left;
-  }
-  .meta {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 11px;
-    color: var(--fg-faint);
-    white-space: nowrap;
-    flex: none;
-  }
-  .branch {
-    font-family: var(--mono);
-    padding: 1px 7px;
-    border: 1px solid var(--line);
-    border-radius: 999px;
-  }
-  .ago {
-    font-variant-numeric: tabular-nums;
-  }
-  .meta .del {
-    background: none;
-    border: 0;
-    color: var(--fg-faint);
-    font-size: 16px;
-    cursor: pointer;
-    line-height: 1;
-    padding: 0 2px;
-    opacity: 0;
-  }
   /* The destructive control only appears on the row you're actually on. */
-  .row.cursor .meta .del,
-  .row:hover .meta .del {
+  .row.cursor .del,
+  .row:hover .del {
     opacity: 1;
   }
-  .meta .del:hover {
-    color: var(--priv);
-  }
-
   /* ---- the confirmation step ----
      Inline, in place of the row, saying exactly what is lost and what is not. */
   .confirm {
@@ -475,5 +425,59 @@
     padding: 0 4px;
     margin-right: 3px;
     color: var(--fg-dim);
+  }
+
+  /* The row, as home draws it: the name, its tags, then fixed columns at the
+     right so counts and ages line up down the list. */
+  .rname {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--serif);
+    font-size: 14.5px;
+    color: var(--fg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .rname.unnamed {
+    color: var(--fg-faint);
+    font-style: italic;
+  }
+  .rtags {
+    flex: none;
+    display: flex;
+    gap: 4px;
+    min-width: 0;
+  }
+  /* The hue comes from the tag's own text, so `retry` is the same colour here, on
+     home and in the gloom band — nobody picks a colour for a word they typed in
+     two seconds, and a random one would differ between two views of one gloom. */
+  .rtag {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 999px;
+    white-space: nowrap;
+    color: oklch(0.45 0.12 var(--hue));
+    background: oklch(0.45 0.12 var(--hue) / 0.12);
+  }
+  :global(html.dark) .rtag {
+    color: oklch(0.86 0.09 var(--hue));
+    background: oklch(0.86 0.09 var(--hue) / 0.14);
+  }
+  .rcount,
+  .rwhen {
+    flex: none;
+    text-align: right;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-faint);
+  }
+  .rcount {
+    width: 52px;
+  }
+  .rwhen {
+    width: 64px;
   }
 </style>

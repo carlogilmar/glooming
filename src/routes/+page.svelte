@@ -2,6 +2,7 @@
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { when } from "$lib/when";
+  import { joinTags, parseTags, tagHue, withTag, withoutTag } from "$lib/tags";
   import CodePane from "$lib/components/CodePane.svelte";
   import DocPane from "$lib/components/DocPane.svelte";
   import Divider from "$lib/components/Divider.svelte";
@@ -152,6 +153,41 @@
     const off = setTimeout(() => (named = false), 900);
     return () => clearTimeout(off);
   });
+
+  /**
+   * Tags, in `docs.label`.
+   *
+   * A gloom's name says what you were asking; a tag says what *kind* of thing it
+   * was — `perf`, `retry`, `PR 412` — which is how you find it again a month
+   * later among two hundred. They are searchable in the library, because a tag
+   * you cannot find by is decoration.
+   */
+  const tags = $derived(parseTags(doc?.label));
+  let tagging = $state(false);
+  let tagDraft = $state("");
+  let tagInput = $state<HTMLInputElement | null>(null);
+  $effect(() => {
+    if (tagging) tagInput?.focus();
+  });
+
+  async function saveTags(next: string[]) {
+    if (!doc) return;
+    // An autosave may be in flight; take the row and put your own markdown back,
+    // the same one-payload habit as every other mutation here.
+    const keep = markdown;
+    try {
+      doc = { ...(await ipc.saveDoc({ id: doc.id, label: joinTags(next) })), markdown: keep };
+    } catch (e) {
+      error = String(e).replace(/^Error:\s*/, "");
+    }
+  }
+
+  function commitTag() {
+    const next = withTag(tags, tagDraft);
+    tagDraft = "";
+    tagging = false;
+    if (next !== tags) void saveTags(next);
+  }
 
   function startRename() {
     if (doc) renaming = doc.title;
@@ -1104,6 +1140,13 @@
                   {#each g.items as d (d.id)}
                     <button class="rrow" onclick={() => openExisting(d)}>
                       <span class="rname" class:unnamed={d.title === d.filename}>{d.title}</span>
+                      {#if d.label}
+                        <span class="rtags">
+                          {#each parseTags(d.label).slice(0, 3) as t (t)}
+                            <span class="rtag" style="--hue:{tagHue(t)}">{t}</span>
+                          {/each}
+                        </span>
+                      {/if}
                       <span class="rcount">
                         {d.fileCount}
                         {d.fileCount === 1 ? "file" : "files"}
@@ -1210,6 +1253,46 @@
               {doc.title}<i>✎</i>
             </button>
           {/if}
+
+          <!-- Tags sit with the name, because they are part of what this gloom is
+               called. Each carries its own hue, derived from its text — nobody
+               picks a colour for a word they typed in two seconds, and a random
+               one would make `retry` look different in two places. -->
+          <span class="gtags">
+            {#each tags as t (t)}
+              <button
+                class="gtag"
+                style="--hue:{tagHue(t)}"
+                title="Remove this tag"
+                onclick={() => saveTags(withoutTag(tags, t))}
+              >
+                {t}<i>×</i>
+              </button>
+            {/each}
+            {#if tagging}
+              <input
+                class="gtagin"
+                bind:this={tagInput}
+                bind:value={tagDraft}
+                placeholder="tag…"
+                spellcheck="false"
+                onblur={commitTag}
+                onkeydown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    commitTag();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    tagDraft = "";
+                    tagging = false;
+                  }
+                  e.stopPropagation();
+                }}
+              />
+            {:else}
+              <button class="gtag add" onclick={() => (tagging = true)} title="Add a tag">+</button>
+            {/if}
+          </span>
 
           <span class="spacer"></span>
 
@@ -1509,6 +1592,62 @@
   .gname:hover i {
     opacity: 1;
   }
+  /* A tag is a small, coloured, removable word. The hue comes from the text, so
+     `retry` is the same colour in the band, on home and in the library. */
+  .gtags {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+  .gtag {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font: inherit;
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 1;
+    padding: 3px 7px;
+    border-radius: 999px;
+    cursor: pointer;
+    color: oklch(0.86 0.09 var(--hue));
+    background: oklch(0.86 0.09 var(--hue) / 0.16);
+    border: 1px solid oklch(0.86 0.09 var(--hue) / 0.4);
+  }
+  .gtag i {
+    font-style: normal;
+    opacity: 0;
+    margin-right: -2px;
+  }
+  .gtag:hover i {
+    opacity: 0.8;
+  }
+  .gtag.add {
+    color: var(--gloom-dim);
+    background: transparent;
+    border-style: dashed;
+    border-color: color-mix(in srgb, white 22%, transparent);
+    padding: 3px 8px;
+  }
+  .gtag.add:hover {
+    color: var(--gloom-ink);
+    border-color: color-mix(in srgb, white 40%, transparent);
+  }
+  .gtagin {
+    width: 88px;
+    font: inherit;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--gloom-ink);
+    background: color-mix(in srgb, white 10%, transparent);
+    border: 1px solid var(--gloom);
+    border-radius: 999px;
+    padding: 3px 8px;
+    outline: none;
+  }
+
   /* Still carrying the name its module gave it: greyed, because it is a
      placeholder that happens to be true rather than something you decided — and
      the colour is what a named gloom earns. */
@@ -2330,6 +2469,25 @@
     color: var(--fg-faint);
     font-style: italic;
   }
+  .rtags {
+    flex: none;
+    display: flex;
+    gap: 4px;
+    min-width: 0;
+  }
+  .rtag {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 999px;
+    white-space: nowrap;
+    /* On paper rather than ink, so the same hue needs a darker lightness to hold
+       its own — one token pair, two surfaces. */
+    color: oklch(0.45 0.12 var(--hue));
+    background: oklch(0.45 0.12 var(--hue) / 0.12);
+  }
+
   /* The origin filename was here and went: the name identifies the gloom, and a
      second identifier in every row is a column you read past. */
   .rcount,

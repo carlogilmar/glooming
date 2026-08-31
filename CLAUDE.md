@@ -178,6 +178,7 @@ src/
     deps.ts                    parses + draws the reach block (see mockup/deps.html)
     shape.ts                   the gloom as layers: thickness ∝ size (see mockup/stack.html)
     surface.ts                 parses + draws the surface block (see mockup/surface.html)
+    tags.ts                    a gloom's tags, in docs.label
     settings.ts                parses + draws the config settings block
     tests.ts                   parses + draws the test suite block
     ipc.ts                     typed wrappers over invoke()
@@ -1973,12 +1974,41 @@ search, `↵` opens it directly. A path from a stack trace is often outside the
 project, and two near-identical dialogs for "open a file by naming it" was one
 too many.
 
+### Tags
+
+A gloom's name says what you were asking; a **tag** says what kind of thing it was —
+`perf`, `retry`, `PR 412` — which is how you find it again a month later among two
+hundred.
+
+**They live in `docs.label`**, comma-separated. The first migration called that
+column "a free field: `PR #412`, `claude-generated`", and this is what it was free
+for. A table of its own buys nothing: tags here are for *finding* a gloom, not for
+reporting on, so there is nothing to join.
+
+**Each tag's colour comes from its own text.** `tagHue` hashes the string, so
+`retry` is the same hue in the gloom band, on home and in the library — for free,
+and forever. Nobody picks a colour for a word they typed in two seconds, and a
+random one would make one gloom look like two.
+
+**A tag you cannot search by is decoration**, so `list` matches `label` alongside
+title, filename, path and branch. Pinned by
+`a_tag_is_something_you_can_search_for`.
+
+Added and removed in the band, beside the name, because they are part of what the
+gloom is *called*. `parseTags` drops blanks and duplicates and preserves order —
+the order you typed them reads as importance.
+
 ### The library
 
 `⌘K`. Built for a few hundred docs, not a few: search over title/filename/path/
 branch, three orderings (Recent / Name / Folder), sticky folder-group headers,
 and `↑`/`↓`/`↵` keyboard navigation that crosses group boundaries in visual
 order.
+
+**It is the same table home draws**: the name, its tags, then the file count and
+the age in fixed columns at the right so they line up down the list. The origin
+filename went with the redesign — the name identifies a gloom, and in *Folder* mode
+the folder is already the group header.
 
 **Deleting reports back.** `Library` refreshes its own list, but the welcome
 screen's recents is a *cached query over the same table* and nothing it reads
