@@ -73,7 +73,30 @@ Deliberately identical to Alexandria and Xray, so all three are one stack.
 - **Toolchain**: pinned by `.tool-versions` (asdf) — rust 1.95.0, nodejs 25.9.0,
   pnpm 9.15.0. **pnpm only**; a `package-lock.json` or `yarn.lock` is a bug.
 
-Bundle ID `com.alertmedia.lgtm`. The app icon is generated from `app-icon.png`
+**The app is `Glooming`; the bundle ID stays `com.alertmedia.lgtm`.** `productName`
+is what names the `.app`, the menu bar and the DMG, and it is now Glooming. The
+identifier is deliberately untouched: it is what the database path is derived from
+(`~/Library/Application Support/com.alertmedia.lgtm/lgtm.db`), so changing it would
+orphan every gloom anyone has written. If it is ever renamed, that is a migration —
+copy the directory, do not just rename the id.
+
+The Cargo package and the npm package are still `lgtm`: they name the *source*, not
+the product. The **binary** is `Glooming`, though, via `[[bin]]` — and that one is
+not cosmetic. `tauri build` renames the binary to `productName` when it bundles, so
+the `.app` was already right; but `tauri dev` runs the cargo binary directly, and
+macOS labels the dock with the process name. Until the bin target was renamed the
+dock said `lgtm` all day while the built app said Glooming. Tauri's own docs prefer
+this over `mainBinaryName` for exactly that reason.
+
+**The DMG is a drag-to-Applications window.** `bundle.macOS.dmg` sets a 620×420
+volume window with the app at x=165 and the Applications alias at x=455 — the
+layout every Mac user already knows, rather than the bundler's slightly wide 660×400
+default. `minimumSystemVersion` is 11.0, which is the floor for the `color-mix()`
+and `:has()` this UI leans on in WebKit.
+
+A **background image** is the one thing still missing (`dmg.background` takes a
+png/jpg): a 620×420 plate with an arrow between the two icons is the usual finish,
+and it is a drawing job rather than a code one. The app icon is generated from `app-icon.png`
 at the repo root (`pnpm tauri icon`, no arguments needed — that's the default
 input name). Mobile icon output is deleted on purpose; this is a desktop app.
 
@@ -1448,13 +1471,37 @@ authors invisible.
 1. **An ink masthead** — `--gloom-bg`, the wordmark in `--display`, and one sentence
    defining the word for someone who has never seen it. It plays the same accent
    sweep the gloom band does: same surface, same greeting.
-2. **The glooms you were in** — as *cards*, not filenames in a list: the name you
-   gave it, and badges for the files it covers. Nothing else. A first cut carried a
-   file count, an age and a branch as well, and all three answered questions you are
-   not asking while scanning this screen — *which one was I in?* The name answers
-   that; the badges say what it reached; the count is already in the badges (`+2`);
-   and the age only ordered the list, which the order of the list does. A card still
-   called after its module is greyed and italic, the same invitation the band gives.
+2. **The glooms you were in** — as a **list**, grouped *Today / This week /
+   Earlier*: name, origin file, file count, age. Twelve of them, where the cards
+   showed six.
+
+   It was a grid of cards first, and the reason for changing is **not** density —
+   measured, twelve cards take 392px and twelve rows 432px; rows only win past
+   about thirty. It is that a grid has no scan line: names sit at three different x
+   positions and you read in a zig-zag, where a list has one left edge you read
+   down. A row also carries a date column and a group header without growing, which
+   is how you find the one from last Tuesday among forty, and the thirteenth gloom
+   extends a list where it reflows a grid.
+
+   A miniature of each gloom's *shape* was drawn in the row and cut: at 62×16 it
+   was decoration, and the picture has a place of its own behind `⌘⇧T`. The origin
+   filename went the same way — the name identifies the gloom, and a second
+   identifier in every row is a column you read past. A row still called after its
+   module is greyed and italic, the same invitation the band gives.
+
+   **Capped at 720px**, not the full 1080: a short name stretched across the window
+   is mostly whitespace with its date lost at the far end, and pairing the two costs
+   an eye movement the width of the screen.
+
+   **The row class is `.rrow`, and that is not cosmetic.** It was `.grow`, which is
+   also the doc pane wrapper's class (`.pane.grow`) — so the list's rules were
+   styling the right-hand pane too: its padding, its border, its cursor. Both are
+   valid classes in one component, so `svelte-check` sees nothing. The rule this
+   leaves: in a file this size, prefix a new block's classes rather than reaching
+   for the obvious short word.
+
+   The boundary this preserves: home is *pick up where you left off*, `⌘K` is *find
+   any of the two hundred*.
 3. **One way to start**, with the current project beside it and the rarer routes as
    quiet text. The old screen offered four buttons of equal weight, which is four
    decisions before you have started.

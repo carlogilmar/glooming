@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "lgtm",
+  "productName": "Glooming",
   "version": "0.1.0",
   "identifier": "com.alertmedia.lgtm",
   "build": {
@@ -34,6 +34,23 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "dmg": {
+        "windowSize": {
+          "width": 620,
+          "height": 420
+        },
+        "appPosition": {
+          "x": 165,
+          "y": 210
+        },
+        "applicationFolderPosition": {
+          "x": 455,
+          "y": 210
+        }
+      }
+    }
   }
 }

@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="app-icon.png" alt="lgtm" width="140" />
+<img src="app-icon.png" alt="Glooming" width="140" />
 
 # lgtm
 
@@ -121,11 +121,16 @@ pnpm tauri build
 
 Produces, under `src-tauri/target/release/bundle/`:
 
-- `macos/lgtm.app` — drag to `/Applications`
-- `dmg/lgtm_0.1.0_aarch64.dmg` — the installer
+- `macos/Glooming.app` — drag to `/Applications`
+- `dmg/Glooming_0.1.0_aarch64.dmg` — the installer, which opens as the usual
+  drag-the-app-onto-Applications window
 
 The build is unsigned, so the first launch needs **right-click → Open** (or
-`xattr -cr /Applications/lgtm.app`) to get past Gatekeeper.
+`xattr -cr /Applications/Glooming.app`) to get past Gatekeeper.
+
+Your glooms live at `~/Library/Application Support/com.alertmedia.lgtm/lgtm.db` —
+the bundle identifier is deliberately unchanged by the rename, so renaming the app
+does not orphan anything you have written.
 
 To regenerate the icon set after editing `app-icon.png` (1024², RGBA):
 

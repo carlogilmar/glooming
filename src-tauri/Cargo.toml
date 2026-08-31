@@ -5,6 +5,14 @@ description = "lgtm — read code deeply"
 authors = ["Carlo Padilla"]
 edition = "2021"
 
+# The binary is what macOS shows in the dock while `tauri dev` is running — the
+# `.app` bundle only exists after `tauri build`, and until then the dock label is
+# just the process name. Tauri's own docs say to set this rather than
+# `mainBinaryName`, so the name is right in dev and release alike.
+[[bin]]
+name = "Glooming"
+path = "src/main.rs"
+
 [lib]
 # The `_lib` suffix keeps the lib name distinct from the bin name (a Windows
 # issue: rust-lang/cargo#8519).

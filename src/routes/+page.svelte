@@ -1,6 +1,7 @@
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+  import { when } from "$lib/when";
   import CodePane from "$lib/components/CodePane.svelte";
   import DocPane from "$lib/components/DocPane.svelte";
   import Divider from "$lib/components/Divider.svelte";
@@ -434,9 +435,40 @@
     currentPath = want ?? originOf(r.files)?.path ?? null;
   }
 
+  /**
+   * Recents, grouped by when you last touched them.
+   *
+   * The grid became a list because a grid has no scan line: names sat at three
+   * different x positions, so you read in a zig-zag. It is not about density —
+   * measured, twelve cards take 392px and twelve rows 432px — it is that a row
+   * carries a date column and a group header without growing, which is how you
+   * find the one from last Tuesday among forty.
+   */
+  const RECENT_BUCKETS = [
+    ["Today", 1],
+    ["This week", 7],
+    ["Earlier", Infinity],
+  ] as const;
+
+  const grouped = $derived.by(() => {
+    const out: { label: string; items: DocSummary[] }[] = [];
+    for (const d of recents) {
+      const days = Math.floor((Date.now() - new Date(d.updatedAt).getTime()) / 86_400_000);
+      const label = (RECENT_BUCKETS.find(([, max]) => days < max) ?? RECENT_BUCKETS[2])[0];
+      const last = out[out.length - 1];
+      if (last && last.label === label) last.items.push(d);
+      else out.push({ label, items: [d] });
+    }
+    return out;
+  });
+
   const loadRecents = () =>
     ipc
-      .listDocs(undefined, 6)
+      // Twelve rather than six: a card filled a grid cell and a row does not, so
+      // the list can be longer without taking the screen. Anything past this is
+      // ⌘K's job — home is "pick up where you left off", the library is "find any
+      // of the two hundred".
+      .listDocs(undefined, 12)
       .then((r) => (recents = r))
       .catch(() => (recents = []));
 
@@ -1062,15 +1094,23 @@
               <button class="more" onclick={() => (showLibrary = true)}>all glooms →</button>
             </div>
             {#if recents.length}
-              <div class="glooms">
-                {#each recents as d (d.id)}
-                  <button class="gloomcard" onclick={() => openExisting(d)}>
-                    <span class="name" class:unnamed={d.title === d.filename}>{d.title}</span>
-                    <span class="files">
-                      <span class="file">{d.filename}</span>
-                      {#if d.fileCount > 1}<span class="file more">+{d.fileCount - 1}</span>{/if}
-                    </span>
-                  </button>
+              <!-- `.rrow`, not `.grow`: the doc pane's wrapper is `.pane.grow`, so a
+                   bare `.grow` rule was styling the right-hand pane as well — a
+                   class-name collision that `svelte-check` cannot see, because both
+                   are valid classes in the same component. -->
+              <div class="rlist">
+                {#each grouped as g (g.label)}
+                  <div class="rbucket">{g.label}</div>
+                  {#each g.items as d (d.id)}
+                    <button class="rrow" onclick={() => openExisting(d)}>
+                      <span class="rname" class:unnamed={d.title === d.filename}>{d.title}</span>
+                      <span class="rcount">
+                        {d.fileCount}
+                        {d.fileCount === 1 ? "file" : "files"}
+                      </span>
+                      <span class="rwhen">{when(d.updatedAt)}</span>
+                    </button>
+                  {/each}
                 {/each}
               </div>
             {:else}
@@ -2096,14 +2136,6 @@
       animation: bandLift var(--greet) ease 0.18s both;
       width: 100%;
     }
-    /* A card still answers the pointer — in colour, which is what reduced motion
-       keeps — but it stops lifting off the page. */
-    .gloomcard {
-      transition: border-color 0.18s ease;
-    }
-    .gloomcard:hover {
-      transform: none;
-    }
     /* And the pane swap itself: the dip is what makes a file change legible
        rather than looking like the code moved under you. Without motion it just
        changes, which is honest — but the fade must not leave it invisible. */
@@ -2140,6 +2172,9 @@
     position: relative;
     z-index: 1;
   }
+  /* The wordmark is the gloom's teal, not the ink's near-white. White is what the
+     prose under it is; the name of the app should be the colour of the thing it
+     makes — and it is the only word on the screen allowed to be. */
   .masthead h1 {
     margin: 0;
     font-family: var(--display);
@@ -2147,9 +2182,10 @@
     font-size: 34px;
     letter-spacing: 0.16em;
     text-transform: uppercase;
+    color: var(--gloom);
   }
   .masthead h1 span {
-    color: var(--gloom);
+    color: var(--gloom-ink);
   }
   .masthead p {
     margin: 10px 0 0;
@@ -2225,79 +2261,92 @@
     color: var(--accent);
   }
 
-  /* A gloom is a thing with a name, a size and an age — not a filename in a list,
-     which is what the old recents row made it. */
-  .glooms {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
-    gap: 12px;
-  }
-  /* A name and what it covers. Nothing else.
-     The card carried a file count, an age and a branch as well, and all three were
-     answers to questions you were not asking at the moment you scan this screen —
-     which one was I in? The name says that, and the badges say what it reached.
-     The count is in the badges already (`+2`), and the age only ever ordered the
-     list, which the order of the list already does. */
-  .gloomcard {
-    position: relative;
-    display: grid;
-    gap: 8px;
-    text-align: left;
-    padding: 14px 15px 13px;
-    font: inherit;
-    color: var(--fg);
-    background: var(--doc-bg);
+  /* A list, not a grid.
+     Not for density — measured, twelve cards take 392px and twelve rows 432px —
+     but because a grid has no scan line: names sit at three different x positions
+     and you read in a zig-zag. A row also carries a date and a group header
+     without growing, which is how you find the one from last Tuesday among forty,
+     and the thirteenth gloom extends a list where it reflows a grid.
+
+     Capped at 720px. A row of one short name stretched across 1080 is mostly
+     whitespace with a date lost at the far end — the eye has to travel the width
+     of the window to pair a name with its age. */
+  .rlist {
+    max-width: 720px;
     border: 1px solid var(--doc-line);
     border-radius: 10px;
-    box-shadow: var(--shadow);
+    overflow: hidden;
+    background: var(--bg-raised);
+  }
+  .rbucket {
+    padding: 6px 12px;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+    background: var(--bg-inset);
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .rbucket:not(:first-child) {
+    border-top: 1px solid var(--line-soft);
+  }
+  .rrow {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    width: 100%;
+    padding: 6px 12px;
+    font: inherit;
+    text-align: left;
+    color: var(--fg);
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--line-soft);
+    /* Explicit, and on the children too: a row is one target, and the text inside
+       it must not offer an I-beam for a selection it will never make. */
     cursor: pointer;
-    transition:
-      border-color 0.18s ease,
-      transform 0.18s var(--ease-out);
   }
-  .gloomcard:hover {
-    border-color: color-mix(in srgb, var(--gloom-deep) 55%, transparent);
-    transform: translateY(-2px);
+  .rrow * {
+    cursor: pointer;
   }
-  /* A stripe of the masthead the card belongs to. */
-  .gloomcard::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 12px;
-    bottom: 12px;
-    width: 3px;
-    border-radius: 0 2px 2px 0;
-    background: var(--gloom-deep);
+  .rrow:last-child {
+    border-bottom: 0;
   }
-  .gloomcard .name {
+  .rrow:hover {
+    background: color-mix(in srgb, var(--gloom-deep) 8%, transparent);
+  }
+  .rname {
+    flex: 1;
+    min-width: 0;
     font-family: var(--serif);
-    font-size: 16px;
-    line-height: 1.3;
+    font-size: 14.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  /* Still called after its module: the same invitation the gloom band shows. */
-  .gloomcard .name.unnamed {
+  /* Still called after its module: the same invitation the band gives. */
+  .rname.unnamed {
     color: var(--fg-faint);
     font-style: italic;
   }
-  .gloomcard .files {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-  .gloomcard .file {
+  /* The origin filename was here and went: the name identifies the gloom, and a
+     second identifier in every row is a column you read past. */
+  .rcount,
+  .rwhen {
+    flex: none;
+    text-align: right;
     font-family: var(--mono);
     font-size: 10px;
-    padding: 1px 6px;
-    border-radius: 4px;
-    background: var(--bg-inset);
-    color: var(--fg-dim);
-    white-space: nowrap;
-  }
-  .gloomcard .file.more {
-    background: transparent;
     color: var(--fg-faint);
   }
+  .rcount {
+    width: 52px;
+  }
+  .rwhen {
+    width: 64px;
+  }
+
   .noglooms {
     margin: 0;
     padding: 22px;
