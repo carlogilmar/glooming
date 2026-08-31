@@ -1720,21 +1720,25 @@
     font: inherit;
     font-family: var(--mono);
     font-size: 11.5px;
-    color: var(--fg);
-    /* `--bg-raised`, not `--code-bg`. It used to borrow the code pane's surface
-       to look like the file it names — which was white, and once the header
-       became a dark theme it stayed white while its label went near-white with
-       everything else. A control should take its surface from the surface it is
-       ON; the header defines `--bg-raised` for exactly that. */
-    background: var(--bg-raised);
-    border: 1px solid var(--line);
+    color: var(--gloom-ink);
+    /* The gloom's own teal, because this button is the gloom's files — it opens
+       the shape of the change, and the shape is drawn in this colour. Among four
+       neutral controls in a neutral row it was the one you hunt for most and the
+       hardest to find; now it is the only coloured thing there.
+
+       (It used to borrow `--code-bg` to look like the file it names, which was
+       white, and once the header became a dark theme it stayed white while its
+       label went near-white with everything else. A control takes its surface
+       from the surface it is ON.) */
+    background: color-mix(in srgb, var(--gloom) 20%, transparent);
+    border: 1px solid color-mix(in srgb, var(--gloom) 45%, transparent);
     border-radius: 6px;
     cursor: pointer;
     box-shadow: var(--shadow);
   }
   .filebtn:hover {
-    border-color: var(--accent);
-    background: var(--sel);
+    border-color: var(--gloom);
+    background: color-mix(in srgb, var(--gloom) 30%, transparent);
   }
   .filebtn i {
     width: 5px;
@@ -1753,7 +1757,8 @@
   .filebtn .n {
     font-family: var(--sans);
     font-size: 9.5px;
-    color: var(--fg-faint);
+    color: var(--gloom-ink);
+    opacity: 0.75;
     border-left: 1px solid var(--line);
     padding-left: 7px;
   }

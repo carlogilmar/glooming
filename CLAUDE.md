@@ -111,6 +111,7 @@ mockup/files.html              ten mixed-kind files: the files modal, and the dr
 mockup/motion-audit.html       every motion finding, before and after
 mockup/reading-theme.html      read mode as a theme: five palettes, five faces, measured
 mockup/home.html               the home screen rebuilt around glooms
+mockup/stack.html              the files modal as the shape of the change
 scripts/motion-audit.py        every animation vs its reduced-motion rule
 scripts/effect-audit.py        $effects that read and write the same $state
 scripts/component-audit.py     components imported but never rendered
@@ -152,6 +153,7 @@ src/
     treemap.ts                 parses + draws the treemap block
     stats.ts                   parses + draws the stats block
     deps.ts                    parses + draws the reach block (see mockup/deps.html)
+    shape.ts                   the gloom as layers: thickness ∝ size (see mockup/stack.html)
     surface.ts                 parses + draws the surface block (see mockup/surface.html)
     settings.ts                parses + draws the config settings block
     tests.ts                   parses + draws the test suite block
@@ -736,6 +738,67 @@ Two consequences:
   in a separate reaches list; the picture can carry it, and the same fact in two
   places is one place too many.
 
+### The files modal is the shape of the change
+
+`⌘⇧T` was a list: one row per file, a dot, the state in words. It worked, and it
+said nothing about the *change* — ten filenames tell you what you have open, never
+what you are looking at. So the picker became a **portrait**, drawn from
+`mockup/stack.html`: one layer per file, **thickness ∝ size**, the grain inside it
+the functions it is made of, pale until your prose has named it. The same click
+answers both questions at once — which file, and which part of this is big.
+
+**One claim, so everything else stayed out.** No threads to the modules a file
+reaches (a portrait is not a dependency list), no reading path, no line-count
+captions, no per-setting marks. The things that survived are the ones the list was
+already saying: filled or dashed is written-about, amber is stale or gone, a
+heavier border is the file you are in, `×` on hover removes, and the origin has no
+`×` because it is what the reading is anchored to.
+
+**The name column is measured, not fixed.** 138px fitted `AllTargets` and clipped
+`ImpactPipelineTelemetryReporter`, so `labelWidth` sizes it from the longest name in
+the gloom, clamped between 110 and 300px, and the plates start after it. The modal
+itself went to `min(860px, 94vw)`: a picture with a name column and a readable grain
+needs the room, and a list never did.
+
+**The hover path comes from the layer, not the cursor.** `cursor` indexes the
+*filtered* hits, for the keyboard; a layer knows its index into `files`. Using one
+for the other showed the wrong path — or none at all — the moment a filter was
+typed. And the path is trimmed from the left in JS (`tailPath`) rather than by CSS,
+because a right-to-left ellipsis needs `direction: rtl`, which reorders the segments
+of anything with punctuation in it.
+
+**Geometry lives in `shape.ts`, and is pure.** Both bugs found while drawing it
+were sums rather than taste, and both are now probed headlessly rather than clicked
+at:
+
+- **Marks ran past the plate that owned them.** Widths were shared as
+  `(len/total) × width` and the gaps were *added afterwards*, so a module with
+  seven private helpers drew its last mark outside its own layer. Padding and gaps
+  come off the width first.
+- **A floor ate the proportion.** Sharing a fixed height between twelve files put
+  every band within 4px of the minimum: still a usable list, no longer saying
+  anything about size. The proportional pool **grows with the set** — 18px floor
+  plus 40px a file — which holds the tallest at ~2.3× the shortest at twelve files
+  against a √ ratio of 3.6×, and the body scrolls for the rest. The floor is there
+  because this is a *picker*: no layer may be too small to click.
+
+**√lines, not lines.** Linear draws a 26-line config at a fifth of a 342-line
+module and the layer effectively disappears.
+
+**Filtering dims rather than removes.** Proportion is the claim the picture makes,
+and a stack that re-proportions itself as you type would lie about it. `↑↓` still
+walk only the matches.
+
+**The footer says one thing at a time**: the path you are pointing at (truncated
+from the left, because the end identifies it), or why nothing can be added from
+this branch, or what removing would cost. The branch refusal here is **one line and
+names no branches** — as badges, a real name like `feature/impact-retry-fix` wrapped
+the footer into three lines of chrome, and the names are already in the header chip
+and the notice. In a footer the only thing worth saying is that the gloom cannot
+grow from where you are. The path is there because it is the one
+fact a module name cannot carry, and a footer can hold a long one where a row
+cannot.
+
 ### The files modal replaced the tab strip
 
 `⌘⇧T`, or the file button in the app header. `FilesModal.svelte` — the Library
@@ -750,6 +813,11 @@ I in", and it stopped doing that job precisely when it mattered.
 What made it affordable to lose is that **navigation had already moved**: the
 note's references, and the drawer's reaches list. Switching file is no longer the
 main way you get around, so it can cost a keystroke.
+
+**The button that opens it is the only coloured thing in that row** — the gloom's
+own teal, because it opens the *shape of the change* and the shape is drawn in that
+colour. Among four neutral controls it was the one you reach for most and the
+hardest to find.
 
 The header button is **136px, constant whatever the file count** — the filename,
 the count, and one dot for the current file's state. Hollow still means "your prose

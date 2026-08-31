@@ -11,10 +11,23 @@
   // references in the note, and the drawer's reaches list. Switching file is no
   // longer the main way you get around, so it can cost a keystroke.
   //
-  // Same idiom as the Library, scoped to one reading: filter, ↑↓↵, grouped by
-  // directory. Removing asks first, in place.
+  // And the list became a **picture**. `mockup/stack.html` is the contract: one
+  // layer per file, thickness ∝ size, the grain inside it the functions it is
+  // made of, pale until your prose has named it. A list of ten filenames tells
+  // you what you have open and nothing about the change; the same click now
+  // answers both — which file, and which part of this is big.
+  //
+  // Geometry lives in `shape.ts` so the arithmetic can be probed headlessly. The
+  // two things that went wrong drawing it were sums, not taste: marks running
+  // past the plate that owns them, and a floor that ate the proportion at twelve
+  // files.
+  //
+  // Filtering **dims** rather than removes: proportion is the claim the picture
+  // makes, and a filtered stack that re-proportions itself would lie about it.
+  // ↑↓ still walk only the matches.
 
   import type { ReadingFile } from "$lib/ipc";
+  import { GEO, layout, plate, tailPath } from "$lib/shape";
 
   let {
     files = [],
@@ -64,13 +77,9 @@
     return referenced.has(f.path) ? "written" : "unread";
   }
 
-  /** Said in words, not only in a dot — a ten-file list has room for it. */
-  const WHY: Record<State, string> = {
-    written: "referenced in your note",
-    unread: "not mentioned yet",
-    stale: "changed on disk",
-    missing: "not on disk",
-  };
+  // The state used to be said in words on each row. The shape says three of the
+  // four now — filled is written about, dashed is not, amber is stale or gone —
+  // and the fourth (the path) moved to the footer, where a long one fits.
 
   const dirOf = (p: string) => p.slice(0, p.lastIndexOf("/")) || "/";
   const baseOf = (p: string) => p.slice(p.lastIndexOf("/") + 1);
@@ -102,17 +111,30 @@
       .sort((a, b) => a.s! - b.s! || a.i - b.i),
   );
 
-  // Rows in order, with a directory header wherever it changes.
-  const rows = $derived.by(() => {
-    const out: { h: (typeof hits)[number]; n: number; head: string | null }[] = [];
-    let seen: string | null = null;
-    hits.forEach((h, n) => {
-      const d = dirOf(h.f.path);
-      out.push({ h, n, head: d === seen ? null : d });
-      seen = d;
-    });
-    return out;
-  });
+  /**
+   * The drawing. One layer per file, in the order the gloom collected them.
+   *
+   * Wider than the list ever needed to be: a name column sized to the longest
+   * module plus room for the grain to be read means a modal of 620px clipped
+   * `ImpactPipelineTelemetryReporter`. 820 is still comfortably inside the
+   * smallest window this app is usable in.
+   */
+  const VIEW_W = 780;
+  const shape = $derived(layout(files, VIEW_W));
+  const box = $derived(plate(VIEW_W, shape.label));
+
+  /** Which layers the filter keeps — dimmed, never removed. */
+  const matched = $derived(new Set(hits.map((h) => h.f.path)));
+
+  /**
+   * The file under the pointer, which is not the same thing as the cursor.
+   *
+   * `cursor` indexes the *filtered* hits, for the keyboard; a layer knows its
+   * index into `files`. Using one for the other showed the wrong path — or none —
+   * the moment a filter was typed.
+   */
+  let hovered = $state<string | null>(null);
+  const footPath = $derived(hovered ?? hits[cursor]?.f.path ?? null);
 
   $effect(() => {
     query;
@@ -168,13 +190,11 @@
   onclick={(e) => e.target === e.currentTarget && onclose()}
 >
   <!-- A modal appears centred, so `transform-origin: center` is right here — the
-       rule about scaling from a trigger is for popovers anchored to one. 200ms
-       sits at the bottom of the 200–500ms budget a modal is allowed, because this
-       one opens over work you were in the middle of. -->
+       rule about scaling from a trigger is for popovers anchored to one. -->
   <div class="panel" role="dialog" aria-label="Files in this gloom">
     <div class="top">
       <h2>Files in this gloom</h2>
-      <span class="c">{hits.length} of {files.length}</span>
+      <span class="c">{files.length} files · {shape.layers.reduce((n, l) => n + l.lines, 0)} lines</span>
       <span class="spacer"></span>
       <button class="btn" onclick={onclose}>esc</button>
     </div>
@@ -189,84 +209,128 @@
     />
 
     <div class="flist" bind:this={list}>
-      {#each rows as row (row.h.f.path)}
-        {#if row.head}
-          <div class="fgroup">{row.head}/</div>
-        {/if}
-        {@const st = stateOf(row.h.f)}
-        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <div
-          class="frow {st}"
-          class:cur={row.n === cursor}
-          class:on={row.h.f.path === current}
-          class:origin={row.h.f.origin}
-          onclick={() => onpick(row.h.f.path)}
-          onmouseenter={() => (cursor = row.n)}
-        >
-          <i></i>
-          <span class="name">{baseOf(row.h.f.path)}</span>
-          <span class="kind">{row.h.f.outline?.kind ?? "text"}</span>
-          <span class="why">{WHY[st]}</span>
-          {#if !row.h.f.origin}
-            <!-- Only on the row you are pointing at, so a destructive control is
-                 never sitting under an idle cursor. The origin has none: it is
-                 what the reading is anchored to. -->
-            <span
-              class="x"
-              role="button"
-              tabindex="-1"
-              title="Remove from this gloom"
-              onclick={(e) => {
-                e.stopPropagation();
-                confirming = confirming === row.h.f.path ? null : row.h.f.path;
-              }}>×</span
-            >
-          {/if}
-        </div>
-
-        {#if confirming === row.h.f.path}
-          <div class="confirm">
-            <b>Remove {baseOf(row.h.f.path)}?</b>
-            <span>
-              Its snapshot leaves this reading. Your note is untouched, and so is the
-              file on disk.
-            </span>
-            <span class="spacer"></span>
-            <button
-              class="go"
-              onclick={(e) => {
-                e.stopPropagation();
-                const p = row.h.f.path;
-                confirming = null;
-                onremove(p);
-              }}>Remove</button
-            >
-            <button onclick={(e) => (e.stopPropagation(), (confirming = null))}>Keep</button>
-          </div>
-        {/if}
-      {:else}
-        <p class="none">no file matches “{query}”</p>
-      {/each}
-
-      {#if offBranch}
-        <!-- A gloom holds one version of a change, so it can only grow from the
-             branch it was read on. Said here rather than discovered by trying. -->
-        <div class="addrow off">
-          Nothing can join this gloom from <b>{offBranch.here}</b> — it was read on
-          <b>{offBranch.gloom}</b>. Check that branch out, or start a new gloom.
-        </div>
-      {:else}
-        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <div class="addrow" onclick={onadd}>
-          + &nbsp;Add a file to this gloom… <kbd>⌘T</kbd>
-        </div>
-      {/if}
+      <svg viewBox="0 0 {VIEW_W} {shape.height}" role="img" aria-label="The files in this gloom, as layers">
+        {#each shape.layers as L, n (L.path)}
+          {@const st = stateOf(files[n])}
+          {@const on = L.path === current}
+          {@const lit = referenced.has(L.path)}
+          {@const half = L.y + L.h / 2}
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <g
+            class="layer {st}"
+            class:bare={L.bare}
+            class:on
+            class:lit
+            class:cur={n === cursor}
+            class:muted={!matched.has(L.path)}
+            style="--i:{n}"
+            onclick={() => onpick(L.path)}
+            onmouseenter={() => {
+              hovered = L.path;
+              const at = hits.findIndex((h) => h.f.path === L.path);
+              if (at >= 0) cursor = at;
+            }}
+            onmouseleave={() => (hovered = null)}
+          >
+            <rect
+              class="plate"
+              x={box.x}
+              y={L.y}
+              width={box.width}
+              height={L.h}
+              rx="4"
+            />
+            <g class="grain">
+              {#if !L.bare}
+                <line class="water" x1={box.x + GEO.pad} y1={half} x2={box.x + box.width - GEO.pad} y2={half} />
+              {/if}
+              {#each L.marks as m (m.k)}
+                <rect
+                  class="mark {m.vis}"
+                  style="--k:{m.k}"
+                  x={m.x}
+                  y={m.y}
+                  width={m.w}
+                  height={m.h}
+                  rx="1.5"
+                />
+              {/each}
+            </g>
+            <g class="label">
+              {#if on}<circle class="here" cx={shape.label - 6} cy={half - 0.5} r="2.6" />{/if}
+              <text class="name" x={shape.label - 14} y={half + 4} text-anchor="end">{L.name}</text>
+              {#if L.kind !== "module"}
+                <text class="tag" x={shape.label - 14} y={half + 15} text-anchor="end">{L.kind}</text>
+              {/if}
+              {#if !files[n].origin}
+                <!-- Only where you are pointing, so a destructive control is never
+                     sitting under an idle cursor. The origin has none: it is what
+                     the reading is anchored to. -->
+                <text
+                  class="x"
+                  role="button"
+                  tabindex="-1"
+                  x={box.x + box.width + 2}
+                  y={half + 4}
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    confirming = confirming === L.path ? null : L.path;
+                  }}>×</text
+                >
+              {/if}
+            </g>
+          </g>
+        {/each}
+      </svg>
     </div>
 
-    <footer>
-      <kbd>↑</kbd><kbd>↓</kbd> move · <kbd>↵</kbd> open · <kbd>⌫</kbd> remove ·
-      <kbd>⌘T</kbd> add · <kbd>esc</kbd> close
-    </footer>
+    <!-- The footer says one thing at a time: what you are pointing at, why you
+         cannot add, or what removing would cost. -->
+    {#if confirming}
+      {@const f = files.find((x) => x.path === confirming)}
+      <div class="foot warn">
+        <span class="msg">
+          <b>Remove {baseOf(confirming)}?</b>
+          Its snapshot leaves this reading. Your note is untouched, and so is the file on disk.
+        </span>
+        <button
+          class="go"
+          onclick={() => {
+            const p = confirming!;
+            confirming = null;
+            onremove(p);
+          }}>Remove</button
+        >
+        <button class="keep" onclick={() => (confirming = null)}>Keep</button>
+      </div>
+    {:else if offBranch}
+      <!-- One line, and no branch names.
+           They were badges, and a real branch name — `feature/impact-retry-fix` —
+           made two of them wrap the footer into three lines of chrome. The names
+           are already in the header chip and in the notice; here the only thing
+           worth saying is that this gloom cannot grow from where you are. -->
+      <div class="foot off">
+        <span class="msg">Files can only be added from the branch this gloom was read on.</span>
+      </div>
+    {:else}
+      <div class="foot">
+        <!-- The path, which is the one thing a module name cannot tell you.
+             Truncated from the left: the end identifies. -->
+        <!-- The full path, trimmed from the left in JS rather than by CSS: a
+             right-to-left ellipsis needs `direction: rtl`, which reorders the
+             segments of anything with punctuation in it. -->
+        <span class="path">
+          {#if footPath}
+            {@const shown = tailPath(footPath)}
+            {@const cut = shown.lastIndexOf("/")}
+            <span class="dir">{shown.slice(0, cut + 1)}</span><b>{shown.slice(cut + 1)}</b>
+          {:else}
+            no file matches “{query}”
+          {/if}
+        </span>
+        <button class="add" onclick={onadd}>+ Add a file… <kbd>⌘T</kbd></button>
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -287,10 +351,10 @@
     opacity: 1;
   }
   .panel {
+    /* Wide enough for the longest module name plus a readable grain. */
     transform: scale(0.97);
     transition: transform 0.2s var(--ease-out);
-    width: 620px;
-    max-width: calc(100vw - 40px);
+    width: min(860px, 94vw);
     max-height: 74vh;
     display: flex;
     flex-direction: column;
@@ -350,71 +414,6 @@
     overflow: auto;
     padding: 5px;
   }
-  /* Sticky, so you never lose which directory you are scrolling through. */
-  .fgroup {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    padding: 5px 9px 3px;
-    font-family: var(--mono);
-    font-size: 9.5px;
-    color: var(--fg-faint);
-    background: var(--bg-raised);
-    border-bottom: 1px solid var(--line-soft);
-  }
-  .frow {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    padding: 6px 9px;
-    border-radius: 7px;
-    border-left: 2px solid transparent;
-    cursor: pointer;
-  }
-  .frow.cur {
-    background: var(--bg-inset);
-    border-left-color: var(--accent);
-  }
-  .frow.on {
-    background: var(--sel);
-  }
-  .frow i {
-    width: 6px;
-    height: 6px;
-    flex: none;
-    border-radius: 50%;
-    background: var(--pub);
-  }
-  .frow.unread i {
-    background: transparent;
-    box-shadow: inset 0 0 0 1.5px var(--fg-faint);
-  }
-  .frow.stale i,
-  .frow.missing i {
-    background: var(--priv);
-  }
-  .frow .name {
-    font-family: var(--mono);
-    font-size: 12px;
-    color: var(--fg);
-  }
-  .frow.missing .name {
-    text-decoration: line-through;
-  }
-  .frow .kind {
-    font-size: 8.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
-    padding: 0 5px;
-    border-radius: 3px;
-    color: var(--fg-faint);
-    background: var(--bg-inset);
-  }
-  .frow .why {
-    margin-left: auto;
-    font-size: 10px;
-    color: var(--fg-faint);
-  }
   .x {
     display: inline-flex;
     align-items: center;
@@ -427,91 +426,12 @@
     opacity: 0;
     transition: opacity 0.12s;
   }
-  .frow:hover .x,
-  .frow.cur .x {
-    opacity: 0.7;
-  }
   .x:hover {
     opacity: 1;
     color: var(--priv);
     background: color-mix(in srgb, var(--priv) 14%, transparent);
   }
 
-  .confirm {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 2px 0 4px;
-    padding: 8px 10px;
-    border-radius: 7px;
-    font-size: 11px;
-    color: var(--priv);
-    background: color-mix(in srgb, var(--priv) 9%, transparent);
-  }
-  .confirm b {
-    flex: none;
-    font-size: 11.5px;
-  }
-  .confirm button {
-    flex: none;
-    font: inherit;
-    font-size: 10.5px;
-    padding: 3px 9px;
-    border-radius: 5px;
-    cursor: pointer;
-    color: var(--fg-dim);
-    background: var(--bg);
-    border: 1px solid var(--line);
-  }
-  .confirm .go {
-    color: #fff;
-    background: var(--priv);
-    border-color: var(--priv);
-  }
-  .confirm .go:hover {
-    filter: brightness(1.08);
-  }
-
-  .addrow {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    margin: 3px 0 0;
-    padding: 7px 9px;
-    border-radius: 7px;
-    cursor: pointer;
-    font-size: 12px;
-    color: var(--accent);
-    border: 1px dashed color-mix(in srgb, var(--accent) 40%, transparent);
-  }
-  .addrow.off {
-    cursor: default;
-    color: var(--priv);
-    background: color-mix(in srgb, var(--priv) 9%, transparent);
-    border-color: color-mix(in srgb, var(--priv) 30%, transparent);
-    font-style: normal;
-    line-height: 1.5;
-  }
-  .addrow.off b {
-    font-family: var(--mono);
-    font-weight: 600;
-  }
-  .addrow:hover {
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-  }
-  .none {
-    margin: 0;
-    padding: 14px 12px;
-    font-size: 11.5px;
-    color: var(--fg-faint);
-  }
-  footer {
-    padding: 6px 13px;
-    border-top: 1px solid var(--line-soft);
-    background: var(--bg-inset);
-    font-size: 10px;
-    color: var(--fg-faint);
-  }
   kbd {
     font-family: var(--mono);
     font-size: 9.5px;
@@ -521,5 +441,307 @@
     padding: 0 3px;
     margin-right: 2px;
     color: var(--fg-dim);
+  }
+
+  /* ---- the stack ----------------------------------------------------------
+     One layer per file. Everything the list said in words is said in the shape
+     now, except the path — which is in the footer, where it can be long. */
+  .flist svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+  .layer {
+    cursor: pointer;
+    transition: opacity 0.16s ease;
+  }
+  .layer .plate {
+    fill: color-mix(in srgb, var(--gloom-deep) 5%, transparent);
+    stroke: color-mix(in srgb, var(--gloom-deep) 26%, transparent);
+    stroke-width: 1;
+    stroke-dasharray: 4 4;
+    transform-box: fill-box;
+    transform-origin: top center;
+  }
+  /* Written about: filled, and the outline goes solid. Until then the layer is a
+     dashed outline — the hollow dot, grown to the size of the file. */
+  .layer.lit .plate {
+    fill: color-mix(in srgb, var(--gloom-deep) 15%, transparent);
+    stroke: color-mix(in srgb, var(--gloom-deep) 60%, transparent);
+    stroke-dasharray: none;
+  }
+  /* A config and a suite are their own colours, as everywhere else in the app. */
+  .layer.config .plate,
+  .layer.stale .plate,
+  .layer.missing .plate {
+    fill: color-mix(in srgb, var(--priv) 8%, transparent);
+    stroke: color-mix(in srgb, var(--priv) 45%, transparent);
+  }
+  .layer.on .plate {
+    stroke-width: 1.8;
+    stroke: var(--accent);
+    stroke-dasharray: none;
+  }
+  .layer.cur .plate {
+    stroke: color-mix(in srgb, var(--accent) 70%, transparent);
+    stroke-dasharray: none;
+  }
+  /* Filtered out, not removed: the proportions are the claim this picture makes,
+     and a stack that re-proportions itself as you type would lie about them. */
+  .layer.muted {
+    opacity: 0.18;
+  }
+
+  .water {
+    stroke: color-mix(in srgb, var(--gloom-deep) 22%, transparent);
+    stroke-width: 0.7;
+  }
+  .mark {
+    opacity: 0.22;
+  }
+  .layer.lit .mark {
+    opacity: 0.5;
+  }
+  .mark.public {
+    fill: var(--pub);
+  }
+  .mark.private {
+    fill: var(--priv);
+  }
+  .mark.describe {
+    fill: var(--read);
+  }
+  .name {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.02em;
+    fill: var(--fg);
+  }
+  .layer.on .name {
+    font-weight: 700;
+  }
+  .layer.missing .name {
+    fill: var(--priv);
+  }
+  .tag {
+    font-family: var(--sans);
+    font-size: 7.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    fill: var(--fg-faint);
+  }
+  .here {
+    fill: var(--accent);
+  }
+  .x {
+    font-family: var(--sans);
+    font-size: 12px;
+    fill: var(--fg-faint);
+    opacity: 0;
+    cursor: pointer;
+    transition: opacity 0.12s ease;
+  }
+  .layer:hover .x {
+    opacity: 0.55;
+  }
+  .x:hover {
+    opacity: 1;
+    fill: var(--priv);
+  }
+
+  /* ---- footer: one thing at a time --------------------------------------- */
+  .foot {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 14px;
+    border-top: 1px solid var(--line);
+    background: var(--bg-raised);
+    font-size: 11.5px;
+  }
+  .foot .path {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--fg-dim);
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .foot .path b {
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .foot .path .dir {
+    color: var(--fg-faint);
+  }
+  .foot .add {
+    font: inherit;
+    font-size: 11px;
+    color: var(--gloom-deep);
+    background: transparent;
+    border: 1px solid color-mix(in srgb, var(--gloom-deep) 34%, transparent);
+    border-radius: 6px;
+    padding: 4px 9px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .foot .add:hover {
+    background: color-mix(in srgb, var(--gloom-deep) 10%, transparent);
+  }
+  .foot kbd {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--fg-faint);
+  }
+  .foot .msg {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    line-height: 1.45;
+    color: var(--fg-dim);
+  }
+  .foot .msg b {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--fg);
+    font-weight: 600;
+  }
+  /* Quiet, not amber: nothing has gone wrong, the gloom simply cannot grow from
+     where you are standing. One line, so it stays a footer. */
+  .foot.off {
+    background: color-mix(in srgb, var(--fg) 5%, var(--bg-raised));
+  }
+  .foot.off .msg {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 11px;
+    color: var(--fg-faint);
+  }
+  .foot.warn {
+    background: color-mix(in srgb, var(--priv) 10%, transparent);
+    border-top-color: color-mix(in srgb, var(--priv) 30%, transparent);
+  }
+  .foot.warn .go {
+    font: inherit;
+    font-size: 11px;
+    color: #fff;
+    background: var(--priv);
+    border: 0;
+    border-radius: 5px;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+  .foot.warn .keep {
+    font: inherit;
+    font-size: 11px;
+    color: var(--fg-dim);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+
+  /* ---- motion ------------------------------------------------------------
+     The stack assembles once, 55ms a layer; a layer's grain settles after its own
+     plate lands; and while you point at a module a highlight walks its marks in
+     source order. That last one loops, and the pointer is its switch — leaving
+     stops it, which is the whole difference from ambient motion. */
+  .layer .plate {
+    animation: grow 0.34s var(--ease-out) both;
+    animation-delay: calc(var(--i) * 55ms);
+  }
+  @keyframes grow {
+    from {
+      transform: scaleY(0.05);
+      opacity: 0;
+    }
+    40% {
+      opacity: 1;
+    }
+  }
+  .layer .grain,
+  .layer .label {
+    animation: settle 0.3s var(--ease-out) both;
+    animation-delay: calc(var(--i) * 55ms + 150ms);
+  }
+  @keyframes settle {
+    from {
+      opacity: 0;
+      transform: translateY(-3px);
+    }
+  }
+  .flist svg:hover .layer:not(:hover) {
+    opacity: 0.34;
+  }
+  .layer .plate,
+  .layer .grain,
+  .layer .label {
+    transition: transform 0.16s var(--ease-out);
+  }
+  .layer:hover .plate,
+  .layer:hover .grain,
+  .layer:hover .label {
+    transform: translateY(-2px);
+  }
+  .layer:hover .mark {
+    animation: wave 1.7s ease-in-out infinite;
+    animation-delay: calc(var(--k) * 55ms);
+  }
+  @keyframes wave {
+    0%,
+    55%,
+    100% {
+      opacity: inherit;
+    }
+    22% {
+      opacity: 0.85;
+    }
+  }
+  .layer.bare:hover .plate {
+    animation: sheen 1.7s ease-in-out infinite;
+  }
+  @keyframes sheen {
+    0%,
+    100% {
+      filter: none;
+    }
+    40% {
+      filter: brightness(1.14);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .layer .plate {
+      animation: appear 0.34s ease both;
+      animation-delay: calc(var(--i) * 55ms);
+    }
+    .layer .grain,
+    .layer .label {
+      animation: appear 0.3s ease both;
+      animation-delay: calc(var(--i) * 55ms + 150ms);
+    }
+    @keyframes appear {
+      from {
+        opacity: 0;
+      }
+    }
+    .layer:hover .plate,
+    .layer:hover .grain,
+    .layer:hover .label {
+      transform: none;
+    }
+    .layer:hover .mark {
+      animation: none;
+    }
+    .layer.bare:hover .plate {
+      animation: none;
+    }
   }
 </style>
