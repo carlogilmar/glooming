@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import { createMarkdownIt } from "$lib/markdownit";
   import { locate } from "$lib/select";
   import RefMenu from "$lib/components/RefMenu.svelte";
@@ -379,17 +379,37 @@
   }
 
   /** Replace `/query` with the reference and put the caret after it. */
-  function insertRef(text: string) {
+  /**
+   * Put the reference in, and leave the caret **after** it.
+   *
+   * `await tick()`, not `queueMicrotask`. The textarea is `bind:value`, so
+   * assigning `markdown` re-writes `.value` — and writing a textarea's value
+   * resets its selection to 0. A microtask can run before Svelte has flushed that
+   * write, in which case the caret was set and then thrown away, and you were
+   * returned to the top of the note every time you inserted a reference. `tick`
+   * resolves *after* the DOM update, which is the only moment the range sticks.
+   */
+  async function insertRef(text: string) {
     if (!editor || slashAt === null) return;
     const caret = editor.selectionStart;
-    const next = editor.value.slice(0, slashAt) + text + editor.value.slice(caret);
-    markdown = next;
+    const at = slashAt;
+    markdown = editor.value.slice(0, at) + text + editor.value.slice(caret);
     closeMenu();
-    const to = slashAt + text.length;
-    queueMicrotask(() => {
+
+    const to = at + text.length;
+    await tick();
+    editor?.focus();
+    editor?.setSelectionRange(to, to);
+
+    // A block is many lines, so its end can land below the fold — and a browser
+    // does not scroll to a caret it did not move itself. Bouncing focus makes it
+    // do so. Only for multi-line inserts: a reference is a few characters at the
+    // caret you were already looking at, and bouncing focus for that would be a
+    // flicker for nothing.
+    if (text.includes("\n")) {
+      editor?.blur();
       editor?.focus();
-      editor?.setSelectionRange(to, to);
-    });
+    }
   }
 
   // The whole file set goes in: a reference may name a function in any of them,
@@ -415,7 +435,7 @@
       const body = await ipc.blockFor(kind, file.path, file.outline);
       const before = editor.value.slice(0, slashAt);
       const lead = before === "" || before.endsWith("\n") ? "" : "\n";
-      insertRef(`${lead}${body}`);
+      await insertRef(`${lead}${body}`);
     } catch (e) {
       // A module that reaches nothing has no deps block, and saying so beats
       // inserting an empty fence that renders as "re-seed this doc".
@@ -856,16 +876,29 @@
       markHere();
       const i = stopAt();
       if (i === activeStop) return;
-      activeStop = i;
+      applyStop(i);
+    });
+  }
 
-      // Before the first paragraph reaches the trigger the reading has not
-      // begun: the file sits at rest rather than pre-armed on step one.
-      if (i < 0) {
-        focus.rest();
-        activeRef = null;
-        markNow(null);
-        return;
-      }
+  /**
+   * Show stop `i`: select it in the code, mark its block, flash the band.
+   *
+   * Split out of the scroll handler because entering read mode has to do exactly
+   * this without waiting for a scroll event — a smooth scroll may not fire one at
+   * all if the note is already where it needs to be, and the reading would open
+   * with the band in place and the code pane showing nothing.
+   */
+  function applyStop(i: number) {
+    activeStop = i;
+
+    // Before the first reference reaches the trigger the reading has not begun.
+    if (i < 0) {
+      focus.rest();
+      activeRef = null;
+      markNow(null);
+      return;
+    }
+    {
       const ref = stops[i];
       if (!ref) return;
       const start = parseInt(ref.dataset.line ?? "0", 10);
@@ -903,7 +936,7 @@
         bandEl.classList.add("fire");
         setTimeout(() => bandEl?.classList.remove("fire"), 40);
       }
-    });
+    }
   }
 
   /**
@@ -981,8 +1014,35 @@
       // And once more after the frame has actually been laid out. Entering read
       // mode changes the type and the spacing, so the height measured in the
       // microtask is the height the pane had a moment ago.
-      requestAnimationFrame(placeBand);
+      requestAnimationFrame(() => {
+        placeBand();
+        if (reading) startAtFirstStop();
+      });
     });
+  }
+
+  /**
+   * Entering read mode begins the reading, rather than arming it.
+   *
+   * At rest the note sat above the trigger with nothing selected, on the grounds
+   * that a reading has not begun until you scroll — which is right for *scrolling
+   * past* the first paragraph and wrong for *pressing the button*. Pressing it is
+   * the decision; the file should be showing the first thing your prose talks
+   * about by the time you look left.
+   *
+   * The block is scrolled, not the chip: putting one sentence at the line and its
+   * paragraph half off the top is the same mistake `alignReading` already avoids.
+   */
+  function startAtFirstStop() {
+    if (!body || !stops.length) return;
+    const block = stopOwner.get(stops[0]) ?? stops[0];
+    const delta = block.getBoundingClientRect().top - triggerY();
+    // +2, so it lands just *past* the line and the stop registers.
+    body.scrollTo({ top: body.scrollTop + delta + 2, behavior: "smooth" });
+    // And select it outright rather than waiting for the scroll to say so: a
+    // smooth scroll of nearly zero fires no event at all, and the reading would
+    // open with the band in place and the code pane still at rest.
+    applyStop(0);
   }
 
   // Re-measure whenever the content, the mode or the window changes.

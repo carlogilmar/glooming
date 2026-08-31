@@ -58,6 +58,7 @@
     // A different file is a different boundary; an isolate held across the
     // switch would be answering a question about a module you have left.
     isolated = null;
+    only = null;
     const off = setTimeout(() => (arriving = false), 900);
     return () => clearTimeout(off);
   });
@@ -90,12 +91,23 @@
    */
   let isolated = $state<string | null>(null);
 
+  /**
+   * The mirror: a local function, isolating the boundary on *what it touches*.
+   *
+   * Clicking a name on the right asks "where is this used"; clicking one on the
+   * left asks "what does this reach", and both are questions you have while
+   * reading a function. Only one can be open — they are two answers to the same
+   * picture, and holding both would draw a boundary that answers neither.
+   */
+  let only = $state<string | null>(null);
+
   const diagram = $derived(
     module && module.deps.length
       ? renderDeps(
           seedDepsBlock(module).split("\n").slice(1, -2).join("\n"),
           module,
           isolated,
+          only,
         )
       : "",
   );
@@ -134,8 +146,21 @@
   function onClick(e: MouseEvent) {
     const t = e.target as HTMLElement;
 
-    // A local function in the boundary, or a row in the surface: focus it in the
-    // code, which is right there and never covered.
+    // A local function *in the boundary* does two things at once, and both are
+    // what you meant by clicking it: the code selects it, and the picture narrows
+    // to what it reaches. Clicking the isolated one again puts the boundary back.
+    const local = t.closest<HTMLElement>(".lgtm-deps .fn[data-fn]");
+    if (local) {
+      const key = local.dataset.fn ?? "";
+      isolated = null;
+      only = only === key ? null : key;
+      const line = parseInt(local.dataset.line ?? "0", 10);
+      if (line > 0) onselect?.(local.dataset.sig ?? "", line);
+      return;
+    }
+
+    // A row in the surface: focus it in the code, which is right there and never
+    // covered.
     const own = t.closest<HTMLElement>("[data-line]");
     if (own) {
       const line = parseInt(own.dataset.line ?? "0", 10);
@@ -157,10 +182,14 @@
       // button and clicking the isolated function again. Scoped to the diagram
       // so a click on the hint below it — or on the jump button in it — is not
       // silently an exit.
-      if (isolated && t.closest(".reachwrap")) isolated = null;
+      if ((isolated || only) && t.closest(".reachwrap")) {
+        isolated = null;
+        only = null;
+      }
       return;
     }
     const to = rfn.dataset.to ?? "";
+    only = null;
     isolated = isolated === to ? null : to;
   }
 </script>
@@ -280,16 +309,28 @@
            is why this is not wrapped again here. -->
       <div class="reachwrap">
         {@html diagram}
-        {#if isolated}
+        {#if isolated || only}
           <!-- The way out, on the picture rather than under it: the diagram is
                where you are looking, and an exit you have to go and find is the
                reason a filtered view feels like a trap. -->
-          <button class="isoclose" onclick={() => (isolated = null)} title="Show the whole boundary">
+          <button
+            class="isoclose"
+            onclick={() => {
+              isolated = null;
+              only = null;
+            }}
+            title="Show the whole boundary"
+          >
             <i>×</i> whole boundary
           </button>
         {/if}
       </div>
-      {#if isolated}
+      {#if only}
+        <p class="hint act">
+          <b>{only}</b>
+          <span>— showing only what it reaches</span>
+        </p>
+      {:else if isolated}
         <p class="hint act">
           <b>{isolated}</b>
           <span>— showing only what calls it</span>

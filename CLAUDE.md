@@ -94,9 +94,24 @@ layout every Mac user already knows, rather than the bundler's slightly wide 660
 default. `minimumSystemVersion` is 11.0, which is the floor for the `color-mix()`
 and `:has()` this UI leans on in WebKit.
 
-A **background image** is the one thing still missing (`dmg.background` takes a
-png/jpg): a 620×420 plate with an arrow between the two icons is the usual finish,
-and it is a drawing job rather than a code one. The app icon is generated from `app-icon.png`
+**The background is generated, not drawn.** `scripts/dmg-background.mjs` writes
+`src-tauri/dmg-background.png` — 620×420, ~9KB — and it has no dependencies,
+because macOS ships neither ImageMagick nor PIL: it fills a Float64 buffer, then
+emits the PNG itself with `zlib.deflateSync` and four chunks. The alternative was a
+binary nobody can diff; this way changing the palette is changing a hex string.
+
+What it draws is the app's own picture: an ink wash in `--gloom-bg`, the **strata**
+from `shape.ts` at 7% (thickness ∝ √lines, the same arithmetic), faded out through
+the middle so the two icons sit on quiet ground, and a dashed teal arrow from the
+app to the Applications alias. **Its geometry is tied to `bundle.macOS.dmg`** — the
+arrow runs between x=165 and x=455 at y=210 because that is where the config puts
+the icons. Move one and you must move the other, or the arrow points at nothing.
+
+Regenerate after a palette change:
+
+```bash
+node scripts/dmg-background.mjs
+``` The app icon is generated from `app-icon.png`
 at the repo root (`pnpm tauri icon`, no arguments needed — that's the default
 input name). Mobile icon output is deleted on purpose; this is a desktop app.
 
@@ -902,6 +917,25 @@ already hints at the first.
 overlay reached by `⌥R`, on the argument that it needs 2.6–6.4× the room a list
 does. In one scrolling column that argument evaporates: room is free below the
 fold. A map you have to remember to open is a map you do not use.
+
+**Isolating works from both sides.** Clicking an outside function asks *where is
+this used*; clicking a **local** one asks *what does this touch* — the boundary
+holds that one function and the outside column holds only what it reaches. Both are
+questions you have while reading a function, and only one can be open at a time:
+they are two answers to the same picture, and holding both would draw a boundary
+that answers neither. A left-hand click also selects the function in the code,
+because that is the other half of what you meant by clicking it.
+
+**Narrowing lights the lines — and everything else it drew.** The travelling dash
+only runs on `svg.focusing .edge.lit`, so an isolated view drew its connections
+*dead*: the one animation that says which way a call goes disappeared exactly when
+the picture was down to the calls you had asked about. Isolating is a selection, so
+it wears the selected state — `focusing` on the svg, `lit` on every edge.
+
+But `focusing` also dims every outside name to 30% and brings back only the lit
+ones, which is right when one function is *hovered* inside a full picture and wrong
+here: everything still drawn **is** the answer. So a narrowed render marks its
+`.fn` and `.rfn` groups `lit` too, and the names stay at full ink.
 
 **Clicking an outside function isolates the boundary on it.** The module is
 redrawn with **only the functions that call it** inside, and only the lines that
@@ -1829,6 +1863,17 @@ Four rules, each of which replaced something that read worse:
   800px pane with a 120px final paragraph, 56px short. The symptom is precise and
   easy to misread: every reference works except the last one, and adding any
   paragraph after it makes the problem vanish.
+- **Entering read mode begins the reading.** At rest the note sat above the trigger
+  with nothing selected, on the grounds that a reading has not begun until you
+  scroll. That is right for *scrolling past* the first paragraph and wrong for
+  *pressing the button*: pressing it is the decision, so the code pane should be
+  showing the first thing your prose talks about by the time you look left.
+  `startAtFirstStop` scrolls the first stop's **block** to the line, not the chip —
+  putting one sentence at the trigger with its paragraph half off the top is the
+  mistake `alignReading` already avoids — and then **selects it outright** rather
+  than waiting for the scroll to say so. `applyStop` is split out of the scroll
+  handler for exactly that: a smooth scroll of nearly zero fires no scroll event at
+  all, so the reading opened with the band in place and the code pane still at rest.
 - **A lead-in *and* a tail, both measured in JS.** The trigger sits 38% down the
   pane, which on a tall window is *below* the first paragraph or two at rest —
   so the reading would open at step 2, and how far in depended on the monitor.
@@ -1904,6 +1949,14 @@ Four rules, each of which replaced something that read worse:
   back to the *first* — `alignReading` now prefers the paragraph the click was
   actually in. Table rows and tiles are still matched by name, because there is
   only ever one row per signature.
+- **The caret lands after the reference, and that needs `tick()`.** The textarea is
+  `bind:value`, so assigning `markdown` re-writes `.value` — and writing a
+  textarea's value resets its selection to 0. A `queueMicrotask` can run *before*
+  Svelte flushes that write, so the caret was set and then thrown away, and every
+  insert returned you to the top of the note. `await tick()` resolves after the DOM
+  update, which is the only moment the range sticks. A multi-line insert also
+  bounces focus, because a browser will not scroll to a caret it did not move
+  itself.
 - **`/` inserts a reference while editing** (`RefMenu.svelte`). It only opens at
   a word boundary, so `lib/my_app` and `2026/08` stay prose, and a space or a
   backtick closes it. Locating the caret in a textarea needs a hidden mirror div

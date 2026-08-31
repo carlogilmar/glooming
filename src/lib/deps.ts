@@ -92,18 +92,23 @@ const ROW = 62;
 /**
  * Draw the boundary.
  *
- * `isolate` is a `Module.name` from the outside column. When it is set, the
- * module is drawn with **only the functions that call it** inside, and only the
- * lines that reach it — the answer to "where is this used", which a full
- * boundary with two lines lit inside twelve grey rows does not really give you.
- * The layout is re-run rather than the extra rows hidden: hiding them leaves the
- * survivors at their old `y`, so the box keeps its full height and the lines
- * point into the gaps where the others used to be.
+ * Isolating narrows the picture to one question, from **either** side:
+ *
+ * - `isolate` is a `Module.name` from the outside column — *where is this used?*
+ *   The module is drawn with only the functions that call it, and only the lines
+ *   that reach it.
+ * - `only` is a local `name/arity` — *what does this touch?* The boundary holds
+ *   that one function, and the outside column holds only what it reaches.
+ *
+ * Both re-run the layout rather than hiding rows: hiding leaves the survivors at
+ * their old `y`, so the box keeps its full height and the lines point into the
+ * gaps where the others used to be.
  */
 export function renderDeps(
   body: string,
   module: ModuleInfo | null,
   isolate?: string | null,
+  only?: string | null,
 ): string {
   const deps = parseDeps(body);
   if (!deps.length) {
@@ -138,7 +143,13 @@ export function renderDeps(
           functions: d.functions.filter((fn) => `${d.module}.${fn.name}` === isolate),
         }))
         .filter((d) => d.functions.length)
-    : deps;
+    : only
+      ? // The mirror image: keep only what this one function calls, so the outside
+        // column answers the question the left-hand click asked.
+        deps
+          .map((d) => ({ ...d, functions: d.functions.filter((fn) => fn.callers.includes(only)) }))
+          .filter((d) => d.functions.length)
+      : deps;
 
   const locals = (module?.functions ?? [])
     .slice()
@@ -164,15 +175,19 @@ export function renderDeps(
       y: 0,
       pure: true,
     }))
-    .filter((f) => !callers || callers.has(f.key));
+    .filter((f) => !callers || callers.has(f.key))
+    // Isolating from the left: one function, and nothing else inside the box.
+    .filter((f) => !only || f.key === only);
 
   if (!locals.length) {
     // With an isolate set this means the block names a caller the outline does
     // not have — a stale block, or a function since renamed. Say so rather than
     // drawing an empty box.
-    return isolate
-      ? `<div class="lgtm-deps empty">Nothing in this file calls <code>${esc(isolate)}</code> any more.</div>`
-      : `<div class="lgtm-deps empty">No outline for this file, so there is nothing to draw the reach against.</div>`;
+    if (isolate)
+      return `<div class="lgtm-deps empty">Nothing in this file calls <code>${esc(isolate)}</code> any more.</div>`;
+    if (only)
+      return `<div class="lgtm-deps empty"><code>${esc(only)}</code> is not in this file any more.</div>`;
+    return `<div class="lgtm-deps empty">No outline for this file, so there is nothing to draw the reach against.</div>`;
   }
 
   const index = new Map(locals.map((f, i) => [f.key, i]));
@@ -219,6 +234,7 @@ export function renderDeps(
       // Only the lines that reach the isolated function. Keeping a caller's
       // *other* calls would put back most of what isolating removed.
       if (isolate && `${d.module}.${fn.name}` !== isolate) continue;
+      if (only && !fn.callers.includes(only)) continue;
       for (const c of fn.callers) {
         const local = locals[index.get(c) ?? -1];
         if (!local) continue;
@@ -227,6 +243,15 @@ export function renderDeps(
       }
     }
   }
+
+  /**
+   * Isolating *is* a selection, so the picture wears the selected state: the svg
+   * gets `focusing`, and every edge it drew is `lit`. Without this the isolate
+   * view drew its lines dead — the travelling dash only runs on
+   * `svg.focusing .edge.lit`, so narrowing to one question silently removed the
+   * one animation that says which way the calls go.
+   */
+  const narrowed = !!isolate || !!only;
 
   const parts: string[] = [];
 
@@ -255,7 +280,7 @@ export function renderDeps(
     const x1 = BOX.x + BOX.w;
     const c = (DOT_X - x1) * 0.55;
     parts.push(
-      `<path class="edge ${e.kind}" data-from="${esc(e.from)}" data-to="${esc(e.to)}" stroke-width="2"` +
+      `<path class="edge ${e.kind}${narrowed ? " lit" : ""}" data-from="${esc(e.from)}" data-to="${esc(e.to)}" stroke-width="2"` +
         // Every edge shares the last index: they are one gesture, drawn once the
         // things they join are all there.
         ` style="--i:${STAGGER_CAP + 1}"` +
@@ -266,7 +291,7 @@ export function renderDeps(
     // carry that, and a static picture with no direction is the thing this whole
     // block exists to avoid.
     parts.push(
-      `<path class="head ${e.kind}" data-from="${esc(e.from)}" data-to="${esc(e.to)}"` +
+      `<path class="head ${e.kind}${narrowed ? " lit" : ""}" data-from="${esc(e.from)}" data-to="${esc(e.to)}"` +
         ` d="M${DOT_X - 9},${e.y2 - 4} L${DOT_X - 2},${e.y2} L${DOT_X - 9},${e.y2 + 4} Z"/>`,
     );
   }
@@ -281,7 +306,7 @@ export function renderDeps(
       // against `focus.sig`. They are the same string for every function without
       // default arguments, which is why one field did the work of two until one
       // turned up that had them.
-      `<g class="fn${f.pure ? " pure" : ""}" ${fi} data-fn="${esc(f.key)}" data-sig="${esc(f.sig)}" data-line="${f.line}" role="button" tabindex="0">`,
+      `<g class="fn${f.pure ? " pure" : ""}${f.key === only ? " on" : ""}${narrowed ? " lit" : ""}" ${fi} data-fn="${esc(f.key)}" data-sig="${esc(f.sig)}" data-line="${f.line}" role="button" tabindex="0">`,
       `<rect class="fn-hit" x="${BOX.x + 6}" y="${f.y - 13}" width="${BOX.w - 12}" height="26" rx="5"/>`,
       `<text class="fn-name" x="${BOX.x + 18}" y="${f.y + 4}">${esc(f.sig)}</text>`,
       `<text class="fn-line" x="${BOX.x + BOX.w - 18}" y="${f.y + 4}" text-anchor="end">${f.line}</text>`,
@@ -308,7 +333,11 @@ export function renderDeps(
     );
     for (const fn of d.functions) {
       parts.push(
-        `<g class="rfn${`${d.module}.${fn.name}` === isolate ? " on" : ""}" ${at()} data-to="${esc(`${d.module}.${fn.name}`)}" data-callers="${esc(fn.callers.join("|"))}" role="button" tabindex="0">`,
+        // `lit` while narrowed: `svg.focusing` dims every outside name to 30% and
+        // brings back only the lit ones, which is right when one function is
+        // *hovered* inside a full picture and wrong here — everything still drawn
+        // is the answer, so everything still drawn stays legible.
+        `<g class="rfn${`${d.module}.${fn.name}` === isolate ? " on" : ""}${narrowed ? " lit" : ""}" ${at()} data-to="${esc(`${d.module}.${fn.name}`)}" data-callers="${esc(fn.callers.join("|"))}" role="button" tabindex="0">`,
         `<rect class="rfn-hit" x="${DOT_X - 8}" y="${(fn.y ?? 0) - 11}" width="330" height="22" rx="5"/>`,
         `<circle class="dot ${d.kind}" cx="${DOT_X}" cy="${fn.y ?? 0}" r="3"/>`,
         // The hit on arrival. A ring of its own rather than growing the dot,
@@ -327,14 +356,19 @@ export function renderDeps(
     ? `${esc(isolate)} · called by ${locals.length} ` +
       `${locals.length === 1 ? "function" : "functions"} here · ` +
       `${edges.length} ${edges.length === 1 ? "call site" : "call sites"}`
-    : `${reaching} of ${locals.length} ${locals.length === 1 ? "function reaches" : "functions reach"} outside · ` +
+    : only
+      ? `${esc(only)} · reaches ${view.length} ` +
+        `${view.length === 1 ? "module" : "modules"} · ` +
+        `${edges.length} ${edges.length === 1 ? "call site" : "call sites"}`
+      : `${reaching} of ${locals.length} ${locals.length === 1 ? "function reaches" : "functions reach"} outside · ` +
       `${view.length} ${view.length === 1 ? "module" : "modules"} · ` +
       `${edges.length} ${edges.length === 1 ? "call site" : "call sites"}`;
 
   return (
     `<div class="lgtm-deps" data-rest="${esc(rest)}">` +
     `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img"` +
-    ` aria-label="What ${esc(module?.name ?? "this module")} reaches outside itself">${parts.join("")}</svg>` +
+    ` aria-label="What ${esc(module?.name ?? "this module")} reaches outside itself"` +
+    `${narrowed ? ' class="focusing"' : ""}>${parts.join("")}</svg>` +
     `<div class="readout"><span class="muted">${esc(rest)}</span></div>` +
     `</div>`
   );

@@ -122,8 +122,9 @@ pnpm tauri build
 Produces, under `src-tauri/target/release/bundle/`:
 
 - `macos/Glooming.app` — drag to `/Applications`
-- `dmg/Glooming_0.1.0_aarch64.dmg` — the installer, which opens as the usual
-  drag-the-app-onto-Applications window
+- `dmg/Glooming_0.1.0_aarch64.dmg` — the installer: the usual
+  drag-the-app-onto-Applications window, on a generated backdrop
+  (`node scripts/dmg-background.mjs` rebuilds it)
 
 The build is unsigned, so the first launch needs **right-click → Open** (or
 `xattr -cr /Applications/Glooming.app`) to get past Gatekeeper.
