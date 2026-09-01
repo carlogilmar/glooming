@@ -23,11 +23,23 @@ import { writeFileSync } from "node:fs";
 const W = 620;
 const H = 420;
 
-/** The gloom palette, as the app defines it. */
-const INK = [0x12, 0x36, 0x34];       // --gloom-bg
-const INK_DEEP = [0x0b, 0x24, 0x22];  // a shade under it, for the floor
-const TEAL = [0x5f, 0xd6, 0xc4];      // --gloom
-const PAPER = [0xf6, 0xfa, 0xf9];     // --gloom-ink
+/**
+ * Light, and that is not a preference.
+ *
+ * Finder draws the icon labels — "Glooming", "Applications" — in black, and gives
+ * no way to change them: the view options in a `.DS_Store` cover text *size* and
+ * label position, never colour. So the first version of this, an ink plate in
+ * `--gloom-bg`, put black text on a near-black ground and the two words under the
+ * icons were unreadable.
+ *
+ * The palette therefore inverts: warm paper for the ground, the deep teal
+ * (`--gloom-deep`, the on-paper token the app added for exactly this reason) for
+ * everything drawn on it. Same identity, legible labels.
+ */
+const PAPER = [0xfa, 0xf9, 0xf5];       // --doc-bg
+const PAPER_LOW = [0xef, 0xec, 0xe2];   // a shade under it, for the floor
+const TEAL = [0x0f, 0x76, 0x6e];        // --gloom-deep
+const INK = [0x14, 0x16, 0x1a];         // --fg, for the faintest shadows
 
 const px = new Float64Array(W * H * 3);
 
@@ -43,10 +55,10 @@ function paint(x, y, [r, g, b], a = 1) {
   px[i + 2] = lerp(px[i + 2], b, a);
 }
 
-// ---- the ground: a vertical wash, ink at the top, deeper at the floor -------
+// ---- the ground: a vertical wash, paper at the top, a shade lower at the floor
 for (let y = 0; y < H; y++) {
   const t = y / (H - 1);
-  const c = [0, 1, 2].map((k) => lerp(INK[k], INK_DEEP[k], t * t));
+  const c = [0, 1, 2].map((k) => lerp(PAPER[k], PAPER_LOW[k], t * t));
   for (let x = 0; x < W; x++) paint(x, y, c, 1);
 }
 
@@ -67,7 +79,7 @@ for (const l of LINES) {
       // Fade the bands out towards the middle, so the two icons sit on quiet
       // ground and the strata read as texture rather than as content.
       const mid = 1 - Math.abs(x - W / 2) / (W / 2);
-      paint(x, y, TEAL, 0.07 * (1 - mid * 0.75));
+      paint(x, y, TEAL, 0.09 * (1 - mid * 0.75));
     }
   }
   y0 += h + GAP;
@@ -83,7 +95,7 @@ for (let x = FROM; x <= TO; x++) {
   const edge = Math.min(t, 1 - t) * 4;
   const on = Math.floor((x - FROM) / 7) % 2 === 0;
   if (!on) continue;
-  for (let d = -1; d <= 1; d++) paint(x, Y + d, TEAL, 0.55 * clamp(edge) * (d === 0 ? 1 : 0.5));
+  for (let d = -1; d <= 1; d++) paint(x, Y + d, TEAL, 0.6 * clamp(edge) * (d === 0 ? 1 : 0.5));
 }
 // the head
 for (let k = 0; k < 14; k++) {
@@ -96,11 +108,13 @@ for (let k = 0; k < 14; k++) {
 }
 
 // ---- two hairline plinths, so the icons sit on something -------------------
+// Under the labels rather than through them: Finder puts the name at about
+// +42px from the icon's centre, and a line across a word is worse than no line.
 for (const cx of [165, 455]) {
   for (let x = cx - 62; x <= cx + 62; x++) {
     const t = 1 - Math.abs(x - cx) / 62;
-    paint(x, Y + 74, PAPER, 0.16 * t);
-    paint(x, Y + 75, PAPER, 0.08 * t);
+    paint(x, Y + 82, INK, 0.1 * t);
+    paint(x, Y + 83, INK, 0.05 * t);
   }
 }
 

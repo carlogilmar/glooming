@@ -100,10 +100,21 @@ because macOS ships neither ImageMagick nor PIL: it fills a Float64 buffer, then
 emits the PNG itself with `zlib.deflateSync` and four chunks. The alternative was a
 binary nobody can diff; this way changing the palette is changing a hex string.
 
-What it draws is the app's own picture: an ink wash in `--gloom-bg`, the **strata**
-from `shape.ts` at 7% (thickness ∝ √lines, the same arithmetic), faded out through
-the middle so the two icons sit on quiet ground, and a dashed teal arrow from the
-app to the Applications alias. **Its geometry is tied to `bundle.macOS.dmg`** — the
+**It is light, and that is not a preference.** Finder draws the icon labels —
+*Glooming*, *Applications* — in black, and gives no way to change them: a
+`.DS_Store`'s view options cover text size and label position, never colour. The
+first version was an ink plate in `--gloom-bg`, which put black text on a near-black
+ground and made both words unreadable. So the palette inverts: warm paper for the
+ground, `--gloom-deep` (the on-paper teal the app already needed) for everything
+drawn on it. Measured across the whole label band, the darkest pixel still gives
+black text **17.3:1**.
+
+What it draws is the app's own picture: the **strata** from `shape.ts` at 9%
+(thickness ∝ √lines, the same arithmetic), faded out through the middle so the two
+icons sit on quiet ground, and a dashed teal arrow from the app to the Applications
+alias. The plinths sit *below* the labels rather than through them — Finder puts a
+name about 42px under an icon's centre, and a line across a word is worse than no
+line. **Its geometry is tied to `bundle.macOS.dmg`** — the
 arrow runs between x=165 and x=455 at y=210 because that is where the config puts
 the icons. Move one and you must move the other, or the arrow points at nothing.
 
