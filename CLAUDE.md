@@ -538,6 +538,45 @@ tagged with `data-path` by one helper in `markdownit.ts` rather than by threadin
 a path through six signatures — which is safe only because each of them returns a
 string starting with `<div`.
 
+**Arriving in a file washes the whole pane, not just the header.** Lighting the
+header points at where the filename lives, which is the right answer to *which
+file* — but in read mode the doc is driving and your eyes are on the prose, so a
+32px strip changing colour at the edge of vision is easy to scroll straight past.
+The event being announced is that everything under it is a different file now, so
+the announcement covers everything under it.
+
+`.stage` carries it, in two layers, exactly as the gloom band's greeting does: a
+**sweep** of `--read` gold says something happened, and a brief **lift** under it
+keeps the pane from looking unlit while the sweep is still at the top edge. On
+read mode's near-black Nocturne a flat wash is a couple of points of luminance —
+invisible, which is the lesson the band already paid for. It travels **down**,
+not across, because the gutter and the source arrive top-down on the same mount
+and one direction reads as a single gesture where two read as two things at once.
+`-120%` to `320%` of a 45%-tall band is fully off one edge to fully off the other,
+computed rather than eyeballed. 0.18s of delay, so it is the *consequence* of the
+header lighting.
+
+**`.stage` must clip it, and that is not optional — it shipped broken.** At both
+ends the band is entirely *outside* the box it decorates, so with nothing
+clipping it, it swept across the pane header, the app header and the title strip
+on the way past. Far worse than the paint: the overflow gave `.app` scrollable
+height, and `.app` is `overflow: hidden` — which clips but still makes a scroll
+container, and the browser scrolls one of those to reveal a focused or
+`scrollIntoView`-ed descendant. So selecting anything scrolled the whole window
+up and put the app header **behind the traffic lights**, while the footer changed
+width as a scrollbar came and went. One missing `overflow` produced three
+symptoms, none of which looked like a missing `overflow`.
+
+`clip`, not `hidden`: `hidden` would make the stage itself a scroll container,
+which is the same bug one level down. Both sweeps that predate this one clip
+themselves (`.gloombar`, `.masthead`), which is why neither had ever shown it.
+
+`scripts/motion-audit.py` now enforces it: **a keyframe that translates more than
+100% of its own size travels outside its box, so whatever hosts it must declare
+`overflow`.** Verified by removing the clip and watching it fail. No gate is needed: `CodePane` is keyed on the path, so a mount is
+a new file. Under reduced motion the sweep hands its job to the lift and stops
+travelling.
+
 **Crossing a file is a different transition from moving within one.** The 620ms
 crossfade — outgoing ranges lingering under incoming ones — is what makes a jump
 read as a connection instead of a cut. Across two different files there is
@@ -1801,6 +1840,35 @@ the third of them.
 
 **The font stepper is last, as in the code pane.** The same control in the same
 place on both sides of the window; it had drifted into the middle of this one.
+
+**The note can leave: `Copy` and `Save…`.** It is markdown and nothing else,
+which was always the point — readable as plain text anywhere, and it survives
+being pasted into a PR comment. Both hand over **exactly** what is in the editor:
+no front matter, no generated title, nothing added on the way out. What you would
+have selected and copied by hand is what you get, which is the only version of
+this that keeps "the markdown IS the data" true.
+
+They sit before the mode toggle: `Preview`/`Edit` and the stepper are about
+looking at the note, these two are about taking it somewhere. The confirmation
+**replaces** them for 1.6s rather than sitting beside them — a row that grows by
+a word every time you copy would shift the controls next to it — and it lands on
+the control, not in a toast, which is the call the branch chip already made.
+
+**Saving goes through `export_note`, not `tauri-plugin-fs`.** The plugin would put
+a general "write files" capability into the app — with a scope to get wrong — to
+serve one gesture whose destination the user has already named in a native dialog.
+The command writes that text to that path and can do nothing else. It is the only
+place lgtm writes anything outside its own database, and the rule it does not
+break is the important one: **it never writes into a repository it read from.**
+`dialog:allow-save` is the only capability added.
+
+`exportFilename` is its own module because a gloom is named as *prose* —
+`Accounts — the write path` — and a filename is not. Diacritics are folded rather
+than dropped (`Añadir usuario` is `anadir-usuario`, not `a-adir-usuario`, which is
+what stripping non-ASCII without decomposing first gives you), the stem is capped
+at 60 characters, and a name that survives none of it falls back to `gloom.md`.
+The dialog is where the user names it anyway, so the suggestion only has to be
+reasonable.
 
 ### The two mode toggles are keys as well as buttons
 

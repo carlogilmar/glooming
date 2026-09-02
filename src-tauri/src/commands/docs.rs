@@ -198,6 +198,39 @@ pub fn block_for(kind: String, path: String, outline: Outline) -> AppResult<Stri
 
 /// A whole reading in one payload: the doc, and every file it covers with its
 /// source, outline and staleness.
+/// Write a note's markdown to a path the user picked in the save dialog.
+///
+/// A single-purpose command rather than `tauri-plugin-fs`, deliberately. The
+/// plugin would put a general "write files" capability into the app — with a
+/// scope to get wrong — to serve one gesture whose destination the user has
+/// already named in a native dialog. This writes that text to that path and can
+/// do nothing else.
+///
+/// It is also the only place lgtm writes anything outside its own database. The
+/// rule it does not break: **it never writes into a repository it read from.**
+/// The path comes from the dialog, the content is the note, and no source file
+/// is touched.
+#[tauri::command]
+pub fn export_note(path: String, markdown: String) -> AppResult<String> {
+    let path = normalize_path(&path);
+    let p = Path::new(&path);
+
+    // A missing parent is the one failure worth naming: the dialog can return a
+    // path under a directory that has since gone, and `io error: No such file or
+    // directory` does not say which part is missing.
+    if let Some(dir) = p.parent() {
+        if !dir.as_os_str().is_empty() && !dir.exists() {
+            return Err(crate::error::AppError::BadInput(format!(
+                "{} does not exist",
+                dir.display()
+            )));
+        }
+    }
+
+    std::fs::write(p, markdown)?;
+    Ok(path)
+}
+
 #[tauri::command]
 pub async fn open_reading(state: State<'_, AppState>, id: i64) -> AppResult<Reading> {
     build_reading(&state, id).await
@@ -359,5 +392,51 @@ mod branch_tests {
     fn a_file_outside_git_is_not_refused() {
         let d = doc("/tmp/a.ex", Some("main"));
         assert!(branch_mismatch(&d, Path::new("/tmp/definitely/not/a/repo/b.ex")).is_none());
+    }
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::export_note;
+
+    #[test]
+    fn writes_the_markdown_verbatim() {
+        let dir = std::env::temp_dir().join(format!("lgtm-export-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let file = dir.join("accounts.md");
+
+        // Exactly what is in the note, byte for byte. The whole point of the
+        // markdown being the data is that it travels unchanged — no front
+        // matter, no generated title, nothing added on the way out.
+        let md = "# MyApp.Accounts\n\n> Reads and writes.\n\n```lgtm:stats\nlines: 42\n```\n";
+        let out = export_note(file.to_string_lossy().into(), md.into()).expect("writes");
+
+        assert_eq!(std::fs::read_to_string(&out).expect("reads"), md);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_missing_directory_says_which_one() {
+        let missing = std::env::temp_dir().join("lgtm-no-such-dir-9f3a").join("x.md");
+        let err = export_note(missing.to_string_lossy().into(), "x".into())
+            .expect_err("refuses");
+        let msg = err.to_string();
+        assert!(msg.contains("lgtm-no-such-dir-9f3a"), "got: {msg}");
+        assert!(msg.contains("does not exist"), "got: {msg}");
+    }
+
+    /// Overwriting is the dialog's decision, not ours: the user has already been
+    /// asked, and refusing here would make "save again" fail.
+    #[test]
+    fn writing_twice_replaces_the_file() {
+        let dir = std::env::temp_dir().join(format!("lgtm-export2-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let file = dir.join("note.md");
+        let p: String = file.to_string_lossy().into();
+
+        export_note(p.clone(), "first".into()).expect("writes");
+        export_note(p.clone(), "second".into()).expect("writes again");
+        assert_eq!(std::fs::read_to_string(&file).expect("reads"), "second");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

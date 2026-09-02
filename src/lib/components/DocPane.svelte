@@ -8,12 +8,16 @@
   import { focus } from "$lib/stores/focus.svelte";
   import { byPath, hasModules, moduleOf, origin as originOf, vocabulary } from "$lib/fileset";
   import * as ipc from "$lib/ipc";
+  import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+  import { save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { blockTargets, stillOpen, type BlockKind } from "$lib/slash";
+  import { exportFilename } from "$lib/exporting";
   import type { ReadingFile } from "$lib/ipc";
 
   let {
     markdown = $bindable(""),
     docId = null,
+    title = "",
     files = [],
     current = null,
     dirty = false,
@@ -26,6 +30,8 @@
     markdown: string;
     /** Which gloom this is, so the split can be remembered per gloom. */
     docId: number | null;
+    /** The gloom's name — what an exported file is called by default. */
+    title: string;
     /** Every file the reading covers — references may point into any of them. */
     files: ReadingFile[];
     /** The file on screen in the code pane. */
@@ -130,6 +136,49 @@
   /** The file a clicked element belongs to — every block carries `data-path`. */
   function ownerOf(el: HTMLElement): string | null {
     return el.closest<HTMLElement>("[data-path]")?.dataset.path ?? current;
+  }
+
+  // ---- taking the note elsewhere ------------------------------------------
+  //
+  // The note is markdown and nothing else, which was always the point: it is
+  // readable as plain text anywhere, and it survives being pasted into a PR
+  // comment. Both of these hand over exactly what is in the editor — no front
+  // matter, no generated title, nothing added on the way out. What you would
+  // have copied by hand is what you get.
+
+  let took = $state("");
+  let tookTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Confirm on the control itself. A toast for "copied" is louder than the
+   *  thing it confirms — the same call the branch chip already made. */
+  function confirmTook(msg: string) {
+    took = msg;
+    if (tookTimer) clearTimeout(tookTimer);
+    tookTimer = setTimeout(() => (took = ""), 1600);
+  }
+
+  async function copyNote() {
+    try {
+      await writeText(markdown);
+      confirmTook("copied ✓");
+    } catch {
+      /* no clipboard in a plain browser — nothing worth interrupting for */
+    }
+  }
+
+  async function exportNote() {
+    try {
+      const path = await saveDialog({
+        defaultPath: exportFilename(title),
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+      });
+      // Cancelling a save dialog is an answer, not a failure.
+      if (!path) return;
+      const written = await ipc.exportNote(path, markdown);
+      confirmTook(`saved ${written.split("/").pop()} ✓`);
+    } catch (e) {
+      confirmTook(String(e));
+    }
   }
 
   // Scales the prose only — the blocks are data displays, not text, and keep
@@ -1264,6 +1313,24 @@
     {/if}
     {#if note}<span class="note">{note}</span>{/if}
     <span class="spacer"></span>
+    <!-- The note is markdown, so it can just leave. Copy is the 90% case — a
+         notes app, a PR comment — and Save… is for keeping it. Both hand over
+         exactly what is in the editor.
+
+         They sit before the mode toggle rather than after it: Preview/Edit and
+         the stepper are about looking at the note, these two are about taking it
+         somewhere, and the confirmation reads left-to-right into the gap the
+         spacer leaves. -->
+    {#if took}
+      <span class="took">{took}</span>
+    {:else}
+      <button class="btn icon" onclick={copyNote} title="Copy this note's markdown">
+        Copy
+      </button>
+      <button class="btn icon" onclick={exportNote} title="Save this note as a .md file">
+        Save…
+      </button>
+    {/if}
     <!-- One button, not two. You are always in exactly one of the two modes, so a
          segmented control spent half its width telling you where you already are.
          The label is what the click DOES. -->
@@ -1494,6 +1561,22 @@
   }
   /* The only control here that reports a *problem*, so it is filled: the others
      are things you may do, this is a thing you should. */
+  /* The confirmation replaces the two buttons rather than sitting beside them:
+     it is the answer to the thing you just clicked, and a row that grows by a
+     word every time you copy would shift the controls beside it. */
+  .took {
+    font-size: 11px;
+    color: var(--read);
+    font-weight: 600;
+    white-space: nowrap;
+    animation: tookIn var(--fast) var(--ease-out) both;
+  }
+  @keyframes tookIn {
+    from {
+      opacity: 0;
+    }
+  }
+
   .panehead .spacer + * {
     margin-left: 2px;
   }

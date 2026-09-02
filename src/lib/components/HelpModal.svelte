@@ -143,6 +143,19 @@
       rows: [
         { action: "Preview / Edit", what: "Rendered blocks, or the raw markdown source" },
         {
+          action: "Copy",
+          what:
+            "The note's markdown on the clipboard, exactly as written — no front matter, nothing " +
+            "generated. It is plain markdown, so it reads correctly pasted into a PR comment or a " +
+            "notes app",
+        },
+        {
+          action: "Save…",
+          what:
+            "The same markdown as a .md file, named after the gloom. lgtm writes nothing else " +
+            "anywhere: your source files are never touched",
+        },
+        {
           action: "A− / A+",
           what:
             "Text size for both Preview and Edit, kept separately from the code pane's. Headings, " +

@@ -1100,6 +1100,108 @@
     position: relative;
     display: flex;
     flex-direction: column;
+    /* Clips the arrival sweep to the code area. This is not optional and it
+       shipped broken once: the sweep is a 45%-tall band translated from -120% to
+       320%, so at both ends it is entirely OUTSIDE this box — and with nothing
+       clipping it, it swept across the pane header, the app header and the title
+       strip on its way past, which is not what it is announcing.
+
+       Worse than the paint: the overflow gave `.app` scrollable height. `.app`
+       is `overflow: hidden`, which clips but still makes a scroll container —
+       and a container with hidden overflow is still scrolled by the browser to
+       reveal a focused or `scrollIntoView`-ed descendant. So selecting anything
+       scrolled the whole window up and put the app header behind the traffic
+       lights, and the footer changed width as the scrollbar came and went. One
+       missing `overflow` produced three symptoms, none of which looked like a
+       missing `overflow`.
+
+       `clip` rather than `hidden`, deliberately: `hidden` would make THIS a
+       scroll container, which is the same bug one level down. `clip` cannot be
+       scrolled by anything. Nothing here is ever positioned outside the stage —
+       the focus pill is anchored 16px up from its bottom, and the search bar and
+       footer live outside it — so this cannot repeat the file strip's bug of
+       clipping something that renders every time and is visible never. */
+    overflow: clip;
+  }
+
+  /* Arriving in a file washes the WHOLE pane, not just the header.
+     Lighting the header points at where the filename lives, which is the right
+     answer to "which file" — but in read mode, where the doc is driving and your
+     eyes are on the prose, a 32px strip changing colour at the edge of vision is
+     easy to scroll straight past. The event being announced is that everything
+     under it is now a different file, so the announcement covers everything
+     under it.
+
+     Two layers, exactly as the gloom band's greeting: a sweep says something
+     happened, and a brief lift under it keeps the pane from looking unlit while
+     the sweep is still at the top edge. On read mode's near-black Nocturne a
+     flat wash is a couple of points of luminance — invisible, which is the
+     lesson the band already paid for.
+
+     It travels DOWN, not across: the gutter and the source arrive top-down on
+     the same mount, so one direction reads as a single gesture where two would
+     read as two things happening at once.
+
+     0.18s of delay, so it is the *consequence* of the header lighting rather
+     than a second event — the arrival-ring argument, reused. No gate: `CodePane`
+     is keyed on the path, so a mount *is* a new file. */
+  .stage::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 45%;
+    z-index: 2;
+    pointer-events: none;
+    background: linear-gradient(
+      180deg,
+      transparent,
+      color-mix(in srgb, var(--read) 30%, transparent),
+      transparent
+    );
+    animation: paneSweep var(--greet) var(--ease-in-out) 0.18s both;
+  }
+  .stage::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background: color-mix(in srgb, var(--read) 9%, transparent);
+    animation: paneLift var(--greet) var(--ease-in-out) 0.18s both;
+  }
+  /* -120% to 320% of a 45%-tall band: fully off the top edge to fully off the
+     bottom, computed rather than eyeballed — the same arithmetic the band uses
+     sideways. */
+  @keyframes paneSweep {
+    from {
+      transform: translateY(-120%);
+      opacity: 0;
+    }
+    18%,
+    82% {
+      opacity: 1;
+    }
+    to {
+      transform: translateY(320%);
+      opacity: 0;
+    }
+  }
+  /* Up quickly, down slowly. A symmetric fade is a flash; a long tail is
+     something settling, which is what arriving in a file is. 9% rather than the
+     band's 14%: this one has code under it, and the code is the thing you are
+     about to read. */
+  @keyframes paneLift {
+    from {
+      opacity: 0;
+    }
+    22% {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
   }
   .panebody {
     flex: 1;
@@ -1178,6 +1280,13 @@
        for a finite fade covers it, and there is nothing here that travels. */
     .panehead {
       animation: fileArrive var(--greet) ease both;
+    }
+    /* The sweep hands its job to the lift: the pane still announces the file in
+       read mode's own gold, it just does not travel to do it. Deleting it would
+       take the signal with it, which is worse than the motion was. */
+    .stage::before {
+      animation: paneLift var(--greet) ease 0.18s both;
+      height: 100%;
     }
   }
 

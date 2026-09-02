@@ -1,8 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window. Note core:window:allow-start-dragging: the window is titleBarStyle Overlay, so the webview covers the native title bar and there is no native strip to grab — dragging goes through data-tauri-drag-region, which calls startDragging(). That is NOT part of core:window:default (a read-only query set), so without it the window cannot be moved at all.",
-  "windows": ["main"],
+  "description": "Main window. Note core:window:allow-start-dragging: the window is titleBarStyle Overlay, so the webview covers the native title bar and there is no native strip to grab \u2014 dragging goes through data-tauri-drag-region, which calls startDragging(). That is NOT part of core:window:default (a read-only query set), so without it the window cannot be moved at all. dialog:allow-save is for exporting a note to a .md file \u2014 the write itself goes through the app's own export_note command rather than tauri-plugin-fs, so there is no general file-write capability in the app.",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
@@ -10,6 +12,7 @@
     "opener:allow-open-url",
     "dialog:allow-open",
     "dialog:allow-confirm",
-    "clipboard-manager:allow-write-text"
+    "clipboard-manager:allow-write-text",
+    "dialog:allow-save"
   ]
 }

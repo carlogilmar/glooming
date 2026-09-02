@@ -63,6 +63,7 @@ for root, _, fs in os.walk('src'):
             continue
         p = os.path.join(root, f)
         s = open(p).read()
+        files[p] = s
         blocks = rm_blocks(s)
         inside = lambda i: any(a <= i < b for a, b in blocks)
 
@@ -131,4 +132,66 @@ gaps = [(p, n, sel) for p, n, sel in live if sel not in covered.get(p, set())]
 for p, n, sel in gaps:
     print(f"  GAP  {n:11} {sel[:70]}   {os.path.basename(p)}")
 print(f"\n{len(live)} animations, {len(gaps)} without an exactly-matching reduced-motion rule")
-sys.exit(1 if gaps else 0)
+
+# ---------------------------------------------------------------------------
+# An animation that leaves its own box needs a host that clips.
+#
+# This shipped, and it produced three symptoms none of which looked like the
+# cause. The code pane's arrival sweep is a 45%-tall band translated from -120%
+# to 320%, so at both ends it is entirely outside the element it decorates. With
+# nothing clipping it, it swept over the pane header, the app header and the
+# title strip — and, far worse, it gave `.app` scrollable height. `.app` is
+# `overflow: hidden`, which clips but still makes a scroll container, and the
+# browser scrolls one of those to reveal a focused or `scrollIntoView`-ed
+# descendant. So selecting a function scrolled the whole window up and put the
+# app header behind the traffic lights, while the footer changed width as a
+# scrollbar came and went.
+#
+# The rule: a keyframe that translates more than 100% of its own size travels
+# outside its box, so whatever hosts it must declare `overflow`. Both sweeps
+# that predate this check clip themselves (`.gloombar`, `.masthead`); the one
+# that did not was the one that broke.
+def strip_comments(t):
+    return re.sub(r'/\*.*?\*/', '', t, flags=re.S)
+
+leaks = []
+for p, raw in files.items():
+    css = strip_comments(raw.split('<style>', 1)[1] if '<style>' in raw else raw)
+
+    far = set()
+    for m in re.finditer(r'@keyframes\s+([\w-]+)\s*\{((?:[^{}]|\{[^{}]*\})*)\}', css):
+        pcts = [abs(float(x)) for x in re.findall(r'translate[XY]?\(\s*(-?[\d.]+)%', m.group(2))]
+        if pcts and max(pcts) > 100:
+            far.add(m.group(1))
+    if not far:
+        continue
+
+    for sel, decl in re.findall(r'([^{}]+)\{([^{}]*)\}', css):
+        used = [n for n in far if re.search(r'animation:[^;]*\b' + re.escape(n) + r'\b', decl)]
+        if not used:
+            continue
+        for part in sel.split(','):
+            part = part.strip()
+            if not part or part.startswith('@'):
+                continue
+            # The pseudo travels; the element it is anchored to is what must clip.
+            host = re.sub(r'::?(before|after)$', '', part).strip()
+            base = host.split()[-1] if host.split() else host
+            # `.gloombar.arriving` clips as `.gloombar` — take the first class.
+            root = re.match(r'(\.[\w-]+|[\w-]+)', base)
+            root = root.group(1) if root else base
+            clips = re.search(
+                r'(^|\})\s*[^{}]*' + re.escape(root) + r'[^{},]*\{[^{}]*overflow[^:]*:\s*(hidden|clip|auto|scroll)',
+                css,
+            )
+            if not clips:
+                leaks.append((p, used[0], part, root))
+
+for p, n, sel, root in leaks:
+    print(f"  LEAK {n:11} {sel[:52]}  {root} does not clip   {os.path.basename(p)}")
+if leaks:
+    print(f"{len(leaks)} animation(s) travel outside a box that nothing clips")
+else:
+    print("every animation that leaves its box has a host that clips")
+
+sys.exit(1 if gaps or leaks else 0)

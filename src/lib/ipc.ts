@@ -274,6 +274,17 @@ export const removeDocFile = (id: number, path: string) =>
   invoke<Reading>("remove_doc_file", { id, path });
 
 
+// ---- exporting -------------------------------------------------------------
+
+/**
+ * Write a note's markdown to a path the user picked in the save dialog.
+ *
+ * Returns the normalised path it actually wrote, so the confirmation can name
+ * the file rather than the string that was passed in.
+ */
+export const exportNote = (path: string, markdown: string) =>
+  invoke<string>("export_note", { path, markdown });
+
 // ---- projects --------------------------------------------------------------
 
 export interface Project {

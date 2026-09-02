@@ -1403,6 +1403,7 @@
             bind:this={docPane}
             bind:markdown
             docId={doc?.id ?? null}
+            title={doc?.title ?? ""}
             {files}
             current={currentPath}
             {dirty}

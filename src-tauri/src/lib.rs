@@ -38,6 +38,7 @@ pub fn run() {
             commands::docs::open_reading,
             commands::docs::add_doc_file,
             commands::docs::remove_doc_file,
+            commands::docs::export_note,
             commands::projects::open_project,
             commands::projects::recent_projects,
             commands::projects::forget_project,
