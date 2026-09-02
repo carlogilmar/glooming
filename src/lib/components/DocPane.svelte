@@ -2877,7 +2877,11 @@
     color: var(--fg-faint);
   }
 
-  /* one square per test, shaded by how much it asserts */
+  /* One square per test, marked by what its assertions CHECK — not shaded by
+     how many there are. The shade said more about the author's style than the
+     test: one `assert {:ok, %User{email: ^e}} = …` checks four things and drew
+     palest. The three colours are the tokens that already mean these things
+     elsewhere in the app. */
   :global(.lgtm-tests .strip) {
     display: flex;
     gap: 3px;
@@ -2890,21 +2894,62 @@
     display: block;
     background: var(--pub);
   }
-  :global(.lgtm-tests .strip i.a1) {
-    opacity: 0.28;
+  :global(.lgtm-tests .strip i.error) {
+    background: var(--priv);
   }
-  :global(.lgtm-tests .strip i.a2) {
-    opacity: 0.55;
+  :global(.lgtm-tests .strip i.message) {
+    background: var(--mark);
   }
-  :global(.lgtm-tests .strip i.a3) {
-    opacity: 1;
+  /* A block written before the kinds existed carries only a count, so its
+     squares say "an assertion, of some sort" and nothing more. */
+  :global(.lgtm-tests .strip i.unknown) {
+    background: var(--fg-faint);
+    opacity: 0.5;
   }
-  :global(.lgtm-tests .strip i.tagged) {
-    box-shadow: inset 0 0 0 1.5px var(--priv);
+  /* A test that asserts nothing. Hollow, like the file dot that means "your
+     prose has not mentioned this" — a gap you can see rather than a pale fill
+     that reads as merely thin. */
+  :global(.lgtm-tests .strip i.bare) {
+    background: transparent;
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--priv) 60%, transparent);
   }
   :global(.lgtm-tests .strip i.skipped) {
     background: var(--fg-faint);
     opacity: 0.35;
+  }
+
+  /* One bar per assertion on the test's own row. */
+  :global(.lgtm-tests .spine) {
+    display: flex;
+    gap: 2px;
+    flex: none;
+    align-items: center;
+  }
+  :global(.lgtm-tests .spine i) {
+    width: 3px;
+    height: 12px;
+    border-radius: 1.5px;
+    display: block;
+    background: var(--pub);
+  }
+  :global(.lgtm-tests .spine i.error) {
+    background: var(--priv);
+  }
+  :global(.lgtm-tests .spine i.message) {
+    background: var(--mark);
+  }
+  :global(.lgtm-tests .spine i.unknown) {
+    background: var(--fg-faint);
+    opacity: 0.5;
+  }
+  :global(.lgtm-tests .spine.none)::after {
+    content: "no assertions";
+    font-family: var(--sans);
+    font-size: 9px;
+    color: var(--fg-faint);
+    border: 1px dashed var(--doc-line);
+    padding: 0 4px;
+    border-radius: 3px;
   }
 
   :global(.lgtm-tests .tests) {

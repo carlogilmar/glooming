@@ -85,11 +85,27 @@ export interface SetupInfo {
   provides: string[] | null;
 }
 
+/**
+ * What an assertion checks — three kinds, because three is what the call name
+ * says for certain. `assert {:error, cs} = …` stays `assert`: the pattern is in
+ * the arguments, and a guess drawn confidently is worse than a plain mark.
+ */
+export type AssertKind = "assert" | "error" | "message";
+
+export interface Assertion {
+  line: number;
+  kind: AssertKind;
+}
+
 export interface TestCase {
   name: string;
   line: number;
   endLine: number;
+  /** `assertions.length`, kept so nothing reading the count breaks. */
   asserts: number;
+  assertions: Assertion[];
+  /** The `@tag`s above it — its own span, the way a function's `@spec` is. */
+  tagRange: Range | null;
   tags: string[];
   skipped: boolean;
 }
@@ -107,6 +123,8 @@ export interface TestInfo {
   caseTemplate: string | null;
   isAsync: boolean;
   setups: SetupInfo[];
+  /** `@moduletag :skip` — applies to every test in the file. */
+  moduleTags: string[];
   describes: Describe[];
 }
 

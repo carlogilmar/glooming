@@ -18,7 +18,7 @@
   import { theme } from "$lib/stores/theme.svelte";
   import { focus } from "$lib/stores/focus.svelte";
   import * as ipc from "$lib/ipc";
-  import type { Doc, DocSummary, OpenedFile, ReadingFile } from "$lib/ipc";
+  import type { Doc, DocSummary, OpenedFile, Range, ReadingFile } from "$lib/ipc";
 
   /**
    * A reading is a set of files, not one.
@@ -435,11 +435,39 @@
     else focus.gotoLine(line, (f?.source.split("\n").length ?? line) || line);
   }
 
-  /** Pick something in the reference sections: focus it in the code beside it. */
-  function selectFromExplore(sig: string, line: number) {
+  /**
+   * Pick something in the reference sections: focus it in the code beside it.
+   *
+   * A row that knows its own span says so, and that span is used directly. That
+   * is what a test needed: `locate` resolves a **function signature** against
+   * the outline, a test's name is not one, so it came back null and every click
+   * fell through to `gotoLine` — a one-line cursor on the `test "…" do` line,
+   * which is the bug this fixes. The parser has carried `endLine` all along.
+   *
+   * `tag` goes in the `@spec` slot, because a test's `@tag` is the same kind of
+   * thing: the contract above the block, drawn in `--mark`, selected with it but
+   * not part of its body.
+   */
+  function selectFromExplore(sig: string, line: number, span?: Range, tag?: Range | null) {
+    if (span) {
+      focus.select(sig, [span], [], tag ?? null, null);
+      return;
+    }
     const at = locate(sig, outline?.modules?.[0] ?? null);
     if (at) focus.select(sig, at.ranges, at.related, at.spec, at.doc);
     else focus.gotoLine(line, file?.source.split("\n").length ?? line);
+  }
+
+  /**
+   * Go to a line without selecting anything — a describe, or any container.
+   *
+   * The function selection is cleared first: leaving it up would keep the file
+   * dimmed to 32% around a function you are no longer looking at, while the
+   * cursor sat somewhere else entirely.
+   */
+  function cursorFromExplore(line: number) {
+    focus.clearFunction();
+    focus.gotoLine(line, file?.source.split("\n").length ?? line);
   }
 
   /** The pre-doc moment still has to feed the code pane, so it gets one entry. */
@@ -954,6 +982,7 @@
       selected={focus.sig}
       onselect={selectFromExplore}
       onjump={jumpTo}
+      oncursor={cursorFromExplore}
     />
   {/if}
 {/snippet}

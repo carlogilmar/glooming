@@ -9,13 +9,18 @@
 // So "the markdown IS the data" does not apply here. Nothing below parses a fence.
 
 import type {
+  AssertKind,
+  Assertion,
   ConfigGroup,
   Dep,
   Describe,
   FnInfo,
   ModuleInfo,
+  Outline,
+  Range,
   ReadingFile,
   Setting,
+  SetupInfo,
   TestInfo,
 } from "$lib/ipc";
 import { displaySig } from "$lib/select";
@@ -198,77 +203,124 @@ export function settingsOf(groups: ConfigGroup[]): SettingGroup[] {
 export interface TestRow {
   name: string;
   line: number;
-  asserts: number;
+  /** So clicking the row selects the whole test, not its opening line. */
+  endLine: number;
+  /** Every assertion with its line and kind — the spine, and the code gutter. */
+  assertions: Assertion[];
+  /** The `@tag`s above it, carried like a function's `@spec`. */
+  tagRange: Range | null;
   tags: string[];
   skipped: boolean;
+}
+
+/**
+ * What every test in the file starts from, stated **once**.
+ *
+ * The old view repeated the module's keys on every describe row, right under a
+ * band that had already listed them — the same fact in two places, and the
+ * repetition grew with the number of describes. So module scope is the stack,
+ * and a describe shows only its own delta.
+ */
+export interface SuiteScope {
+  /** The module-scope blocks themselves, so each one is clickable. */
+  setups: SetupInfo[];
+  keys: string[];
+  named: string[];
+  /** Something in scope contributes keys that cannot be read from here. */
+  unknown: boolean;
 }
 
 export interface DescribeGroup {
   name: string;
   line: number;
-  /** The context keys these tests can destructure, as far as they can be seen. */
-  provides: string[];
+  /** The container's span. A describe is *jumped to*, never selected — but the
+   *  end is what tells you how much of the file it covers. */
+  endLine: number;
+  /** This describe's OWN setups. Module scope is in `SuiteScope`, not here. */
+  setups: SetupInfo[];
   /**
-   * Something in scope contributes keys that cannot be read from here.
+   * What this describe adds on top of module scope.
    *
    * A **named** callback (`setup :put_user`) is defined elsewhere in the file, so
    * its keys are unknowable — and unknown is not the same as "provides nothing".
-   * Kept separate from `provides` rather than collapsing the whole list to null,
+   * Kept separate from the keys rather than collapsing the whole list to null,
    * so `:user +?` can say *both* things: here is what I know, and there is more.
    */
-  unknown: boolean;
-  /** Named callbacks in scope, listed because they are where the rest comes from. */
-  named: string[];
+  adds: { keys: string[]; named: string[]; unknown: boolean };
   tests: TestRow[];
 }
 
+/** The keys and named callbacks a run of setup blocks contributes. */
+function scopeOf(from: SetupInfo[]): { keys: string[]; named: string[]; unknown: boolean } {
+  const keys: string[] = [];
+  const named: string[] = [];
+  let unknown = false;
+  for (const s of from) {
+    if (s.named) {
+      named.push(s.named);
+      unknown = true;
+    } else if (s.provides === null) {
+      unknown = true;
+    } else {
+      for (const k of s.provides) if (!keys.includes(k)) keys.push(k);
+    }
+  }
+  return { keys, named, unknown };
+}
+
+export function suiteScope(tests: TestInfo | null): SuiteScope {
+  const setups = tests?.setups ?? [];
+  return { setups, ...scopeOf(setups) };
+}
+
 /**
- * A suite's describes, each with the context its tests can destructure.
+ * A suite's describes, each with what it adds to the context its tests get.
  *
  * A test starts from module `setup_all` + module `setup` + its describe's
- * `setup`, which can be a hundred lines apart — so each group shows what it
- * accumulated. A **named** callback (`setup :put_user`) is defined elsewhere in
- * the file, so its keys are unknown, and unknown is not the same as "provides
- * nothing": those are listed by name and the keys stay absent rather than being
- * guessed at.
+ * `setup`, which can be a hundred lines apart. `suiteScope` states the first two
+ * once; this states the third.
  */
 export function testsOf(tests: TestInfo | null): DescribeGroup[] {
   if (!tests) return [];
 
-  const scope = (from: TestInfo["setups"]) => {
-    const keys: string[] = [];
-    const named: string[] = [];
-    for (const s of from) {
-      if (s.named) named.push(s.named);
-      else for (const k of s.provides ?? []) if (!keys.includes(k)) keys.push(k);
+  return tests.describes.map((d: Describe) => ({
+    name: d.name ?? "(no describe)",
+    line: d.line,
+    endLine: d.endLine,
+    setups: d.setups,
+    adds: scopeOf(d.setups),
+    tests: d.tests.map((t) => ({
+      name: t.name,
+      line: t.line,
+      endLine: t.endLine,
+      assertions: t.assertions ?? [],
+      tagRange: t.tagRange ?? null,
+      tags: t.tags,
+      skipped: t.skipped,
+    })),
+  }));
+}
+
+/**
+ * Every assertion in the file, one per line, for the code pane's gutter.
+ *
+ * A line can carry two calls (`assert foo(bar) == refute_baz()` is contrived,
+ * but `assert_raise E, fn -> assert x end` is not), and a row has one gutter —
+ * so the more informative kind wins. `message` over `error` over `assert`,
+ * because that is the order of how much they narrow down what the test does.
+ */
+export function assertionLines(outline: Outline | null | undefined): Map<number, AssertKind> {
+  const rank: Record<AssertKind, number> = { assert: 0, error: 1, message: 2 };
+  const out = new Map<number, AssertKind>();
+  for (const d of outline?.tests?.describes ?? []) {
+    for (const t of d.tests) {
+      for (const a of t.assertions ?? []) {
+        const had = out.get(a.line);
+        if (!had || rank[a.kind] > rank[had]) out.set(a.line, a.kind);
+      }
     }
-    return { keys, named };
-  };
-
-  const outer = scope(tests.setups);
-
-  return tests.describes.map((d: Describe) => {
-    const inner = scope(d.setups);
-    // A named callback OR an unreadable block both mean there is more context
-    // than can be listed. The keys that *are* visible still get listed.
-    const unknown = [...tests.setups, ...d.setups].some(
-      (s) => s.named !== null || s.provides === null,
-    );
-    return {
-      name: d.name ?? "(no describe)",
-      line: d.line,
-      provides: [...outer.keys, ...inner.keys],
-      unknown,
-      named: [...outer.named, ...inner.named],
-      tests: d.tests.map((t) => ({
-        name: t.name,
-        line: t.line,
-        asserts: t.asserts,
-        tags: t.tags,
-        skipped: t.skipped,
-      })),
-    };
-  });
+  }
+  return out;
 }
 
 /** The collapsed line, for whichever kind the file is. */
@@ -287,9 +339,17 @@ export function summariseFile(file: ReadingFile | null, reach: ReachLine[]): str
 
   if (kind === "test") {
     const d = file?.outline?.tests?.describes ?? [];
-    const tests = d.reduce((n, x) => n + x.tests.length, 0);
-    const asserts = d.reduce((n, x) => n + x.tests.reduce((m, t) => m + t.asserts, 0), 0);
-    return `${d.length} describes · ${tests} tests · ${asserts} assertions`;
+    const all = d.flatMap((x) => x.tests);
+    // "How many assertions" was never a reviewable number. "Does this suite
+    // check failure at all" is, so that is what the line says.
+    const err = all.filter((t) =>
+      (t.assertions ?? []).some((a) => a.kind === "error"),
+    ).length;
+    return (
+      `${d.length} describe${d.length === 1 ? "" : "s"} · ` +
+      `${all.length} test${all.length === 1 ? "" : "s"} · ` +
+      (err ? `${err} checking failure` : "none checking failure")
+    );
   }
 
   if (kind === "module") return summarise(moduleOfFile(file), reach);

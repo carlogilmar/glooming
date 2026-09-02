@@ -4,10 +4,17 @@
 //
 // Two things a test file has that a module doesn't:
 //
-//   · describes grouping tests, and assertions inside those. Each describe
-//     carries a strip of one square per test, shaded by how much it asserts —
-//     a pale square is a test that checks one thing, so thin coverage is
-//     visible without reading a word.
+//   · describes grouping tests, and assertions inside those. Each test carries
+//     one bar per assertion, coloured by WHAT it checks: the good path, a
+//     failure path (`refute`, `assert_raise`), or a message (`assert_receive`).
+//
+//     It used to be one square per test shaded by assertion *count*, on the
+//     grounds that a pale square made thin coverage visible without reading a
+//     word. It did not. A count says how many `assert` lines the author wrote,
+//     and one `assert {:ok, %User{email: ^e, id: id}} = …` checks four things
+//     while drawing palest — so the shade reported style as though it were
+//     thoroughness. "Does this suite check failure at all" is a question the
+//     kinds answer and the count never could.
 //
 //   · setup, which STACKS. A test starts from the module's setup_all, plus the
 //     module's setup, plus its own describe's — blocks that can be a hundred
@@ -29,11 +36,23 @@ export interface Setup {
   provides: string[] | null;
 }
 
+/** `a`ssert, `e`rror path, `m`essage — as the block spells them. */
+export type Mark = "assert" | "error" | "message";
+
 export interface TestCase {
   name: string;
   line: number;
   endLine: number;
   asserts: number;
+  /**
+   * What each assertion checks, when the block says.
+   *
+   * Empty for a block written before the kinds existed: those carry a bare
+   * count, and a block is never rewritten after it is written, so that form has
+   * to keep rendering. It draws neutral bars — the count is all it knows, and
+   * inventing kinds for it would be exactly the guess the kinds replaced.
+   */
+  marks: Mark[];
   tags: string[];
 }
 
@@ -54,7 +73,10 @@ export interface Suite {
  *     setup : 4 :user
  *     describe "create_user/1" : 12
  *       setup : 13 runs :put_user
- *       creates a user : 16 3 @slow
+ *       creates a user : 16 aee @slow
+ *
+ * The `aee` column was a count (`3`) in blocks written before the kinds existed;
+ * both forms are read.
  */
 export function parseTests(body: string): Suite {
   const out: Suite = { setups: [], describes: [] };
@@ -99,11 +121,16 @@ export function parseTests(body: string): Suite {
     }
 
     if (out.describes.length) {
+      const col = rest[0] ?? "";
+      // A number is the old form and carries only a total; letters are the kinds.
+      const numeric = /^\d+$/.test(col);
+      const marks = numeric ? [] : parseMarks(col);
       out.describes[out.describes.length - 1].tests.push({
         name: label,
         line,
         endLine,
-        asserts: parseInt(rest[0] ?? "0", 10) || 0,
+        asserts: numeric ? parseInt(col, 10) : marks.length,
+        marks,
         tags: rest.filter((t) => t.startsWith("@")).map((t) => t.slice(1)),
       });
     }
@@ -143,7 +170,33 @@ function setupHtml(s: Setup, scope: "mod" | "desc"): string {
   );
 }
 
-const shade = (n: number) => (n <= 1 ? "a1" : n <= 2 ? "a2" : "a3");
+/** `aee` → the three kinds. `-`, or anything unrecognised, is no assertions. */
+function parseMarks(col: string): Mark[] {
+  const out: Mark[] = [];
+  for (const c of col) {
+    if (c === "a") out.push("assert");
+    else if (c === "e") out.push("error");
+    else if (c === "m") out.push("message");
+  }
+  return out;
+}
+
+/**
+ * One bar per assertion, coloured by kind — or neutral bars when the block only
+ * carries a count, because that is genuinely all it says.
+ */
+function spine(t: TestCase): string {
+  if (!t.asserts) {
+    return `<span class="spine none" title="this test asserts nothing"></span>`;
+  }
+  const bars = t.marks.length
+    ? t.marks.map((m) => `<i class="${m}"></i>`).join("")
+    : Array.from({ length: t.asserts }, () => `<i class="unknown"></i>`).join("");
+  const what = t.marks.length
+    ? t.marks.join(", ")
+    : `${t.asserts} assertion${t.asserts === 1 ? "" : "s"} — this block predates the kinds`;
+  return `<span class="spine" title="${esc(what)}">${bars}</span>`;
+}
 
 /** `data-line` plus `data-end`, so a click can select the whole block. */
 function span(line: number, endLine: number): string {
@@ -172,13 +225,23 @@ export function renderTests(body: string, module: string): string {
       const asserts = d.tests.reduce((a, t) => a + t.asserts, 0);
       const ctx = contextOf(suite, d);
 
+      // The describe's own strip: one square per test, marked by whether it
+      // checks failure at all rather than by how much it asserts. A hollow
+      // square is a test with no assertions in it.
       const strip = d.tests
         .map((t) => {
-          const skipped = t.tags.includes("skip");
-          const cls = [shade(t.asserts), t.tags.length ? "tagged" : "", skipped ? "skipped" : ""]
+          const kinds = new Set(t.marks);
+          const cls = [
+            !t.asserts ? "bare" : !t.marks.length ? "unknown" : kinds.has("message")
+              ? "message"
+              : kinds.has("error")
+                ? "error"
+                : "assert",
+            t.tags.includes("skip") ? "skipped" : "",
+          ]
             .filter(Boolean)
             .join(" ");
-          return `<i class="${cls}" title="${esc(t.name)} — ${t.asserts} assertion${t.asserts === 1 ? "" : "s"}"></i>`;
+          return `<i class="${cls}" title="${esc(t.name)} — ${t.asserts || "no"} assertion${t.asserts === 1 ? "" : "s"}"></i>`;
         })
         .join("");
 
@@ -199,7 +262,7 @@ export function renderTests(body: string, module: string): string {
             `<span class="dot"></span><span class="name">${esc(t.name)}</span>` +
             t.tags.map((g) => `<span class="badge">@${esc(g)}</span>`).join("") +
             `<span class="spacer"></span>` +
-            `<span class="as">${t.asserts}×</span>` +
+            spine(t) +
             (t.line ? `<span class="ln">${t.line}</span>` : "") +
             `</div>`
           );

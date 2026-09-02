@@ -6,7 +6,8 @@
 
 use crate::db::models::FileHistory;
 use crate::parse::{
-    ConfigInfo, FileKind, ModuleInfo, Outline, SetupInfo, TestInfo, ValueSource, Visibility,
+    AssertKind, ConfigInfo, FileKind, ModuleInfo, Outline, SetupInfo, TestCase, TestInfo,
+    ValueSource, Visibility,
 };
 
 /// The fence tag the frontend renderer looks for.
@@ -320,13 +321,38 @@ pub fn tests_block(tests: &TestInfo) -> String {
             out.push_str(&format!(
                 "    {name:width$} : {} {}{tags}\n",
                 span(t.line, t.end_line),
-                t.asserts
+                assert_marks(t)
             ));
         }
     }
 
     out.push_str("```\n");
     out
+}
+
+/// What a test asserts, as one letter each: `a`ssert, `e`rror path, `m`essage.
+///
+/// This replaced a bare count. A count said how many `assert` lines the author
+/// wrote, which is a fact about their style — the kinds say what the test
+/// checks, which is what a reader wants. `-` for a test that asserts nothing,
+/// because an empty column would read as a formatting slip rather than a finding.
+///
+/// The renderer still accepts the old numeric form: a block is never rewritten
+/// after it is written, so every `lgtm:tests` block already in a note carries a
+/// number, and it must keep rendering. It draws neutral bars there — the count
+/// is all that form knows, and inventing kinds for it would be a guess.
+fn assert_marks(t: &TestCase) -> String {
+    if t.assertions.is_empty() {
+        return "-".into();
+    }
+    t.assertions
+        .iter()
+        .map(|a| match a.kind {
+            AssertKind::Assert => 'a',
+            AssertKind::Error => 'e',
+            AssertKind::Message => 'm',
+        })
+        .collect()
 }
 
 /// The ```lgtm:stats block: file-level facts as `key: value` lines.
@@ -1019,7 +1045,8 @@ end
         assert!(block.contains("creates a user : 9-12"), "{block}");
         // A one-liner has nothing to span, so it stays a single number.
         // The `do:` one-liner form has no do_block, so its assertion is only
-        // found by counting over the whole call.
-        assert!(block.contains("one liner      : 14 1"), "{block}");
+        // found by walking the whole call — and it is an `a`, not a `1`: the
+        // block records what a test checks, not how many lines it took to say so.
+        assert!(block.contains("one liner      : 14 a"), "{block}");
     }
 }

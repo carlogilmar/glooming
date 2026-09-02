@@ -151,6 +151,7 @@ mockup/index.html              standalone visual contract — no build, just ope
 mockup/deps.html               the reach block's visual contract
 mockup/surface.html            the surface block's visual contract
 mockup/kinds.html              config / test / fallback — the non-module kinds
+mockup/tests.html              navigating a suite: the two clicks, and three navigation candidates
 mockup/reading.html            scroll-driven reading, first cut
 mockup/authoring.html          read mode as shipped, plus the edge cases
 mockup/group.html              a reading across several files
@@ -670,6 +671,70 @@ on boot when unset. A literal whose *key* looks like a credential
 (`SECRETISH` in `parse/kinds.rs`) is reported as `secret` **without its value** —
 that it is hardcoded is the finding, but docs get pasted into PR comments.
 
+**A test selects as a span; a describe is gone to.** Both were already built and
+the drawer was not using them. `DocPane.selectBlock` has always read `data-end`
+off a `.lgtm-tests` row, so the block *in the note* selected a whole test
+correctly — while the drawer beside it emitted only `data-line` and routed
+through `selectFromExplore`, which resolves a **function signature** with
+`locate`. A test's name is not one, so it returned null and every click fell
+through to `gotoLine`: a one-line cursor on the `test "…" do` line. The parser
+had carried `end_line` since the first version.
+
+A describe deliberately does **not** select. Selecting forty lines dims nothing
+useful and claims you are reading all of them, when what you are doing is
+travelling to one of the tests inside — so it lands as a line cursor, which is
+the word this app already has for a position, in `--read` gold rather than the
+accent. `oncursor` is its own callback for that reason, and it clears the
+function selection first: leaving it up would dim the file around a function you
+are no longer looking at.
+
+**A test's `@tag` is an `@spec`.** It came out of building the mockup. `line` is
+the `test` call, so a skipped test's `@tag :skip` sat *outside* the span and got
+dimmed one line above the test it is the most important fact about. Folding it
+into the span is wrong too — it is not the body. It is exactly what an `@spec` is
+to a function, so `TestCase` carries a `tag_range` beside `line`/`end_line`, and
+it travels in `focus`'s **`spec` slot**: the violet `--mark` treatment, selected
+with the test, distinct from it, and no new row state to compete with the five
+already there. Stacked tags are one range, because they are one thing to a reader.
+
+**Assertions are marked by kind, not shaded by count.** `count_asserts` returned
+a `u32` on the grounds that "a one-assertion test looks different from a
+five-assertion one". It does — but what it looks different *about* is the
+author's style: one `assert {:ok, %User{email: ^e, id: id}} = …` checks four
+things and drew palest, while six `assert` lines poking one field drew darkest.
+The shade reported style as though it were thoroughness, which is precisely the
+confident wrong answer the `+?` two elements away exists to avoid.
+
+`Assertion { line, kind }` replaces it — `assert`, `error` (`refute`,
+`assert_raise`), `message` (`assert_receive`) — classified on the **call name
+alone**, which is why those are the three. `assert {:error, cs} = …` stays plain:
+the pattern is in the arguments, so recognising it means matching text, and the
+house rule is that the uncertain answer is drawn plain rather than confidently
+amber. `asserts` survives as `assertions.len()`, so nothing reading the count
+broke while the shading it fed was retired.
+
+The marks are drawn in the code pane **only inside the selection**. Across a
+whole suite they are a wall, and worse, a sixth row state arguing with `hit`,
+`head`, `cursor`, `spec` and the blame tint — which is what got the sticky
+function header deleted. Inside the selected test they are not a state at all:
+they are the shape of the thing you already chose to look at. The gutter is
+absolutely positioned in the 14px the line number already reserves, not a flex
+column, or it would push the source over in *every* file to make room for
+something only a suite ever draws.
+
+**The block's grammar carries the kinds, and still reads the old form.**
+`tests_block` writes `aem` where it wrote `3`, and `-` for a test that asserts
+nothing. A block is never rewritten after it is written, so every `lgtm:tests`
+already in a note carries a number — `parseTests` reads both and draws the old
+form as **neutral** bars, because a count is genuinely all that form knows and
+inventing kinds for it would be the guess the kinds replaced.
+
+**`@moduletag` is not the next test's tag.** `attribute_tag` matched `tag` and
+`moduletag` and the caller could not tell them apart, so a `@moduletag
+:integration` at the top of a file was pushed onto the pending list and became
+the **first test's** tag. It has its own field now. This was invisible until a
+tag started drawing its own span.
+
 **The test block's finding is that setup stacks.** A test starts from module
 `setup_all` + module `setup` + its describe's `setup`, which can be a hundred
 lines apart, so each describe shows the accumulated context its tests can
@@ -688,7 +753,7 @@ the same as "provides nothing"** — and the UI shows `+?` rather than guessing.
 | `lgtm:functions` | module | `markdownit.ts` — a prose slot per function | **no** — write it when you want it |
 | `lgtm:deps` | module | `deps.ts` — the boundary, omitted when nothing is reached | when it reaches something |
 | `lgtm:settings` | config | `settings.ts` — grouped by app, env vs literal | yes |
-| `lgtm:tests` | test | `tests.ts` — describes, setups, assertion strips | yes |
+| `lgtm:tests` | test | `tests.ts` — describes, setups, assertions by kind | yes |
 
 `lgtm:stats` serving four file kinds is why it renders whatever keys the text
 carries instead of expecting a fixed set — one renderer, no per-kind variants.
@@ -992,6 +1057,44 @@ discoverable than an invisible click target on a dot ever was.
 the mode with `onreading` rather than sharing it, because the pane owns it and two owners would eventually disagree with
 the button. Read mode is being walked *through* something; a reference panel above
 it is noise.
+
+**The suite list has no inner scroll, and that is the correction of a
+correction.** The first fix for "a sixty-test suite pushes the note off the
+bottom" was to give the list the surface's six-row cap. That was wrong for a
+reason worth writing down: the cap exists so a 40-function surface cannot bury
+the **reach diagram below it**, and nothing sits below the describes. So the cap
+bought nothing and cost everything — a 57-test suite became a 236px porthole
+*inside* a region that already scrolls and that the grip already resizes, which
+is two scroll regions in one column, the exact thing this pane was built to
+avoid.
+
+The list now fills the navigation region and scrolls with it. **The grip is the
+resize control** — one drag, `⌥1`/`⌥2`, remembered per gloom — so there is no
+second divider, and a suite that needs more room gets it the same way everything
+else in this pane does.
+
+`overflow: clip` on the list, not `hidden`. Both clip children to the rounded
+corner, but `hidden` makes the list a scroll container, and a sticky describe
+header inside a box that cannot scroll is pinned to something that never moves —
+so it would never stick to anything. Written correctly and visible never, which
+is the `overflow-x` bug's exact shape for the third time.
+
+**A describe is a section, and it folds.** With nine describes the headers *are*
+the map, so each group carries its test count and a chevron that hides its rows.
+Folding is `display`, not height — the finding that outlived the explore drawer:
+there is no version of an animated collapse that is right, because it has to move
+everything below it. The toggle is a **sibling** of the header button, never
+nested in it: a button inside a button is invalid, and it would need a
+`stopPropagation` to keep folding from also being a jump. Fold state is session
+state keyed by file, because folding is "let me see the shape for a second" and a
+suite that reopens with half its describes hidden looks broken rather than tidy.
+
+**Module scope is stated once.** The old view repeated the module's context keys
+on every describe row, under a band that had already listed them — the same fact
+in two places, and the repetition grew with the number of describes. `suiteScope`
+is the stack at the top; a describe shows only its `adds`. `async: false` gets a
+colour rather than a dimmed `async false` at the end of a row: it says the suite
+touches shared state, which is the most reliably reviewable fact in a test file.
 
 **A named setup's keys are unknown, and that is not the same as none.** A test
 starts from module `setup_all` + module `setup` + its describe's `setup`, and a

@@ -18,8 +18,15 @@
 
   import { renderDeps } from "$lib/deps";
   import { moduleOf } from "$lib/fileset";
-  import { seedDepsBlock, settingsOf, summariseFile, surfaceOf, testsOf } from "$lib/explore";
-  import type { ReadingFile } from "$lib/ipc";
+  import {
+    seedDepsBlock,
+    settingsOf,
+    suiteScope,
+    summariseFile,
+    surfaceOf,
+    testsOf,
+  } from "$lib/explore";
+  import type { Range, ReadingFile } from "$lib/ipc";
 
   let {
     file = null,
@@ -27,13 +34,23 @@
     selected = "",
     onselect,
     onjump,
+    oncursor,
   }: {
     file: ReadingFile | null;
     /** The whole reading — a reached module that is in it can be jumped to. */
     files: ReadingFile[];
     selected: string;
-    onselect?: (sig: string, line: number) => void;
+    /**
+     * `span` is what makes a test select as a test: without it the shell falls
+     * back to `locate(sig, module)`, which looks a **function signature** up in
+     * the outline — and a test name is not one, so it returned null and dropped
+     * to a one-line cursor. `tag` rides in the `@spec` slot, which is exactly
+     * what a `@tag` is to a test.
+     */
+    onselect?: (sig: string, line: number, span?: Range, tag?: Range | null) => void;
     onjump?: (path: string, line: number) => void;
+    /** Go to a line without selecting anything — for a container. */
+    oncursor?: (line: number) => void;
   } = $props();
 
   /**
@@ -71,6 +88,32 @@
   const imports = $derived(file?.outline?.config?.imports ?? []);
   const describes = $derived(testsOf(file?.outline?.tests ?? null));
   const suite = $derived(file?.outline?.tests ?? null);
+  const scope = $derived(suiteScope(file?.outline?.tests ?? null));
+
+  /**
+   * Describes the reader has folded away, keyed by file so two suites in one
+   * gloom do not share a fold.
+   *
+   * Session state on purpose: folding is "let me see the shape for a second",
+   * not a preference worth persisting — and a suite that reopens with half its
+   * describes hidden looks broken rather than tidy.
+   */
+  let folded = $state<string[]>([]);
+  const foldKey = (line: number) => `${file?.path ?? ""}:${line}`;
+  const isFolded = (line: number) => folded.includes(foldKey(line));
+
+  function toggleFold(line: number) {
+    const k = foldKey(line);
+    folded = folded.includes(k) ? folded.filter((x) => x !== k) : [...folded, k];
+  }
+
+  const allFolded = $derived(
+    describes.length > 0 && describes.every((d) => isFolded(d.line)),
+  );
+
+  function foldAll(shut: boolean) {
+    folded = shut ? describes.map((d) => foldKey(d.line)) : [];
+  }
   const nums = $derived(summariseFile(file, []));
 
   /**
@@ -159,12 +202,32 @@
       return;
     }
 
+    // A container — a describe — is *gone to*, not selected. Selecting forty
+    // lines dims nothing useful and claims you are reading all of them, when
+    // what you are doing is travelling to one of the tests inside. So it lands
+    // as a line cursor, which is the app's existing word for a position.
+    const box = t.closest<HTMLElement>("[data-cursor]");
+    if (box) {
+      const line = parseInt(box.dataset.cursor ?? "0", 10);
+      if (line > 0) oncursor?.(line);
+      return;
+    }
+
     // A row in the surface: focus it in the code, which is right there and never
-    // covered.
+    // covered. A row carrying `data-end` selects that whole span instead of
+    // going through the signature lookup — a test's name is not a signature.
     const own = t.closest<HTMLElement>("[data-line]");
     if (own) {
       const line = parseInt(own.dataset.line ?? "0", 10);
-      if (line > 0) onselect?.(own.dataset.sig ?? "", line);
+      if (line <= 0) return;
+      const end = parseInt(own.dataset.end ?? "0", 10);
+      const tagged = own.dataset.tag?.split(",").map(Number);
+      onselect?.(
+        own.dataset.sig ?? "",
+        line,
+        end >= line ? { start: line, end } : undefined,
+        tagged ? { start: tagged[0], end: tagged[1] } : null,
+      );
       return;
     }
 
@@ -198,7 +261,7 @@
 <div class="explore" class:arriving onclick={onClick}>
   <div class="head">
     <b>{file?.filename ?? ""}</b>
-    <span class="kind">{kind}</span>
+    <span class="tkind">{kind}</span>
     <span class="nums">{nums}</span>
   </div>
 
@@ -228,37 +291,152 @@
       {/each}
     {/if}
   {:else if kind === "test"}
-    <p class="sec">Suite</p>
-    <div class="row static">
-      <span class="sig">{suite?.caseTemplate ?? "ExUnit.Case"}</span>
-      <span class="dim">async {suite?.isAsync ?? false}</span>
-      <span class="ln">{suite?.setups.length ?? 0} module setup</span>
-    </div>
-    <p class="sec">Describes</p>
-    {#each describes as d (d.name + d.line)}
-      <div class="grp">
-        <span>describe "{d.name}"</span>
-        {#if d.provides.length}
-          <span class="setup">{d.provides.map((k) => ":" + k).join(" ")}</span>
-        {/if}
-        {#if d.unknown}
-          <span class="setup" title="a named setup contributes keys that cannot be read from here">+?</span>
-        {/if}
-        {#each d.named as n (n)}<span class="setup dim">runs :{n}</span>{/each}
-        <span class="ln">{d.line}</span>
-      </div>
-      {#each d.tests as t (t.name + t.line)}
-        <button class="row inset" data-line={t.line} data-sig={t.name}>
-          <span class="sig" class:skipped={t.skipped}>{t.name}</span>
-          {#each t.tags as g (g)}<span class="badge">@{g}</span>{/each}
-          <span class="asserts">{t.asserts}</span>
-          <span class="strip" aria-hidden="true">
-            {#each Array(Math.min(t.asserts, 3)) as _, i}<i class="a{i + 1}"></i>{/each}
-          </span>
-          <span class="ln">{t.line}</span>
-        </button>
+    <!-- The suite band: what it is built on, and whether it serialises. `async:
+         false` is the one fact in a suite header worth calling out — it says the
+         suite touches shared state — so it carries a colour rather than sitting
+         dimmed at the end of a row. -->
+    <div class="tsuite">
+      <span class="tmpl">{suite?.caseTemplate ?? "ExUnit.Case"}</span>
+      {#if suite?.isAsync}
+        <span class="tchip async">async</span>
+      {:else}
+        <span class="tchip sync" title="this suite serialises — it touches shared state">
+          async: false
+        </span>
+      {/if}
+      {#each suite?.moduleTags ?? [] as g (g)}
+        <span class="tchip quiet" title="@moduletag — applies to every test in this file">
+          @{g}
+        </span>
       {/each}
-    {/each}
+      <span class="ln">{nums}</span>
+    </div>
+
+    <!-- Module scope, stated once. A describe below shows only what it adds:
+         the old view repeated these keys on every describe row, under a band
+         that had already listed them. -->
+    {#if scope.setups.length}
+      <p class="sec">
+        Every test starts from<span class="after">module scope</span>
+      </p>
+      <div class="tstack">
+        {#each scope.setups as su (su.kind + su.line)}
+          <button
+            class="tsu"
+            data-line={su.line}
+            data-end={su.endLine}
+            data-sig={su.kind}
+            title="select the whole {su.kind} block"
+          >
+            <span class="tkind">{su.kind}</span>
+            <span class="tlbl">{su.named ? "runs" : "provides"}</span>
+            {#if su.named}
+              <span class="tunk">:{su.named}</span>
+            {:else if su.provides === null}
+              <span class="tunk">unknown</span>
+            {:else if su.provides.length}
+              {#each su.provides as k (k)}<span class="tkey">:{k}</span>{/each}
+            {:else}
+              <span class="tunk">no context</span>
+            {/if}
+            <span class="ln">{su.line}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
+
+    <p class="sec">
+      Describes
+      {#if describes.length > 1}
+        <button class="foldall" onclick={() => foldAll(!allFolded)}>
+          {allFolded ? "unfold all" : "fold all"}
+        </button>
+      {:else}
+        <span class="after">a test selects whole; a describe goes there</span>
+      {/if}
+    </p>
+    <!-- No inner scroll. The region above the grip already scrolls and is
+         already resizable — one drag, remembered per gloom — so a second
+         scroller inside it turned a fifty-test suite into a porthole inside a
+         pane you were free to make taller. The cap was right for the *surface*,
+         where the reach diagram sits below it and a 40-function module would
+         otherwise bury it; nothing sits below this list. -->
+    <div class="list tlist">
+      {#each describes as d (d.name + d.line)}
+        {@const shut = isFolded(d.line)}
+        <section class="dgroup" class:shut>
+          <!-- The fold toggle is a SIBLING of the header, never nested in it: a
+               button inside a button is invalid, and it would need a
+               stopPropagation to keep folding from also being a jump. -->
+          <div class="dwrap">
+            <button
+              class="fold"
+              aria-expanded={!shut}
+              title="{shut ? 'unfold' : 'fold'} this describe"
+              onclick={() => toggleFold(d.line)}
+            >
+              {shut ? "▸" : "▾"}
+            </button>
+            <button
+              class="tdesc"
+              data-cursor={d.line}
+              title="go to line {d.line} — {d.endLine - d.line + 1} lines, {d.tests.length} tests"
+            >
+              <span class="tdn">
+                describe <span class="q">"</span>{d.name}<span class="q">"</span>
+              </span>
+              <span class="tdelta">
+                {#each d.adds.keys as k (k)}<span class="tkey">+:{k}</span>{/each}
+                {#each d.adds.named as n (n)}<span class="tunk">+ :{n} ?</span>{/each}
+                {#if d.adds.unknown && !d.adds.named.length}
+                  <span class="tunk" title="a setup here contributes keys that cannot be read">
+                    +?
+                  </span>
+                {/if}
+              </span>
+              <!-- How big this group is, so you can judge it before folding it
+                   open. With nine describes the count is what you scan. -->
+              <span class="dn">{d.tests.length}</span>
+              <span class="ln">{d.line}</span>
+            </button>
+          </div>
+          <div class="dtests">
+            {#each d.tests as t (t.name + t.line)}
+              <button
+                class="trow"
+                class:on={selected === t.name}
+                data-line={t.line}
+                data-end={t.endLine}
+                data-tag={t.tagRange ? `${t.tagRange.start},${t.tagRange.end}` : undefined}
+                data-sig={t.name}
+                title="{t.endLine - t.line + 1} lines{t.tags.length
+                  ? ' · @' + t.tags.join(' @')
+                  : ''}"
+              >
+                <span class="tname" class:skipped={t.skipped}>{t.name}</span>
+                {#each t.tags as g (g)}<span class="badge">@{g}</span>{/each}
+                <!-- One bar per assertion, coloured by KIND. The old strip shaded
+                     squares by assertion *count*, which reported how the author
+                     liked to write rather than what the test checks: one
+                     `assert {:ok, %User{email: ^e}} = …` checks four things and
+                     drew palest. -->
+                <span
+                  class="tspine"
+                  class:none={!t.assertions.length}
+                  title={t.assertions.length
+                    ? t.assertions.map((a) => a.kind).join(", ")
+                    : "this test asserts nothing"}
+                  aria-hidden="true"
+                >
+                  {#each t.assertions as a, i (a.line + "-" + i)}<i class={a.kind}></i>{/each}
+                </span>
+                <span class="ln">{t.line}</span>
+              </button>
+            {/each}
+          </div>
+        </section>
+      {/each}
+    </div>
   {:else if !module}
     <p class="quiet">
       No module, config or test suite in this file — so there is nothing to
@@ -615,13 +793,6 @@
   .grp .ln {
     color: var(--fg-faint);
   }
-  .grp .setup {
-    font-size: 9px;
-    color: var(--mark);
-  }
-  .grp .setup.dim {
-    color: var(--fg-faint);
-  }
   .val {
     font-size: 10px;
   }
@@ -641,28 +812,6 @@
   .sig.skipped {
     text-decoration: line-through;
     color: var(--fg-faint);
-  }
-  .asserts {
-    font-family: var(--sans);
-    font-size: 9px;
-    color: var(--fg-faint);
-  }
-  .strip {
-    display: flex;
-    gap: 2px;
-  }
-  .strip i {
-    width: 7px;
-    height: 7px;
-    border-radius: 2px;
-    background: var(--pub);
-    opacity: 0.3;
-  }
-  .strip i.a2 {
-    opacity: 0.6;
-  }
-  .strip i.a3 {
-    opacity: 1;
   }
 
   /* Where the reference material ends and your writing begins — the most
@@ -808,4 +957,337 @@
       animation: none;
     }
   }
+  /* ============================================================
+     A test suite. Candidate A from `mockup/tests.html`: the suite
+     band, module scope stated once, then a BOUNDED list where a
+     test selects whole and a describe is gone to.
+     ============================================================ */
+  .tsuite {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 7px 9px;
+    margin-bottom: 12px;
+    background: var(--doc-raised);
+    border: 1px solid var(--doc-line);
+    border-radius: 7px;
+    font-size: 11.5px;
+  }
+  .tmpl {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--syn-mod);
+    font-weight: 600;
+  }
+  .tchip {
+    font-size: 10px;
+    padding: 1.5px 6px;
+    border-radius: 10px;
+    font-weight: 600;
+    border: 1px solid transparent;
+    white-space: nowrap;
+  }
+  /* `async: false` says the suite touches shared state, which is the most
+     reliably reviewable fact in a test file. It was a dim `async false` at the
+     end of a row; it is context, so it carries a colour. */
+  .tchip.sync {
+    background: color-mix(in srgb, var(--priv) 14%, transparent);
+    color: var(--priv);
+    border-color: color-mix(in srgb, var(--priv) 32%, transparent);
+  }
+  .tchip.async {
+    background: color-mix(in srgb, var(--pub) 13%, transparent);
+    color: var(--pub);
+  }
+  .tchip.quiet {
+    background: var(--bg-inset);
+    color: var(--fg-dim);
+    font-family: var(--mono);
+  }
+
+  .tstack {
+    margin-bottom: 12px;
+  }
+  .tsu {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    font: inherit;
+    font-size: 11.5px;
+    text-align: left;
+    cursor: pointer;
+    background: transparent;
+    border: 0;
+    border-left: 2px solid var(--doc-line);
+    padding: 3px 8px 3px 10px;
+    color: var(--doc-fg);
+  }
+  .tsu:hover {
+    background: var(--doc-raised);
+  }
+  .tkind {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--mark);
+    font-weight: 600;
+  }
+  .tlbl {
+    color: var(--fg-faint);
+    font-size: 10px;
+  }
+  .tkey {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--syn-atom);
+    background: color-mix(in srgb, var(--syn-atom) 11%, transparent);
+    padding: 0 4px;
+    border-radius: 3px;
+  }
+  /* Unknown, said out loud. A named callback lives elsewhere in the file, so
+     its keys cannot be read from here — and unknown is not "provides nothing". */
+  .tunk {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--fg-faint);
+    border: 1px dashed var(--line);
+    padding: 0 4px;
+    border-radius: 3px;
+  }
+
+  .tdesc {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+    background: transparent;
+    border: 0;
+    padding: 5px 9px 5px 2px;
+    color: var(--doc-fg);
+  }
+  /* The whole header lights up, not just the jump button — the fold sits inside
+     it and a hover that stopped at the chevron would read as two rows. */
+  .dwrap:hover {
+    background: color-mix(in srgb, var(--read) 14%, var(--doc-raised));
+  }
+  .tdn {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tdn .q {
+    color: var(--fg-faint);
+  }
+  /* The delta chips are their own group at a tighter gap than the row's, or
+     `+:user +:now` reads as two separate columns rather than one list. */
+  .tdelta {
+    display: flex;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .trow {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    font: inherit;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+    background: transparent;
+    border: 0;
+    padding: 3px 9px 3px 20px;
+    color: var(--doc-fg);
+  }
+  .trow:hover {
+    background: var(--doc-raised);
+  }
+  .trow.on {
+    background: color-mix(in srgb, var(--accent) 11%, transparent);
+  }
+  .trow.on .tname {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .tname {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tname.skipped {
+    text-decoration: line-through;
+    color: var(--fg-faint);
+  }
+
+  /* One bar per assertion, coloured by what it checks. Not shaded by count:
+     that reported the author's style as though it were the test's thoroughness. */
+  .tspine {
+    display: flex;
+    gap: 2px;
+    margin-left: auto;
+    align-items: center;
+    flex: 0 0 auto;
+  }
+  .tspine i {
+    width: 3px;
+    height: 12px;
+    border-radius: 1.5px;
+    display: block;
+    background: var(--pub);
+  }
+  .tspine i.error {
+    background: var(--priv);
+  }
+  .tspine i.message {
+    background: var(--mark);
+  }
+  /* A test that asserts nothing is a finding, not a pale square. */
+  .tspine.none::after {
+    content: "no assertions";
+    font-family: var(--sans);
+    font-size: 9.5px;
+    color: var(--fg-faint);
+    border: 1px dashed var(--line);
+    padding: 0 4px;
+    border-radius: 3px;
+  }
+
+  /* The list is a framed panel here, which it is not in the surface: the surface
+     is two bare columns under a heading, where this is one bounded region with
+     sticky describe headers inside it — so it needs an edge to be sticky
+     against. Scoped to `.tlist`, or the frame lands on the surface too.
+
+     `max-height: none` is the point. `.list`'s six-row cap exists so a
+     40-function surface cannot bury the reach diagram *below* it; nothing sits
+     below this list, so the cap bought nothing and cost everything — a 57-test
+     suite became a 236px porthole inside a region that already scrolls and that
+     the grip already resizes. Two scroll regions in one column means every
+     gesture starts by deciding which one you are in, which is the argument this
+     whole pane was built on. */
+  /* `clip`, not `hidden`. Both clip the children to the rounded corner, but
+     `hidden` makes this a scroll container — and a sticky describe header inside
+     a scroll container that cannot scroll is pinned to a box that never moves,
+     so it would never stick to anything. `clip` does not create a scrollport, so
+     the headers stay sticky against the navigation region, which is the thing
+     that actually scrolls. Same WebKit envelope as the `color-mix()` and `:has()`
+     this UI already leans on. */
+  .list.tlist {
+    max-height: none;
+    overflow: clip;
+    border: 1px solid var(--doc-line);
+    border-radius: 7px;
+    background: var(--doc-bg);
+  }
+  .dgroup {
+    border-bottom: 1px solid var(--doc-line);
+  }
+  .dgroup:last-child {
+    border-bottom: 0;
+  }
+  /* Folding is `display`, not height. There is no version of an animated
+     collapse that is right here: it has to move everything below it, so it goes
+     through layout however it is written — the finding that outlived the
+     explore drawer. */
+  .dgroup.shut .dtests {
+    display: none;
+  }
+  /* The header row is the sticky thing, so the toggle sticks with it. Its own
+     element rather than the button, because the two buttons inside it do
+     different jobs and neither should own the background. */
+  .dwrap {
+    display: flex;
+    align-items: stretch;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--doc-raised);
+    border-bottom: 1px solid var(--doc-line);
+  }
+  .dgroup:last-child .dwrap {
+    border-bottom: 0;
+  }
+  .dgroup:not(.shut):last-child .dwrap {
+    border-bottom: 1px solid var(--doc-line);
+  }
+  .fold {
+    font: inherit;
+    font-size: 10px;
+    line-height: 1;
+    background: transparent;
+    border: 0;
+    color: var(--fg-faint);
+    cursor: pointer;
+    padding: 0 4px 0 7px;
+  }
+  .fold:hover {
+    color: var(--accent);
+  }
+  /* How many tests this describe holds. With nine describes the count is the
+     thing you scan, and it is what makes folding a decision rather than a
+     guess. */
+  .tdesc .dn {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--fg-dim);
+    background: var(--bg-inset);
+    padding: 0 5px;
+    border-radius: 8px;
+    margin-left: auto;
+  }
+  .foldall {
+    margin-left: auto;
+    font: inherit;
+    font-size: 10px;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+    color: var(--fg-dim);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 6px;
+    cursor: pointer;
+  }
+  .foldall:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  /* Line numbers in this view are mono and tabular, so the digits stack down
+     the right-hand edge the way the surface table's do. The shared `.ln` is
+     9.5px sans, which is right for a one-line summary and wrong for a column. */
+  .tsu .ln,
+  .tdesc .ln,
+  .trow .ln {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* A tag is written `@slow` in the source, so it is set in mono here. */
+  .trow .badge {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--fg-dim);
+    white-space: nowrap;
+  }
+
+  .sec .after {
+    margin-left: auto;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+    color: var(--fg-faint);
+  }
+
 </style>

@@ -19,10 +19,12 @@
 //! setup do … end                    call[ identifier(setup), do_block ]
 //! setup :named                      call[ identifier(setup), args[ atom ] ]
 //! @tag :slow                        unary_operator[ call[ identifier(tag), args[ atom ] ] ]
+//! assert x == y                     call[ identifier(assert), args[ … ] ]
 //! ```
 
 use super::{
-    ConfigGroup, ConfigInfo, Describe, SetupInfo, Setting, TestCase, TestInfo, ValueSource,
+    AssertKind, Assertion, ConfigGroup, ConfigInfo, Describe, Range, SetupInfo, Setting, TestCase,
+    TestInfo, ValueSource,
 };
 use tree_sitter::Node;
 
@@ -246,6 +248,40 @@ fn value_source(key: &str, value: Node, src: &str) -> ValueSource {
 
 // --------------------------------------------------------------------- test ---
 
+/// The `@tag`s waiting for the next `test`, and the span they occupy.
+///
+/// Tags stack (`@tag :slow` above `@tag :db`), so the span runs from the first
+/// to the last — one range, because they are one thing to a reader.
+#[derive(Default)]
+struct PendingTags {
+    names: Vec<String>,
+    span: Option<Range>,
+}
+
+impl PendingTags {
+    fn push(&mut self, name: String, node: Node) {
+        let at = Range::of(node);
+        self.span = Some(match self.span {
+            Some(r) => Range {
+                start: r.start.min(at.start),
+                end: r.end.max(at.end),
+            },
+            None => at,
+        });
+        self.names.push(name);
+    }
+
+    /// Hand them to a test and reset — a tag applies to exactly one test.
+    fn take(&mut self) -> (Vec<String>, Option<Range>) {
+        (std::mem::take(&mut self.names), self.span.take())
+    }
+
+    fn clear(&mut self) {
+        self.names.clear();
+        self.span = None;
+    }
+}
+
 pub fn test_info(module: &str, body: Node, src: &str) -> TestInfo {
     let mut info = TestInfo {
         module: module.to_string(),
@@ -260,13 +296,19 @@ pub fn test_info(module: &str, body: Node, src: &str) -> TestInfo {
         setups: Vec::new(),
         tests: Vec::new(),
     };
-    let mut pending_tags: Vec<String> = Vec::new();
+    let mut pending = PendingTags::default();
 
     let mut cursor = body.walk();
     for child in body.named_children(&mut cursor) {
-        // `@tag :slow` applies to the next test.
-        if let Some(tag) = attribute_tag(child, src) {
-            pending_tags.push(tag);
+        // `@tag :slow` applies to the next test; `@moduletag :skip` to all of
+        // them, so it is collected separately rather than landing on whichever
+        // test happens to come next.
+        if let Some((tag, module_scope)) = attribute_tag(child, src) {
+            if module_scope {
+                info.module_tags.push(tag);
+            } else {
+                pending.push(tag, child);
+            }
             continue;
         }
 
@@ -293,10 +335,11 @@ pub fn test_info(module: &str, body: Node, src: &str) -> TestInfo {
                 if let Some(d) = describe(child, src) {
                     info.describes.push(d);
                 }
-                pending_tags.clear();
+                pending.clear();
             }
             Some("test") => {
-                if let Some(t) = test_case(child, src, std::mem::take(&mut pending_tags)) {
+                let (tags, tag_range) = pending.take();
+                if let Some(t) = test_case(child, src, tags, tag_range) {
                     if loose.line == 0 {
                         loose.line = t.line;
                     }
@@ -304,7 +347,7 @@ pub fn test_info(module: &str, body: Node, src: &str) -> TestInfo {
                     loose.tests.push(t);
                 }
             }
-            _ => pending_tags.clear(),
+            _ => pending.clear(),
         }
     }
 
@@ -314,8 +357,10 @@ pub fn test_info(module: &str, body: Node, src: &str) -> TestInfo {
     info
 }
 
-/// `@tag :slow` / `@moduletag :skip` → the tag name.
-fn attribute_tag(node: Node, src: &str) -> Option<String> {
+/// `@tag :slow` / `@moduletag :skip` → the tag name, and whether it is module
+/// scope. The two are different facts: one applies to the next test, the other
+/// to every test in the file.
+fn attribute_tag(node: Node, src: &str) -> Option<(String, bool)> {
     if node.kind() != "unary_operator" {
         return None;
     }
@@ -326,7 +371,10 @@ fn attribute_tag(node: Node, src: &str) -> Option<String> {
     }
     let args = arguments_of(operand)?;
     let first = args.named_child(0)?;
-    Some(text(first, src).trim_start_matches(':').to_string())
+    Some((
+        text(first, src).trim_start_matches(':').to_string(),
+        name == "moduletag",
+    ))
 }
 
 fn setup_info(kind: &str, node: Node, src: &str) -> SetupInfo {
@@ -392,60 +440,97 @@ fn describe(node: Node, src: &str) -> Option<Describe> {
     let Some(body) = do_block(node) else {
         return Some(out);
     };
-    let mut pending_tags: Vec<String> = Vec::new();
+    let mut pending = PendingTags::default();
     let mut cursor = body.walk();
 
     for child in body.named_children(&mut cursor) {
-        if let Some(tag) = attribute_tag(child, src) {
-            pending_tags.push(tag);
+        // A `@moduletag` inside a describe is not a thing, so both scopes are
+        // treated as this test's own here.
+        if let Some((tag, _)) = attribute_tag(child, src) {
+            pending.push(tag, child);
             continue;
         }
         match call_name(child, src).as_deref() {
             Some(k @ ("setup" | "setup_all")) => out.setups.push(setup_info(k, child, src)),
             Some("test") => {
-                if let Some(t) = test_case(child, src, std::mem::take(&mut pending_tags)) {
+                let (tags, tag_range) = pending.take();
+                if let Some(t) = test_case(child, src, tags, tag_range) {
                     out.tests.push(t);
                 }
             }
-            _ => pending_tags.clear(),
+            _ => pending.clear(),
         }
     }
     Some(out)
 }
 
-fn test_case(node: Node, src: &str, tags: Vec<String>) -> Option<TestCase> {
+fn test_case(
+    node: Node,
+    src: &str,
+    tags: Vec<String>,
+    tag_range: Option<Range>,
+) -> Option<TestCase> {
     let name = arguments_of(node)
         .and_then(|a| a.named_child(0))
         .and_then(|n| string_value(n, src))?;
 
+    // Walked over the whole call, not just its do_block: a one-liner written
+    // `test "x", do: assert(y)` has no do_block at all, and used to come back
+    // as zero assertions.
+    let mut assertions = Vec::new();
+    collect_assertions(node, src, &mut assertions);
+    assertions.sort_by_key(|a| a.line);
+
     Some(TestCase {
         line: line_of(node),
         end_line: end_line_of(node),
-        // Counted over the whole call, not just its do_block: a one-liner
-        // written `test "x", do: assert(y)` has no do_block at all, and used to
-        // come back as zero assertions.
-        asserts: count_asserts(node, src),
+        asserts: assertions.len() as u32,
+        assertions,
+        tag_range,
         skipped: tags.iter().any(|t| t == "skip"),
         tags,
         name,
     })
 }
 
-/// Every `assert`, `refute`, `assert_raise`, `assert_receive`… in a test body.
-/// A rough measure of how much a test actually checks, which is the point: a
-/// one-assertion test looks different from a five-assertion one.
-fn count_asserts(node: Node, src: &str) -> u32 {
-    let mut n = 0;
+/// Every `assert`, `refute`, `assert_raise`, `assert_receive`… in a test body,
+/// with the line it sits on and what it checks.
+///
+/// Classified on the **call name** alone, which is the whole reason the three
+/// kinds are the three kinds: they are what the name tells you for certain.
+fn collect_assertions(node: Node, src: &str, out: &mut Vec<Assertion>) {
     if let Some(name) = call_name(node, src) {
-        if name.starts_with("assert") || name.starts_with("refute") {
-            n += 1;
+        if let Some(kind) = assert_kind(&name) {
+            out.push(Assertion {
+                line: line_of(node),
+                kind,
+            });
         }
     }
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        n += count_asserts(child, src);
+        collect_assertions(child, src, out);
     }
-    n
+}
+
+fn assert_kind(name: &str) -> Option<AssertKind> {
+    if !name.starts_with("assert") && !name.starts_with("refute") {
+        return None;
+    }
+    // `assert_receive` / `refute_received` and friends wait on a message. Tested
+    // before the generic `refute` arm, or `refute_receive` would come back as a
+    // plain error check.
+    let after = name
+        .strip_prefix("assert")
+        .or_else(|| name.strip_prefix("refute"))
+        .unwrap_or("");
+    if after.starts_with("_receive") || after.starts_with("_received") {
+        return Some(AssertKind::Message);
+    }
+    if name.starts_with("refute") || name == "assert_raise" {
+        return Some(AssertKind::Error);
+    }
+    Some(AssertKind::Assert)
 }
 
 #[cfg(test)]
@@ -654,6 +739,122 @@ end
 
         let delete = t.describes.iter().find(|d| d.name.as_deref() == Some("delete_user/1")).unwrap();
         assert!(delete.tests[0].skipped, "@tag :skip marks it skipped");
+    }
+
+    #[test]
+    fn an_assertion_carries_its_line_and_what_it_checks() {
+        use parse::AssertKind::*;
+        let t = suite();
+        let first = &t.describes[0].tests[0];
+
+        // The count is kept, and it is exactly the length — so nothing that
+        // reads `asserts` breaks while the shading it fed is retired.
+        assert_eq!(first.asserts as usize, first.assertions.len());
+
+        let got: Vec<_> = first.assertions.iter().map(|a| (a.line, a.kind)).collect();
+        assert_eq!(
+            got,
+            vec![(17, Assert), (18, Error), (19, Error)],
+            "assert, then refute and assert_raise as error paths"
+        );
+    }
+
+    #[test]
+    fn assertions_come_back_in_source_order() {
+        let t = suite();
+        for d in &t.describes {
+            for test in &d.tests {
+                let lines: Vec<u32> = test.assertions.iter().map(|a| a.line).collect();
+                let mut sorted = lines.clone();
+                sorted.sort_unstable();
+                assert_eq!(lines, sorted, "{} is out of order", test.name);
+                // And every one of them sits inside the test it belongs to.
+                for a in &test.assertions {
+                    assert!(
+                        a.line >= test.line && a.line <= test.end_line,
+                        "{} claims an assertion on line {} but spans {}-{}",
+                        test.name,
+                        a.line,
+                        test.line,
+                        test.end_line
+                    );
+                }
+            }
+        }
+    }
+
+    /// A tag is to a test what an `@spec` is to a function: outside the body,
+    /// and unmissable when you select it. So it is its own span rather than
+    /// being folded into the test's, or left out to be dimmed one line above.
+    #[test]
+    fn a_tag_is_its_own_span_above_the_test() {
+        let t = suite();
+        let first = &t.describes[0].tests[0];
+        let tag = first.tag_range.expect("@tag :slow has a range");
+        assert_eq!((tag.start, tag.end), (15, 15));
+        assert_eq!(first.line, 16, "the test itself still starts at the call");
+        assert_eq!(
+            tag.end,
+            first.line - 1,
+            "the tag sits immediately above its test"
+        );
+
+        // An untagged test has none rather than an empty range.
+        assert!(t.describes[0].tests[1].tag_range.is_none());
+        assert!(t.describes.last().unwrap().tests[0].tag_range.is_none());
+    }
+
+    const TAGGED: &str = r#"defmodule MyApp.SlowTest do
+  use MyApp.DataCase, async: false
+
+  @moduletag :integration
+
+  @tag :slow
+  @tag :db
+  test "waits for the worker" do
+    assert_receive {:done, _}, 500
+    refute_receive {:failed, _}
+  end
+end
+"#;
+
+    /// `@moduletag` applies to every test in the file, so it cannot be handed to
+    /// whichever test happens to come next — which is exactly what it used to
+    /// be, because `attribute_tag` matched both and the caller could not tell
+    /// them apart.
+    #[test]
+    fn a_moduletag_is_not_the_next_tests_tag() {
+        let o = parse::parse(TAGGED, "elixir").unwrap();
+        let t = o.tests.expect("test info");
+        assert_eq!(t.module_tags, vec!["integration"]);
+
+        let test = &t.describes[0].tests[0];
+        assert_eq!(test.tags, vec!["slow", "db"], "only its own two");
+        assert!(!test.skipped);
+    }
+
+    /// Stacked tags are one span, because they are one thing to a reader.
+    #[test]
+    fn stacked_tags_share_one_range() {
+        let o = parse::parse(TAGGED, "elixir").unwrap();
+        let t = o.tests.expect("test info");
+        let tag = t.describes[0].tests[0].tag_range.expect("a range");
+        assert_eq!((tag.start, tag.end), (6, 7), "@tag :slow through @tag :db");
+    }
+
+    /// `refute_receive` is a message expectation, not a plain error check — so
+    /// the message arm has to be tested before the generic `refute` one.
+    #[test]
+    fn waiting_on_a_message_is_its_own_kind() {
+        use parse::AssertKind::*;
+        let o = parse::parse(TAGGED, "elixir").unwrap();
+        let t = o.tests.expect("test info");
+        let got: Vec<_> = t.describes[0].tests[0]
+            .assertions
+            .iter()
+            .map(|a| a.kind)
+            .collect();
+        assert_eq!(got, vec![Message, Message]);
     }
 
     #[test]

@@ -4,6 +4,8 @@
   import { blameFile, type BlameLine, type Outline } from "$lib/ipc";
   import { focus } from "$lib/stores/focus.svelte";
   import { displaySig, locate } from "$lib/select";
+  import { assertionLines } from "$lib/explore";
+  import type { AssertKind } from "$lib/ipc";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import FontStepper from "$lib/components/FontStepper.svelte";
   import { fontSize } from "$lib/stores/fontSize.svelte";
@@ -708,6 +710,23 @@
    * place, and the pill still says where you are) but stops suppressing
    * everything else.
    */
+  /**
+   * Where the assertions are, and what each one checks.
+   *
+   * Drawn **only inside the selection**. Across a whole suite these marks are a
+   * wall, and worse, they become a sixth row state arguing with `hit`, `head`,
+   * `cursor`, `spec` and the blame tint — which is what got the sticky function
+   * header deleted. Inside the selected test they are not a state at all: they
+   * are the shape of the thing you already chose to look at.
+   */
+  const asserts = $derived(assertionLines(outline));
+
+  /** The three kinds reuse tokens that already mean these things elsewhere. */
+  function assertColour(kind: AssertKind | undefined): string | undefined {
+    if (!kind) return undefined;
+    return kind === "error" ? "var(--priv)" : kind === "message" ? "var(--mark)" : "var(--pub)";
+  }
+
   const dimming = $derived(focus.active && !showBlame && !query);
   /** In a guided reading the file should recede further — you are being led. */
   const guided = $derived(focus.reading && dimming);
@@ -970,6 +989,8 @@
             class:docline={docLines.has(n)}
             class:cursor={focus.cursorLine === n}
             class:authored={showBlame && !!blameRows[i]}
+            class:asserted={focus.contains(n) && asserts.has(n)}
+            style:--as={focus.contains(n) ? assertColour(asserts.get(n)) : undefined}
             style:--who-h={showBlame ? (blameRows[i]?.hue ?? 212) : undefined}
             style:--i={Math.min(i, 12)}
             data-line={n}
@@ -985,6 +1006,7 @@
               </span>
             {/if}
             <span class="ln">{n}</span>
+            <span class="ag"></span>
             <span class="src">{@html html || "&nbsp;"}</span>
           </div>
         {/each}
@@ -1273,6 +1295,7 @@
   }
   .row {
     display: flex;
+    position: relative;
     padding-right: 12px;
     transition:
       opacity 0.18s ease,
@@ -1479,6 +1502,32 @@
   }
 
   /* ---- selection: whole body, all clauses, spec alongside ---- */
+  /* The assertion mark, in the 14px the line number already reserves to its
+     right. Absolute rather than a flex column on purpose: a column would push
+     the source over by its width in EVERY file, permanently, to make room for
+     something only a test suite ever draws. Here it costs nothing until a
+     selection paints it. */
+  .ag {
+    position: absolute;
+    /* 38px sits in the 14px gap the line number's padding already leaves between
+       its digits and the source, so nothing moves to make room. */
+    left: calc(var(--gut, 0px) + 38px);
+    top: 1px;
+    bottom: 1px;
+    width: 3px;
+    border-radius: 2px;
+    background: transparent;
+    pointer-events: none;
+  }
+  .code .row.asserted .ag {
+    background: var(--as);
+  }
+  /* The blame gutter is 128px and sits left of the line number, so the mark
+     follows it rather than landing among the author names. */
+  .code .row:has(.bl) {
+    --gut: 128px;
+  }
+
   .code .row.hit {
     background: var(--sel);
     box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 30%, transparent);

@@ -208,6 +208,42 @@ pub struct SetupInfo {
     pub provides: Option<Vec<String>>,
 }
 
+/// What an assertion checks.
+///
+/// Three kinds, because three is what the grammar can tell apart **without
+/// guessing**, and each answers a different question about a suite:
+///
+///   · `Assert`  — the good path
+///   · `Error`   — failure is checked at all (`refute`, `assert_raise`)
+///   · `Message` — something is waited on (`assert_receive`)
+///
+/// A count cannot say any of that. `count_asserts` used to return a `u32` on the
+/// grounds that "a one-assertion test looks different from a five-assertion one",
+/// and it does — but what it looks different *about* is the author's style, not
+/// the test's thoroughness: one `assert {:ok, %User{email: ^e, id: id}} = …`
+/// checks four things and counted as one. The kind is a fact; the count was a
+/// proxy being read as a finding.
+///
+/// `assert {:error, cs} = …` is deliberately **not** classified as `Error`. The
+/// pattern is in the arguments, not the call name, so recognising it means
+/// matching text — and the house rule is that an uncertain answer is drawn plain
+/// rather than confidently wrong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AssertKind {
+    Assert,
+    Error,
+    Message,
+}
+
+/// One assertion, where it is and what it checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Assertion {
+    pub line: u32,
+    pub kind: AssertKind,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TestCase {
@@ -216,7 +252,20 @@ pub struct TestCase {
     /// Last line of the block, so selecting it covers the whole thing
     /// rather than just its opening line.
     pub end_line: u32,
+    /// How many assertions — kept as `assertions.len()`, so nothing that reads
+    /// the count breaks while the count-shading it fed is retired.
     pub asserts: u32,
+    /// Every assertion, in source order, with its line and its kind.
+    pub assertions: Vec<Assertion>,
+    /// The `@tag`s above the test, as their own span.
+    ///
+    /// Not folded into `line`/`end_line`: a tag is to a test what an `@spec` is
+    /// to a function — the contract, not the body — so it is carried separately
+    /// and drawn in `--mark`, exactly as `spec_range` is. Folding it in would
+    /// say the tag is part of the test's code; leaving it out entirely means
+    /// selecting a skipped test dims `@tag :skip` one line above it, which is
+    /// the single most important fact about that test.
+    pub tag_range: Option<Range>,
     pub tags: Vec<String>,
     pub skipped: bool,
 }
@@ -243,6 +292,13 @@ pub struct TestInfo {
     pub is_async: bool,
     /// Module-scope setups: every test in the file inherits these.
     pub setups: Vec<SetupInfo>,
+    /// `@moduletag :skip` — applies to every test in the file.
+    ///
+    /// Kept apart from a test's own tags because it is a different fact. They
+    /// used to be the same one: `attribute_tag` matched `moduletag` too, so a
+    /// `@moduletag` at the top of a file was pushed onto the pending list and
+    /// silently became the *first test's* tag.
+    pub module_tags: Vec<String>,
     pub describes: Vec<Describe>,
 }
 

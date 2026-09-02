@@ -8,6 +8,10 @@ Editing
 
 Reading
 - [x] In reading mode every time I change to this mode, the reading view should start by the first reference always I enter to this mode for better readability.
+- [ ] In reading mode currently if we scroll and move between files, the header in code section have a short animation in yellow toi let the user now it's a different file, I'd like that animation for the whole code block to make more evident the file change.
 
 Home Page
 - [x] Add labels tags for the title
+
+Backlog:
+- [ ] Improve tests visualizations

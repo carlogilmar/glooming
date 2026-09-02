@@ -337,3 +337,103 @@ fn the_deps_block_is_pinned_for_the_overlay_to_match() {
         "src/lib/explore.ts seedDepsBlock pins the same string"
     );
 }
+
+/// The suite for the fixture module, so the test-kind wire format has something
+/// real behind it. Deliberately mirrors `mockup/tests.html`'s fixture: three
+/// describes, one public function of `accounts.ex` that no describe names, and a
+/// describe that names no function at all.
+const SUITE: &str = r#"defmodule MyApp.AccountsTest do
+  use MyApp.DataCase, async: false
+
+  setup do
+    %{user: user_fixture()}
+  end
+
+  describe "create_user/1" do
+    setup :put_locale
+
+    test "normalises the email", %{user: _user} do
+      assert {:ok, user} = Accounts.create_user(%{})
+      assert user.email == "ada@example.com"
+    end
+
+    @tag :slow
+    test "survives a concurrent insert" do
+      assert_receive {:inserted, _id}, 500
+    end
+  end
+
+  describe "get_user/1" do
+    test "returns nil for an unknown id" do
+      refute Accounts.get_user(Ecto.UUID.generate())
+    end
+  end
+end
+"#;
+
+fn suite() -> lgtm_lib::parse::TestInfo {
+    lgtm_lib::parse::parse(SUITE, "elixir")
+        .expect("parses")
+        .tests
+        .expect("a test suite")
+}
+
+/// The same rename trap as `the_wire_format_is_camel_case`, for the fields the
+/// test drawer now reads. `tagRange` in particular decides whether selecting a
+/// tagged test shows its `@tag` or dims it one line above.
+#[test]
+fn the_test_wire_format_is_camel_case() {
+    let json = serde_json::to_string(&suite()).expect("serializes");
+
+    for field in ["\"endLine\"", "\"tagRange\"", "\"moduleTags\"", "\"assertions\""] {
+        assert!(json.contains(field), "missing {field} in: {json}");
+    }
+    for leak in ["end_line", "tag_range", "module_tags", "case_template"] {
+        assert!(!json.contains(leak), "snake case leaked ({leak}): {json}");
+    }
+    // The kinds are what the drawer switches on, so their spelling is a contract.
+    assert!(json.contains("\"kind\":\"assert\""), "got: {json}");
+    assert!(json.contains("\"kind\":\"error\""), "got: {json}");
+    assert!(json.contains("\"kind\":\"message\""), "got: {json}");
+}
+
+/// A test is a span, not a line. This is what the drawer needs in order to stop
+/// dropping a one-line cursor on `test "…" do`.
+#[test]
+fn a_test_is_a_span_and_a_describe_contains_it() {
+    let t = suite();
+    let create = &t.describes[0];
+    let first = &create.tests[0];
+
+    assert!(first.end_line > first.line, "a test spans more than its header");
+    assert!(
+        create.line < first.line && create.end_line >= first.end_line,
+        "the describe contains its tests: {}-{} vs {}-{}",
+        create.line,
+        create.end_line,
+        first.line,
+        first.end_line
+    );
+
+    // Every test's assertions land inside the test's own span.
+    for d in &t.describes {
+        for test in &d.tests {
+            for a in &test.assertions {
+                assert!(a.line >= test.line && a.line <= test.end_line);
+            }
+        }
+    }
+}
+
+/// Dump the outline the frontend actually receives, for `probe` runs against
+/// `explore.ts`. Ignored by default — it writes a file, it does not assert.
+#[test]
+#[ignore]
+fn dump_suite_json() {
+    let o = lgtm_lib::parse::parse(SUITE, "elixir").expect("parses");
+    std::fs::write(
+        "../src-tauri/target/suite.json",
+        serde_json::to_string_pretty(&o).expect("serializes"),
+    )
+    .expect("writes");
+}
