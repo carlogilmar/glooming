@@ -231,6 +231,285 @@ pub fn export_note(path: String, markdown: String) -> AppResult<String> {
     Ok(path)
 }
 
+// ---- importing a gloom ----------------------------------------------------
+
+/// What the disk says about one file the header listed.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewFile {
+    pub path: String,
+    pub line: u32,
+    pub found: bool,
+}
+
+/// Whether the gloom's branch is the one you are standing on.
+///
+/// `Unchecked` is a first-class answer, not a failure. The check is narrow for
+/// the same reason `branch_mismatch` is: it speaks only when it is **sure**.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum BranchCheck {
+    /// Not a repository, no readable branch, or the file does not say.
+    Unchecked { why: String },
+    Same { branch: String },
+    Differs { wants: String, here: String },
+}
+
+/// Everything the panel needs, in one call: nothing is asked for twice and the
+/// frontend never has to sequence a read against a check.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportPreview {
+    pub name: String,
+    /// The project as the file wrote it — shown even when it does not resolve.
+    pub project: String,
+    /// The directory actually checked: `project`, or the one you chose instead.
+    pub root: String,
+    pub root_ok: bool,
+    /// True when `root` came from the picker rather than from the file.
+    pub root_chosen: bool,
+    pub branch: BranchCheck,
+    pub files: Vec<PreviewFile>,
+    pub note_bytes: usize,
+    pub problems: Vec<crate::import::Problem>,
+    /// Every check passed. **Import is offered only when this is true** — a
+    /// missing file, a missing directory and a different branch all block it.
+    pub ready: bool,
+}
+
+/// A gloom file with the parts we already know filled in.
+///
+/// The branch is read here rather than passed in, so the frontend never has to
+/// sequence two calls to produce one piece of text — the same habit `seed_doc`
+/// follows for git history.
+#[tauri::command]
+pub fn gloom_template(project: Option<String>) -> String {
+    let project = project.map(|p| normalize_path(&p));
+    let branch = project
+        .as_deref()
+        .and_then(|p| crate::git::current_branch(Path::new(p)));
+    crate::import::template(project.as_deref(), branch.as_deref())
+}
+
+/// Read a gloom file and say what is wrong with it, if anything.
+///
+/// Loading and validating are one step because they are one thought: you chose a
+/// file, and what you want to know is whether it will work. A separate
+/// "validate" button would be a control whose only purpose is to ask a question
+/// the app can already answer.
+#[tauri::command]
+pub fn preview_import(path: String, root: Option<String>) -> AppResult<ImportPreview> {
+    let file = normalize_path(&path);
+    let text = std::fs::read_to_string(&file)?;
+    Ok(inspect(&text, root.as_deref()))
+}
+
+/// The whole check, over text rather than a path, so it is testable without a
+/// gloom file on disk.
+pub fn inspect(text: &str, chosen: Option<&str>) -> ImportPreview {
+    let parsed = crate::import::parse(text);
+
+    let root_chosen = chosen.is_some();
+    let root_raw = chosen.unwrap_or(&parsed.project);
+    let root = normalize_path(root_raw);
+    let root_path = Path::new(&root);
+    let root_ok = !parsed.project.is_empty() && root_path.is_dir();
+
+    let files: Vec<PreviewFile> = parsed
+        .files
+        .iter()
+        .map(|f| PreviewFile {
+            found: root_ok && root_path.join(&f.path).is_file(),
+            path: f.path.clone(),
+            line: f.line,
+        })
+        .collect();
+
+    let branch = branch_check(&parsed, root_path, root_ok);
+
+    // Strict, and in that order: the header has to be readable before the disk
+    // is worth consulting, and the branch only means anything once the files
+    // are actually there.
+    let ready = parsed.ok()
+        && root_ok
+        && !files.is_empty()
+        && files.iter().all(|f| f.found)
+        && !matches!(branch, BranchCheck::Differs { .. });
+
+    ImportPreview {
+        name: parsed.name.clone(),
+        project: parsed.project.clone(),
+        root,
+        root_ok,
+        root_chosen,
+        branch,
+        files,
+        note_bytes: parsed.note.len(),
+        problems: parsed.problems,
+        ready,
+    }
+}
+
+/// Narrow by design — `Unchecked` wherever the answer would be a guess.
+///
+/// A file with no `branch:` imports without a word about git, and so does a
+/// directory that is not a repository, a detached HEAD, and a repo with no
+/// commits. "I cannot tell" is not "no", which is the policy `branch_mismatch`
+/// already follows for adding a file to an existing gloom.
+fn branch_check(parsed: &crate::import::Parsed, root: &Path, root_ok: bool) -> BranchCheck {
+    let Some(wants) = parsed.branch.as_deref() else {
+        return BranchCheck::Unchecked {
+            why: "the file does not say which branch it was read on".into(),
+        };
+    };
+    if !root_ok {
+        return BranchCheck::Unchecked {
+            why: "the project directory is not here".into(),
+        };
+    }
+    if crate::git::repo_root(root).is_none() {
+        return BranchCheck::Unchecked {
+            why: "the project is not a git repository".into(),
+        };
+    }
+    let Some(here) = crate::git::current_branch(root) else {
+        return BranchCheck::Unchecked {
+            why: "no branch is checked out here — a detached HEAD, or no commits yet".into(),
+        };
+    };
+    if here == wants {
+        BranchCheck::Same {
+            branch: here,
+        }
+    } else {
+        BranchCheck::Differs {
+            wants: wants.to_string(),
+            here,
+        }
+    }
+}
+
+/// Create a gloom from a file, or refuse and say why.
+///
+/// **Re-validated from scratch**, never from the preview the panel is showing.
+/// The branch in particular has to be read at the gesture rather than when the
+/// panel opened — you can check something out in a terminal while a dialog is on
+/// screen, and a check only as fresh as the last render is not fresh enough for
+/// the one action it guards.
+///
+/// The first file is the **origin**: `docs.path`, what the library groups by,
+/// and the one file that cannot be removed. The gloom's branch is the one *you*
+/// are on, because that is where its snapshots came from — the header's `branch:`
+/// was provenance, and it is not kept.
+#[tauri::command]
+pub async fn import_gloom(
+    state: State<'_, AppState>,
+    path: String,
+    root: Option<String>,
+) -> AppResult<Reading> {
+    let file = normalize_path(&path);
+    let text = std::fs::read_to_string(&file)?;
+    let id = create_from_file(&state.pool, &text, root.as_deref()).await?;
+    build_reading(&state, id).await
+}
+
+/// Create the gloom, or refuse and say why. Returns the new doc's id.
+///
+/// Takes a pool rather than `State` so the whole chain — parse, disk, git, rows
+/// — is testable without a Tauri app around it. The command above is the thin
+/// part, which is where the thin part belongs.
+///
+/// **Re-validated from scratch**, never from the preview the panel is showing.
+/// The branch in particular is read *here*, at the gesture, rather than when the
+/// panel opened: you can check something out in a terminal while a dialog is on
+/// screen, and a check only as fresh as the last render is not fresh enough for
+/// the one action it guards.
+pub async fn create_from_file(
+    pool: &sqlx::SqlitePool,
+    text: &str,
+    root: Option<&str>,
+) -> AppResult<i64> {
+    let preview = inspect(text, root);
+    if !preview.ready {
+        return Err(crate::error::AppError::BadInput(refusal(&preview)));
+    }
+
+    let parsed = crate::import::parse(text);
+    let root_path = Path::new(&preview.root);
+    let branch = crate::git::current_branch(root_path);
+
+    // The first file is the ORIGIN: `docs.path`, what the library groups by, and
+    // the one file that cannot be removed. The gloom's branch is the one *you*
+    // are on, because that is where these snapshots came from — the header's
+    // `branch:` was provenance, and it is not kept.
+    let mut id: Option<i64> = None;
+    for f in &parsed.files {
+        let full = root_path.join(&f.path);
+        let full_str = full.to_string_lossy().to_string();
+        let source = std::fs::read_to_string(&full)?;
+        let sha = sha256(&source);
+        let filename = full
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| f.path.clone());
+        let lang = crate::parse::lang_for_path(&full_str).unwrap_or("text");
+
+        let doc_id = match id {
+            Some(existing) => existing,
+            None => {
+                let doc = docs_db::create(
+                    pool,
+                    &full_str,
+                    &filename,
+                    lang,
+                    &parsed.name,
+                    branch.as_deref(),
+                    // The note lands verbatim. Nothing is seeded over it: an
+                    // imported gloom arrives already written.
+                    &parsed.note,
+                    &source,
+                    &sha,
+                )
+                .await?;
+                id = Some(doc.id);
+                doc.id
+            }
+        };
+        files_db::add(pool, doc_id, &full_str, &filename, lang, &source, &sha).await?;
+    }
+
+    id.ok_or_else(|| crate::error::AppError::BadInput("this file lists no files".into()))
+}
+
+/// One sentence saying why, for the case the UI should have prevented.
+fn refusal(p: &ImportPreview) -> String {
+    if let Some(first) = p.problems.first() {
+        return match first.line {
+            Some(n) => format!("line {n}: {}", first.message),
+            None => first.message.clone(),
+        };
+    }
+    if !p.root_ok {
+        return format!("{} is not a directory on this machine", p.root);
+    }
+    let missing: Vec<&str> = p
+        .files
+        .iter()
+        .filter(|f| !f.found)
+        .map(|f| f.path.as_str())
+        .collect();
+    if !missing.is_empty() {
+        return format!("not found under {}: {}", p.root, missing.join(", "));
+    }
+    if let BranchCheck::Differs { wants, here } = &p.branch {
+        return format!(
+            "This gloom was read on {wants}, and you are on {here}. \
+             Check out {wants} to import it as it was written."
+        );
+    }
+    "this file cannot be imported".into()
+}
+
 #[tauri::command]
 pub async fn open_reading(state: State<'_, AppState>, id: i64) -> AppResult<Reading> {
     build_reading(&state, id).await
@@ -438,5 +717,283 @@ mod export_tests {
         export_note(p.clone(), "second".into()).expect("writes again");
         assert_eq!(std::fs::read_to_string(&file).expect("reads"), "second");
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+/// A throwaway project on disk, shared by the preview tests and the end-to-end
+/// ones. Real directories and real files, because the whole point of these
+/// checks is the disk and a mock would test nothing.
+#[cfg(test)]
+pub mod import_tests_support {
+    pub struct Project(pub std::path::PathBuf);
+
+    pub const BOTH: &str = "  - lib/my_app/accounts.ex\n  - lib/my_app/billing.ex\n";
+
+    pub fn project(tag: &str) -> Project {
+        Project::new(tag)
+    }
+
+    impl Project {
+        pub fn new(tag: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("lgtm-import-{tag}-{}", std::process::id()));
+            std::fs::create_dir_all(dir.join("lib/my_app")).expect("dirs");
+            std::fs::write(dir.join("lib/my_app/accounts.ex"), "defmodule A do\nend\n").expect("a");
+            std::fs::write(dir.join("lib/my_app/billing.ex"), "defmodule B do\nend\n").expect("b");
+            Project(dir)
+        }
+        pub fn file(&self, files: &str, extra: &str) -> String {
+            format!(
+                "---\nproject: {}\nname: A gloom\n{extra}files:\n{files}---\n\nThe note.\n",
+                self.0.display()
+            )
+        }
+    }
+
+    impl Drop for Project {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).ok();
+        }
+    }
+}
+
+#[cfg(test)]
+mod import_tests {
+    use super::import_tests_support::{Project, BOTH};
+    use super::{inspect, BranchCheck};
+
+    #[test]
+    fn a_file_whose_every_part_resolves_is_ready() {
+        let p = Project::new("ready");
+        let v = inspect(&p.file(BOTH, ""), None);
+        assert!(v.problems.is_empty(), "{:?}", v.problems);
+        assert!(v.root_ok);
+        assert!(v.files.iter().all(|f| f.found));
+        assert!(v.ready, "{v:?}");
+        assert_eq!(v.name, "A gloom");
+        assert_eq!(v.files[0].path, "lib/my_app/accounts.ex", "the origin is first");
+    }
+
+    #[test]
+    fn a_missing_file_is_named_and_blocks() {
+        let p = Project::new("missing");
+        let listed = "  - lib/my_app/accounts.ex\n  - lib/my_app/legacy.ex\n";
+        let v = inspect(&p.file(listed, ""), None);
+
+        assert!(v.root_ok, "the directory is fine — only the file is not");
+        assert!(v.problems.is_empty(), "the file itself is well-formed");
+        let missing: Vec<&str> = v.files.iter().filter(|f| !f.found).map(|f| f.path.as_str()).collect();
+        assert_eq!(missing, vec!["lib/my_app/legacy.ex"]);
+        assert!(!v.ready);
+    }
+
+    #[test]
+    fn a_directory_that_is_not_here_blocks_and_reports_no_files() {
+        let v = inspect(
+            "---\nproject: /no/such/place\nname: n\nfiles:\n  - a.ex\n---\nnote",
+            None,
+        );
+        assert!(!v.root_ok);
+        assert!(!v.files[0].found, "nothing can be found under a root that is not there");
+        assert!(!v.ready);
+    }
+
+    /// The colleague case: their checkout is somewhere else, and every check
+    /// re-runs against the root they pick rather than the one the file names.
+    #[test]
+    fn choosing_a_root_re_resolves_every_file_against_it() {
+        let p = Project::new("chosen");
+        let text = format!(
+            "---\nproject: /somewhere/else\nname: n\nfiles:\n{BOTH}---\nnote"
+        );
+
+        let before = inspect(&text, None);
+        assert!(!before.root_ok && !before.ready);
+
+        let after = inspect(&text, Some(&p.0.to_string_lossy()));
+        assert!(after.root_ok && after.ready, "{after:?}");
+        assert!(after.root_chosen, "the panel can say the root was chosen here");
+        assert_eq!(after.project, "/somewhere/else", "the file's own value is still shown");
+    }
+
+    /// Narrow: a temp directory is not a repository, so there is nothing to
+    /// compare and the check says so instead of guessing.
+    #[test]
+    fn a_project_outside_git_is_not_refused() {
+        let p = Project::new("nogit");
+        let v = inspect(&p.file(BOTH, "branch: main\n"), None);
+        assert!(matches!(v.branch, BranchCheck::Unchecked { .. }), "{:?}", v.branch);
+        assert!(v.ready, "an unreadable branch must never block");
+    }
+
+    #[test]
+    fn a_file_without_a_branch_key_is_never_asked_about_git() {
+        let p = Project::new("nobranch");
+        let v = inspect(&p.file(BOTH, ""), None);
+        match &v.branch {
+            BranchCheck::Unchecked { why } => assert!(why.contains("does not say"), "{why}"),
+            other => panic!("expected Unchecked, got {other:?}"),
+        }
+        assert!(v.ready);
+    }
+
+    /// A real repository, so the branch arms are exercised rather than assumed.
+    /// `git init` is cheap and this is the one check that cannot be faked.
+    fn git_project(tag: &str) -> Option<Project> {
+        let p = Project::new(tag);
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&p.0)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+        };
+        run(&["init", "-b", "main"])?;
+        run(&["config", "user.email", "t@example.com"])?;
+        run(&["config", "user.name", "T"])?;
+        run(&["add", "."])?;
+        run(&["commit", "-m", "first"])?;
+        Some(p)
+    }
+
+    #[test]
+    fn the_same_branch_passes_and_says_so() {
+        let Some(p) = git_project("same") else { return };
+        let v = inspect(&p.file(BOTH, "branch: main\n"), None);
+        match &v.branch {
+            BranchCheck::Same { branch } => assert_eq!(branch, "main"),
+            other => panic!("expected Same, got {other:?}"),
+        }
+        assert!(v.ready);
+    }
+
+    /// Strict: every file resolved, and it still does not import. A gloom is a
+    /// reading of one version, and importing it onto another branch would put a
+    /// note describing `main` over code from somewhere else.
+    #[test]
+    fn a_different_branch_blocks_even_when_every_file_is_there() {
+        let Some(p) = git_project("differs") else { return };
+        let v = inspect(&p.file(BOTH, "branch: release/2.4\n"), None);
+
+        assert!(v.files.iter().all(|f| f.found), "the files are all present");
+        assert!(v.problems.is_empty(), "the file itself is fine");
+        match &v.branch {
+            BranchCheck::Differs { wants, here } => {
+                assert_eq!(wants, "release/2.4");
+                assert_eq!(here, "main");
+            }
+            other => panic!("expected Differs, got {other:?}"),
+        }
+        assert!(!v.ready, "a branch mismatch blocks the import");
+    }
+
+    #[test]
+    fn a_malformed_header_blocks_before_the_disk_is_consulted() {
+        let p = Project::new("malformed");
+        let text = format!(
+            "---\nprojekt: {}\nname: n\nfiles:\n{BOTH}---\nnote",
+            p.0.display()
+        );
+        let v = inspect(&text, None);
+        assert!(!v.ready);
+        assert!(v.problems.iter().any(|x| x.message.contains("unknown key `projekt`")));
+        assert!(v.problems.iter().any(|x| x.message.contains("`project` is missing")));
+    }
+
+    #[test]
+    fn the_note_is_measured_not_the_whole_file() {
+        let p = Project::new("bytes");
+        let v = inspect(&p.file(BOTH, ""), None);
+        assert_eq!(v.note_bytes, "The note.\n".len());
+    }
+}
+
+#[cfg(test)]
+mod import_end_to_end {
+    use super::{create_from_file, import_tests_support::*};
+    use crate::db::{doc_files as files_db, docs as docs_db, test_pool};
+
+    #[tokio::test]
+    async fn a_gloom_file_becomes_a_gloom() {
+        let p = project("e2e");
+        let pool = test_pool().await;
+
+        let text = p.file(BOTH, "");
+        let id = create_from_file(&pool, &text, None).await.expect("imports");
+
+        let doc = docs_db::get(&pool, id).await.expect("the doc");
+        assert_eq!(doc.title, "A gloom", "the name comes from the header");
+        assert_eq!(doc.markdown, "The note.\n", "the note lands verbatim");
+        assert!(
+            doc.path.ends_with("lib/my_app/accounts.ex"),
+            "the first file is the origin: {}",
+            doc.path
+        );
+
+        let files = files_db::list(&pool, id).await.expect("its files");
+        assert_eq!(files.len(), 2, "every listed file joined");
+        assert!(files[0].path.ends_with("accounts.ex"), "in the order written");
+        assert!(files[1].path.ends_with("billing.ex"));
+        assert_eq!(files[0].source, "defmodule A do\nend\n", "snapshotted from disk");
+    }
+
+    /// The strictness, at the door rather than only in the panel. A UI that
+    /// disables the button is a convenience; this is the rule.
+    #[tokio::test]
+    async fn a_missing_file_creates_nothing_at_all() {
+        let p = project("e2e-missing");
+        let pool = test_pool().await;
+
+        let text = p.file("  - lib/my_app/accounts.ex\n  - lib/my_app/gone.ex\n", "");
+        let err = create_from_file(&pool, &text, None)
+            .await
+            .expect_err("refuses");
+        assert!(err.to_string().contains("gone.ex"), "names it: {err}");
+
+        // Not "created the ones it could find" — nothing.
+        assert!(docs_db::list(&pool, None, 50).await.expect("list").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_malformed_header_creates_nothing_and_names_the_line() {
+        let p = project("e2e-bad");
+        let pool = test_pool().await;
+
+        let text = format!(
+            "---\nprojekt: {}\nname: n\nfiles:\n{BOTH}---\nnote",
+            p.0.display()
+        );
+        let err = create_from_file(&pool, &text, None).await.expect_err("refuses");
+        assert!(err.to_string().starts_with("invalid input: line 2:"), "{err}");
+        assert!(docs_db::list(&pool, None, 50).await.expect("list").is_empty());
+    }
+
+    /// Importing twice makes two glooms — no sync, no re-import, no "update
+    /// from file". The same call as opening a changed file as a new gloom.
+    #[tokio::test]
+    async fn importing_twice_makes_two_glooms() {
+        let p = project("e2e-twice");
+        let pool = test_pool().await;
+        let text = p.file(BOTH, "");
+
+        let a = create_from_file(&pool, &text, None).await.expect("first");
+        let b = create_from_file(&pool, &text, None).await.expect("second");
+        assert_ne!(a, b);
+        assert_eq!(docs_db::list(&pool, None, 50).await.expect("list").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_chosen_root_is_what_the_files_are_read_from() {
+        let p = project("e2e-root");
+        let pool = test_pool().await;
+
+        let text = format!("---\nproject: /somewhere/else\nname: n\nfiles:\n{BOTH}---\nnote");
+        assert!(create_from_file(&pool, &text, None).await.is_err());
+
+        let id = create_from_file(&pool, &text, Some(&p.0.to_string_lossy()))
+            .await
+            .expect("imports against the chosen root");
+        let doc = docs_db::get(&pool, id).await.expect("doc");
+        assert!(doc.path.starts_with(&p.0.to_string_lossy().to_string()), "{}", doc.path);
     }
 }

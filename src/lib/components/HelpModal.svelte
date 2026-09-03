@@ -150,6 +150,19 @@
             "notes app",
         },
         {
+          action: "New gloom file…",
+          what:
+            "On home. A gloom file with the project and branch already filled in — copy it, add " +
+            "the name and the files, save it as a .md, and import it. Also what to hand a skill",
+        },
+        {
+          action: "Import a gloom…",
+          what:
+            "On home. A markdown file whose front matter names the project and the files, and " +
+            "whose body becomes the note — a reading you can hand to someone. Nothing is created " +
+            "until the directory, every file and the branch all check out",
+        },
+        {
           action: "Save…",
           what:
             "The same markdown as a .md file, named after the gloom. lgtm writes nothing else " +

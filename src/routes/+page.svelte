@@ -9,6 +9,7 @@
   import Library from "$lib/components/Library.svelte";
   import FnPalette from "$lib/components/FnPalette.svelte";
   import HelpModal from "$lib/components/HelpModal.svelte";
+  import ImportModal from "$lib/components/ImportModal.svelte";
   import FilePalette from "$lib/components/FilePalette.svelte";
   import FilesModal from "$lib/components/FilesModal.svelte";
   import ExploreSections from "$lib/components/ExploreSections.svelte";
@@ -64,6 +65,9 @@
   let showPalette = $state(false);
   /** `?` — what everything does. */
   let showHelp = $state(false);
+  let showImport = $state(false);
+  /** Which half of the import panel to open on — the two are one component. */
+  let importMode = $state<"import" | "template">("import");
   /** The last few readings, offered on the welcome screen for a one-click reopen. */
   let recents = $state<DocSummary[]>([]);
 
@@ -1210,6 +1214,19 @@
                   {project ? "Open a different folder…" : "Open a folder…"}
                 </button>
                 <button onclick={pickFile}>Anywhere on disk… ⌘⇧O</button>
+                <!-- A gloom someone prepared: the files to open, and the note.
+                     Quiet text, like the other rare routes — it is not a fourth
+                     way to start, it is the way to start from someone else's. -->
+                <button onclick={() => { importMode = "import"; showImport = true; }}>
+                  Import a gloom…
+                </button>
+                <!-- The other half: text to copy, fill in and save as a .md.
+                     Its own route rather than only a link inside the importer,
+                     because writing one and opening one are different errands
+                     and the importer is the wrong door for the first. -->
+                <button onclick={() => { importMode = "template"; showImport = true; }}>
+                  New gloom file…
+                </button>
                 <button onclick={() => (showHelp = true)}>What it does ?</button>
               </span>
             </div>
@@ -1507,6 +1524,26 @@
 
   {#if showHelp}
     <HelpModal onclose={() => (showHelp = false)} />
+  {/if}
+
+  <!-- Rendered, not merely imported. `HelpModal` was imported, toggled by `?`
+       and by two buttons, and its `{#if}` had been dropped in an unrelated
+       rewire — so `?` did nothing for five commits. `component-audit.py` exists
+       because of that, and this block is why it stays quiet. -->
+  {#if showImport}
+    <ImportModal
+      mode={importMode}
+      projectPath={project?.path ?? null}
+      onclose={() => (showImport = false)}
+      onopen={async (reading) => {
+        showImport = false;
+        adopt(reading);
+        // An imported gloom is on the branch it was just validated against, so
+        // this always agrees — but `liveBranch` is shell state that would
+        // otherwise still describe whatever was open before.
+        await checkBranch();
+      }}
+    />
   {/if}
 
   {#if showLibrary}

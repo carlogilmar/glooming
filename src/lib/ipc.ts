@@ -285,6 +285,62 @@ export const removeDocFile = (id: number, path: string) =>
 export const exportNote = (path: string, markdown: string) =>
   invoke<string>("export_note", { path, markdown });
 
+// ---- importing a gloom -----------------------------------------------------
+
+export interface ImportProblem {
+  /** 1-based; null for something the file as a whole is missing. */
+  line: number | null;
+  message: string;
+}
+
+export interface PreviewFile {
+  path: string;
+  line: number;
+  found: boolean;
+}
+
+/**
+ * `unchecked` is a first-class answer, not a failure. The check speaks only when
+ * it is sure — no `branch:` in the file, not a repository, a detached HEAD.
+ */
+export type BranchCheck =
+  | { state: "unchecked"; why: string }
+  | { state: "same"; branch: string }
+  | { state: "differs"; wants: string; here: string };
+
+export interface ImportPreview {
+  name: string;
+  /** The project as the file wrote it — shown even when it does not resolve. */
+  project: string;
+  /** The directory actually checked: `project`, or the one you chose instead. */
+  root: string;
+  rootOk: boolean;
+  rootChosen: boolean;
+  branch: BranchCheck;
+  files: PreviewFile[];
+  noteBytes: number;
+  problems: ImportProblem[];
+  /** Every check passed. Import is offered only when this is true. */
+  ready: boolean;
+}
+
+/**
+ * A gloom file with the project and branch already filled in.
+ *
+ * Generated in Rust beside the parser, so a key cannot be added to one and
+ * forgotten in the other.
+ */
+export const gloomTemplate = (project?: string | null) =>
+  invoke<string>("gloom_template", { project: project ?? null });
+
+/** Read a gloom file and say what is wrong with it, if anything. */
+export const previewImport = (path: string, root?: string | null) =>
+  invoke<ImportPreview>("preview_import", { path, root: root ?? null });
+
+/** Create the gloom. Re-validates from scratch — never trusts the preview. */
+export const importGloom = (path: string, root?: string | null) =>
+  invoke<Reading>("import_gloom", { path, root: root ?? null });
+
 // ---- projects --------------------------------------------------------------
 
 export interface Project {

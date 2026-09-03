@@ -437,3 +437,23 @@ fn dump_suite_json() {
     )
     .expect("writes");
 }
+
+/// A gloom file written against a real checkout, run through the real command.
+/// Not a unit test of the parser — the point is that the pieces meet.
+#[test]
+fn a_gloom_file_written_here_validates_against_this_repo() {
+    let root = std::path::Path::new("..").canonicalize().expect("repo root");
+    let branch = lgtm_lib::git::current_branch(&root);
+
+    let text = format!(
+        "---\nproject: {}\nname: A reading of the importer\n{}files:\n  - src-tauri/src/import.rs\n  - README.md\n---\n\nThe note.\n",
+        root.display(),
+        branch.map(|b| format!("branch: {b}\n")).unwrap_or_default(),
+    );
+
+    let v = lgtm_lib::commands::docs::inspect(&text, None);
+    assert!(v.problems.is_empty(), "{:?}", v.problems);
+    assert!(v.root_ok, "the repo root resolves");
+    assert!(v.files.iter().all(|f| f.found), "{:?}", v.files);
+    assert!(v.ready, "a file written against this checkout imports: {v:?}");
+}

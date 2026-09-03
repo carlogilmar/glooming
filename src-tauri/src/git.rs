@@ -11,9 +11,15 @@ use crate::error::AppResult;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Walk up from a file to the nearest directory containing `.git`.
-pub fn repo_root(file: &Path) -> Option<PathBuf> {
-    let mut dir = file.parent()?;
+/// Walk up from a path to the nearest directory containing `.git`.
+///
+/// Starts *at* the path when it is a directory, and at its parent otherwise.
+/// Every caller but one passes a file, for which this is unchanged — but the
+/// import check asks about a project **directory**, and starting at the parent
+/// silently skipped the repository it was standing in and answered "not a git
+/// repository" for a repository.
+pub fn repo_root(path: &Path) -> Option<PathBuf> {
+    let mut dir = if path.is_dir() { path } else { path.parent()? };
     loop {
         if dir.join(".git").exists() {
             return Some(dir.to_path_buf());
@@ -175,6 +181,23 @@ fn relative_age(author_time: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A directory that IS the repository must resolve to itself. Starting at
+    /// `parent()` unconditionally made `repo_root` answer "no repository" for
+    /// the repository root, which is exactly what the import check passes it.
+    #[test]
+    fn a_repository_directory_resolves_to_itself() {
+        let dir = std::env::temp_dir().join(format!("lgtm-git-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(".git")).expect("dirs");
+        std::fs::write(dir.join(".git").join("HEAD"), "ref: refs/heads/main\n").expect("head");
+        std::fs::write(dir.join("a.ex"), "x").expect("file");
+
+        assert_eq!(repo_root(&dir).as_deref(), Some(dir.as_path()), "the directory itself");
+        assert_eq!(repo_root(&dir.join("a.ex")).as_deref(), Some(dir.as_path()), "a file in it");
+        assert_eq!(current_branch(&dir).as_deref(), Some("main"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     const PORCELAIN: &str = "\
 a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 1 1 2

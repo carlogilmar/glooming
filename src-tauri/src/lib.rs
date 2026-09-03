@@ -1,11 +1,14 @@
-mod commands;
+// `pub` for the same reason `db` is: `tests/pipeline.rs` runs the real chain
+// rather than a copy of it.
+pub mod commands;
 mod error;
-mod git;
+pub mod git;
 
 // `db` is public for its serde models, which the integration tests construct.
 pub mod db;
 
 // Public so the integration tests in tests/ can exercise the pipeline directly.
+pub mod import;
 pub mod parse;
 pub mod seed;
 
@@ -39,6 +42,9 @@ pub fn run() {
             commands::docs::add_doc_file,
             commands::docs::remove_doc_file,
             commands::docs::export_note,
+            commands::docs::gloom_template,
+            commands::docs::preview_import,
+            commands::docs::import_gloom,
             commands::projects::open_project,
             commands::projects::recent_projects,
             commands::projects::forget_project,
