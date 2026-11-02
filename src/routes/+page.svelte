@@ -9,45 +9,48 @@
   import Library from "$lib/components/Library.svelte";
   import FnPalette from "$lib/components/FnPalette.svelte";
   import HelpModal from "$lib/components/HelpModal.svelte";
-  import ImportModal from "$lib/components/ImportModal.svelte";
   import FilePalette from "$lib/components/FilePalette.svelte";
-  import FilesModal from "$lib/components/FilesModal.svelte";
   import ExploreSections from "$lib/components/ExploreSections.svelte";
   import Sky from "$lib/components/Sky.svelte";
-  import { byPath, origin as originOf } from "$lib/fileset";
+  import { byPath, knownModules, moduleLabels, moduleOf, namedPaths } from "$lib/fileset";
   import { displaySig, locate } from "$lib/select";
   import { theme } from "$lib/stores/theme.svelte";
   import { focus } from "$lib/stores/focus.svelte";
   import * as ipc from "$lib/ipc";
-  import type { Doc, DocSummary, OpenedFile, Range, ReadingFile } from "$lib/ipc";
+  import type { Doc, DocSummary, IndexedModule, Range, ReadingFile } from "$lib/ipc";
 
   /**
-   * A reading is a set of files, not one.
+   * The project is what you explore; a gloom is an optional note inside it.
    *
-   * `files` is the single source of truth for the left pane — including during
-   * the moment before a doc exists, when it holds exactly one synthesized entry.
-   * One shape everywhere was worth more than saving that conversion: everything
-   * downstream asks "which file am I looking at" and gets the same answer.
+   * `project` null is home. Inside one, three things stand where a reading's
+   * file set used to:
+   *
+   *   index     every module in the project and its file — names only, derived
+   *             from disk on open and on focus, never stored
+   *   files     the files loaded this session, with their outlines: the one on
+   *             screen, the ones you walked through, the ones the prose names.
+   *             A cache of live reads; nothing in it is a record of anything
+   *   doc       the open gloom, or null while exploring
+   *
+   * `mockup/workspace.html` is the contract.
    */
+  let project = $state<ipc.Project | null>(null);
+  let projects = $state<ipc.Project[]>([]);
+  let index = $state<IndexedModule[]>([]);
   let files = $state<ReadingFile[]>([]);
   let currentPath = $state<string | null>(null);
   let doc = $state<Doc | null>(null);
-  /** Paths the prose actually references — the strip's hollow-dot signal. */
+  /** This project's glooms, most recent first — the sidebar's top half. */
+  let glooms = $state<DocSummary[]>([]);
+  /** Paths the prose actually references — the tree marks their modules. */
   let referenced = $state<Set<string>>(new Set());
   /** The doc pane instance, so ⌘R and ⌘E can reach its mode toggles. */
   let docPane = $state<DocPane | null>(null);
-  /** Read mode takes the whole pane; the reference sections stand down. */
+  /** Read mode takes both panes; the sidebar and the views stand down. */
   let readingNow = $state(false);
-  /** ⌘⇧T — the reading's own files: switch, add, remove. */
-  let showReadingFiles = $state(false);
   /**
-   * Bumped when a *different* reading opens — the doc pane's cue to play its
-   * arrival animations once.
-   *
-   * It has to be a separate token rather than "did `doc` change", because adding
-   * or removing a file also replaces `doc`, and re-cascading the whole surface
-   * block because you opened one more file is exactly the kind of restlessness
-   * that gets animation turned off.
+   * Bumped when a *different* gloom opens — the doc pane's cue to play its
+   * arrival animations once, rather than on every keystroke's re-render.
    */
   let opened = $state(0);
   let markdown = $state("");
@@ -56,65 +59,120 @@
   let dirty = $state(false);
   let error = $state<string | null>(null);
   let showLibrary = $state(false);
-  /** ⌘T — search the open folder by name, or paste a path. */
+  /** ⌘T — search the project by name, or paste a path. */
   let showFiles = $state(false);
-  /** The folder being searched. Remembered, so it is picked once per project. */
-  let project = $state<ipc.Project | null>(null);
-  let projects = $state<ipc.Project[]>([]);
   /** ⌘P — jump to a function by name. */
   let showPalette = $state(false);
   /** `?` — what everything does. */
   let showHelp = $state(false);
-  let showImport = $state(false);
-  /** Which half of the import panel to open on — the two are one component. */
-  let importMode = $state<"import" | "template">("import");
-  /** The last few readings, offered on the welcome screen for a one-click reopen. */
-  let recents = $state<DocSummary[]>([]);
 
-  // ---- opening takes a moment, and the moment should be honest -------------
-  let loading = $state(false);
-  let loadingFile = $state("");
-  let loadingStep = $state("");
-  let loadTimer: ReturnType<typeof setTimeout> | null = null;
+  const file = $derived(byPath(files, currentPath));
+  const outline = $derived(file?.outline ?? null);
+  const moduleCount = $derived(outline?.modules?.length ?? 0);
+
+  /** Every module name, and how each is shown — see `moduleLabels`. */
+  const known = $derived(knownModules(index, files));
+  const labels = $derived(moduleLabels(known));
+
+  // ---- the sidebar ---------------------------------------------------------
 
   /**
-   * Announce a load, but not immediately.
-   *
-   * Parsing a small file is instant; showing a loader for 40ms is a flash of
-   * nothing, which reads worse than no loader at all. So it only surfaces once
-   * the work has actually taken long enough to be worth explaining — which in
-   * practice means a big file, or `git log` on a long history.
+   * Shown by default, collapsed with ⌘\ and always in read mode. Remembered,
+   * because a narrow window wants it gone and asking twice is once too many.
    */
-  function beginLoad(path: string) {
-    loadingFile = path.split("/").pop() ?? path;
-    loadingStep = "Reading the file";
-    if (loadTimer) clearTimeout(loadTimer);
-    loadTimer = setTimeout(() => (loading = true), 150);
+  let side = $state(true);
+  $effect(() => {
+    try {
+      side = localStorage.getItem("sidebar") !== "hidden";
+    } catch {
+      /* no storage — keep the default */
+    }
+  });
+  function toggleSide() {
+    side = !side;
+    try {
+      localStorage.setItem("sidebar", side ? "shown" : "hidden");
+    } catch {
+      /* not worth interrupting for */
+    }
   }
-
-  function endLoad() {
-    if (loadTimer) clearTimeout(loadTimer);
-    loadTimer = null;
-    loading = false;
-    loadingStep = "";
-  }
-  /** Existing docs for a just-opened path, awaiting your choice. */
-  let chooser = $state<DocSummary[] | null>(null);
-
-  const file = $derived(byPath(files, currentPath) ?? files[0] ?? null);
-  const origin = $derived(originOf(files));
 
   /**
-   * The gloom's name.
+   * The codebase as a namespace tree, for browsing rather than searching.
    *
-   * A gloom is one revision journey — a note and the files it led you through —
-   * and it is the only thing in the app that needs a name of its own: the files
-   * already have theirs, and "accounts.ex" says nothing about *why* you opened
-   * it. `docs.title` has existed since the first migration as "seeded from the
-   * module name, editable"; this is the editing.
-   *
-   * `null` when not renaming, so an empty string is a real value you can be
-   * holding mid-edit.
+   * Onboarding is the case this exists for: ⌘T assumes you know what to type,
+   * and someone new to a codebase does not know what exists. Test modules are
+   * left out — a suite is something you open from ⌘T, not a part of the app you
+   * navigate by — and counted at the foot instead.
+   */
+  let treeOpen = $state<Set<string>>(new Set());
+
+  interface TreeNode {
+    key: string;
+    seg: string;
+    depth: number;
+    module: IndexedModule | null;
+    kids: number;
+  }
+
+  const appModules = $derived(index.filter((m) => !m.test));
+  const testCount = $derived(index.length - appModules.length);
+
+  /** The module on screen, so the tree can open the way to it. */
+  const currentModule = $derived(moduleOf(file)?.name ?? null);
+
+  const treeRows = $derived.by(() => {
+    // Children by parent key, from every prefix of every module name.
+    const kids = new Map<string, Set<string>>();
+    const byName = new Map(appModules.map((m) => [m.module, m]));
+    for (const m of appModules) {
+      const parts = m.module.split(".");
+      for (let i = 0; i < parts.length; i++) {
+        const parent = parts.slice(0, i).join(".");
+        const key = parts.slice(0, i + 1).join(".");
+        if (!kids.has(parent)) kids.set(parent, new Set());
+        kids.get(parent)!.add(key);
+      }
+    }
+    // The way to the module on screen is always open — arriving in a module from
+    // a reference or the reach diagram should show you where it lives.
+    const open = new Set(treeOpen);
+    if (currentModule) {
+      const parts = currentModule.split(".");
+      for (let i = 1; i < parts.length; i++) open.add(parts.slice(0, i).join("."));
+    }
+    const out: TreeNode[] = [];
+    const walk = (parent: string, depth: number) => {
+      const here = [...(kids.get(parent) ?? [])].sort((a, b) => a.localeCompare(b));
+      for (const key of here) {
+        const n = kids.get(key)?.size ?? 0;
+        out.push({ key, seg: key.split(".").pop() ?? key, depth, module: byName.get(key) ?? null, kids: n });
+        if (n && open.has(key)) walk(key, depth + 1);
+      }
+    };
+    walk("", 0);
+    return { rows: out, open };
+  });
+
+  function toggleNode(key: string) {
+    const next = new Set(treeRows.open);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    treeOpen = next;
+  }
+
+  /** Modules the open gloom's prose names — what the file set used to be. */
+  const mentioned = $derived.by(() => {
+    const out = new Set<string>();
+    for (const m of index) if (referenced.has(m.path)) out.add(m.module);
+    return out;
+  });
+
+  // ---- the gloom's name and tags -------------------------------------------
+
+  /**
+   * Renaming happens in place. `null` when not renaming, so an empty string is a
+   * real value you can be holding mid-edit.
    */
   let renaming = $state<string | null>(null);
   let renameEl = $state<HTMLInputElement | null>(null);
@@ -123,49 +181,25 @@
   });
 
   /**
-   * What the title would be if you never touched it.
-   *
-   * Compared rather than stored, because a flag would have to be maintained by
-   * every path that writes a title and this cannot drift. An untouched name is
-   * shown as an invitation — the same idiom as the Explain section's, one level
-   * up: nothing is missing, there is just something worth doing.
-   */
-  const seededTitle = $derived(
-    origin?.outline?.tests?.module ??
-      origin?.outline?.modules?.[0]?.name ??
-      origin?.filename ??
-      "",
-  );
-
-  /**
-   * The moment a gloom stops being called after its module.
-   *
-   * Diffed against the *previous* title, so this fires on the transition rather
-   * than on the state — and the first paint of a gloom you named last week is
-   * seeded silently, because that is not an achievement. Exactly the file dot's
-   * rule, one level up. `lastTitle` is a plain `let`: bookkeeping only this
-   * effect reads, and a `$state` read and written in one effect is a freeze.
+   * The moment a gloom gets its name. Diffed against the previous title *of the
+   * same gloom*, so it fires on the transition — including the first name, from
+   * nothing — and a gloom you named last week opens silently. `last` is a plain
+   * `let`: bookkeeping only this effect reads, and a `$state` read and written in
+   * one effect is a freeze.
    */
   let named = $state(false);
-  let lastTitle = "";
+  let last = { id: -1, title: "" };
   $effect(() => {
+    const id = doc?.id ?? -1;
     const now = doc?.title ?? "";
-    const was = lastTitle;
-    lastTitle = now;
-    if (!was || !now || now === was) return;
+    const was = last;
+    last = { id, title: now };
+    if (id !== was.id || !now || now === was.title) return;
     named = true;
     const off = setTimeout(() => (named = false), 900);
     return () => clearTimeout(off);
   });
 
-  /**
-   * Tags, in `docs.label`.
-   *
-   * A gloom's name says what you were asking; a tag says what *kind* of thing it
-   * was — `perf`, `retry`, `PR 412` — which is how you find it again a month
-   * later among two hundred. They are searchable in the library, because a tag
-   * you cannot find by is decoration.
-   */
   const tags = $derived(parseTags(doc?.label));
   let tagging = $state(false);
   let tagDraft = $state("");
@@ -176,13 +210,13 @@
 
   async function saveTags(next: string[]) {
     if (!doc) return;
-    // An autosave may be in flight; take the row and put your own markdown back,
-    // the same one-payload habit as every other mutation here.
+    // An autosave may be in flight; take the row and put your own markdown back.
     const keep = markdown;
     try {
       doc = { ...(await ipc.saveDoc({ id: doc.id, label: joinTags(next) })), markdown: keep };
+      void loadGlooms();
     } catch (e) {
-      error = String(e).replace(/^Error:\s*/, "");
+      error = clean(e);
     }
   }
 
@@ -202,129 +236,26 @@
     const title = renaming.trim();
     renaming = null;
     if (!title || title === doc.title) return;
-    // An autosave may be in flight, so the server's markdown is not necessarily
-    // the sentence you are half-way through typing. Same one-payload habit as
-    // every other mutation here: take the row, put your own markdown back.
     const keep = markdown;
     try {
       doc = { ...(await ipc.saveDoc({ id: doc.id, title })), markdown: keep };
+      void loadGlooms();
     } catch (e) {
-      error = String(e);
+      error = clean(e);
     }
   }
-  const outline = $derived(file?.outline ?? null);
+
+  const clean = (e: unknown) => String(e).replace(/^Error:\s*/, "");
+
+  // ---- the branch: a label, nothing pinned to it ---------------------------
+
   /**
-   * Whether the file on screen has moved on since you read it.
-   *
-   * Per file, which is the whole reason there is a snapshot per file — and now
-   * purely a *statement*: a gloom shows the version it was read at, and the way to
-   * read a newer one is a new gloom. Nothing here offers to merge or re-snapshot.
-   */
-  /**
-   * Which branch the working tree is on *now*.
-   *
-   * Not `origin.branch`: that is sampled when the reading is built, so it says
-   * where you were when you opened the gloom. Check out another branch in a
-   * terminal and nothing in the app has any reason to notice — which is exactly
-   * the case this guard exists for, and exactly the case it missed. Re-asked when
-   * the reading changes and whenever the window comes back to the front, since
-   * switching branches happens in the terminal you just came from.
+   * Where the project's working tree is right now. Nothing depends on it — a
+   * gloom is about live code, so there is no version to keep consistent — but it
+   * is the one fact about *now* worth having in view while you read. Re-asked on
+   * focus, because you switch branches in the terminal you just came from.
    */
   let liveBranch = $state<string | null>(null);
-
-  async function checkBranch() {
-    const p = origin?.path;
-    if (!p) {
-      liveBranch = null;
-      return;
-    }
-    try {
-      liveBranch = await ipc.branchOf(p);
-    } catch {
-      liveBranch = null; // cannot tell is not a refusal
-    }
-  }
-
-  $effect(() => {
-    origin?.path;
-    void checkBranch();
-  });
-
-  $effect(() => {
-    const back = () => void checkBranch();
-    window.addEventListener("focus", back);
-    document.addEventListener("visibilitychange", back);
-    return () => {
-      window.removeEventListener("focus", back);
-      document.removeEventListener("visibilitychange", back);
-    };
-  });
-
-  /**
-   * Standing somewhere other than where this gloom was read.
-   *
-   * `doc.branch` is the branch the gloom holds; `liveBranch` is where the tree is
-   * now. `add_doc_file` refuses in that state, and the UI has to stop offering it —
-   * otherwise the only way to learn the rule is to trip over it.
-   */
-  const offBranch = $derived(
-    doc?.branch && liveBranch && doc.branch !== liveBranch
-      ? { gloom: doc.branch, here: liveBranch }
-      : null,
-  );
-
-  /**
-   * A passing remark, as opposed to a problem.
-   *
-   * The banner is for things that went wrong and stay wrong until you deal with
-   * them — a save that failed, a file that is not there — so it waits to be
-   * dismissed. Being on another branch is neither: it is a *state* you are
-   * standing in, you can see it in the chip and the disabled buttons, and a strip
-   * that stays across the top saying so becomes furniture within a minute. So it
-   * flashes in, holds long enough to read twice, and leaves.
-   *
-   * `leaving` exists so the exit is a fade rather than a disappearance; the timer
-   * is one `let`, not `$state`, because nothing renders it.
-   */
-  /**
-   * Structured, not a sentence: the two branch names are the readable part, and a
-   * badge is what makes them scannable in a line of prose. Keeping them apart also
-   * means they can be *copied* — which is the thing you actually want next, since
-   * the reply to this notice is a `git checkout` in another window.
-   */
-  let notice = $state<{ here: string; gloom: string } | null>(null);
-  let noticeLeaving = $state(false);
-  let noticeTimers: ReturnType<typeof setTimeout>[] = [];
-
-  /** Take it back. A notice belongs to the gloom it is about. */
-  function hush() {
-    noticeTimers.forEach(clearTimeout);
-    noticeTimers = [];
-    notice = null;
-    noticeLeaving = false;
-  }
-
-  function say(here: string, gloom: string) {
-    noticeTimers.forEach(clearTimeout);
-    noticeTimers = [];
-    noticeLeaving = false;
-    notice = { here, gloom };
-    noticeTimers.push(
-      setTimeout(() => (noticeLeaving = true), 5200),
-      setTimeout(() => {
-        notice = null;
-        noticeLeaving = false;
-      }, 5800),
-    );
-  }
-
-  /**
-   * A branch name is something you are about to type somewhere else.
-   *
-   * Every place one is shown is therefore a copy button, with the confirmation on
-   * the name itself — a toast for two words would be louder than the thing it is
-   * confirming.
-   */
   let copiedBranch = $state("");
   let copiedTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -339,473 +270,313 @@
     }
   }
 
-  /**
-   * Say why, once, wherever a blocked gesture is attempted.
-   *
-   * Awaited at the gesture, because a check that is only as fresh as the last
-   * window focus is not fresh enough for the one action it guards.
-   */
-  async function refuseOffBranch(): Promise<boolean> {
-    await checkBranch();
-    if (!offBranch) return false;
-    say(offBranch.here, offBranch.gloom);
-    return true;
-  }
+  // ---- the dot on a file that your prose has started naming ----------------
 
   /**
-   * The dot on the file button: the state of the file you are in.
-   *
-   * Hollow means your prose has not mentioned it — the same nudge an unwritten
-   * Explain section is, and the one signal the tab strip was carrying that the
-   * button has to keep.
-   */
-  const fileState = $derived(
-    !file ? "" : file.missing || file.stale ? "stale" : referenced.has(file.path) ? "" : "unread",
-  );
-
-  /**
-   * The dot earns its colour: it fills, and one ring leaves.
-   *
-   * A hollow dot means "you opened this and never wrote about it", and the moment
-   * your prose first names something in the file that stops being true. A state
-   * change *you* caused is the one place a small reward is honest — and it moved
-   * here from the tab strip along with everything else the strip was carrying.
+   * The moment your prose first names something in the module on screen, its
+   * row in the tree fills and one ring leaves. A state change you caused is the
+   * one place a small reward is honest.
    *
    * `seenRefs` is **not** `$state`: an effect that reads and writes the same
-   * reactive value re-triggers itself forever, which froze the whole window once
-   * already. Read reactive state or write it, never both.
+   * reactive value re-triggers itself forever, which froze the window once.
    */
   let seenRefs: Set<string> | null = null;
   let earnTimer: ReturnType<typeof setTimeout> | null = null;
   let earnedPath = $state<string | null>(null);
 
   $effect(() => {
-    const now = referenced; // the only reactive read in here
+    const now = referenced;
     const before = seenRefs;
     seenRefs = new Set(now);
-    // First paint of an already-written note is not an achievement.
     if (before === null) return;
-
     const fresh = [...now].filter((p) => !before.has(p));
     if (!fresh.length) return;
-
     earnedPath = fresh[0];
     if (earnTimer) clearTimeout(earnTimer);
     earnTimer = setTimeout(() => (earnedPath = null), 900);
   });
-  const moduleCount = $derived(outline?.modules?.length ?? 0);
+
+  // ---- loading files: always live ------------------------------------------
 
   /**
-   * Switching file fades the pane rather than crossfading line ranges.
-   *
-   * Within one file the outgoing range lingers under the incoming one, and that
-   * overlap is what makes a jump read as a connection. Across two different
-   * files there is nothing shared to fade between, so the same treatment reads
-   * as a glitch — the pane dips instead, and the code pane's header lights up in
-   * read-mode gold around the filename it was already showing.
-   *
-   * Naming the landing used to be a pill floating over the code. It was a second
-   * copy of a fact that was on screen the whole time, and it covered the first
-   * line of the file to tell you which file it was.
+   * Read a file from disk and keep it in the session's cache. Replaces an older
+   * read of the same path, so coming back to a file shows it as it is now.
+   */
+  async function loadFile(path: string): Promise<ReadingFile> {
+    const f = await ipc.openFile(path);
+    const at = files.findIndex((x) => x.path === f.path);
+    files = at === -1 ? [...files, f] : files.map((x, i) => (i === at ? f : x));
+    return f;
+  }
+
+  /**
+   * Switching file fades the pane rather than crossfading line ranges: across
+   * two files there is nothing shared to fade between, so the pane dips and the
+   * code pane's header lights up around the filename it was already showing.
    */
   let swapping = $state(false);
 
   async function showFile(path: string) {
     if (!path || path === currentPath) return;
-    swapping = true;
-    await new Promise((r) => setTimeout(r, 130));
+    swapping = !!currentPath;
+    if (swapping) await new Promise((r) => setTimeout(r, 130));
     currentPath = path;
     swapping = false;
   }
 
-  /** A click on a tab is a move out of whatever was selected in the old file. */
-  async function switchTo(path: string) {
-    focus.clear();
-    await showFile(path);
-  }
-
   /**
-   * Follow a call from the drawer into another file of the reading.
-   *
-   * Switch first, then select — a span means nothing over the wrong source. This
-   * is the one gesture that makes a multi-file reading feel like one thing rather
-   * than several files open at once.
+   * The trail. Every module you open is a step you can walk back along — the
+   * inspector chain, kept as back and forward rather than drawn, because the
+   * picture of it belongs to a later design and ← → is what the hands expect.
    */
-  async function jumpTo(path: string, line: number) {
-    await showFile(path);
-    const f = byPath(files, path);
-    const fn = f?.outline?.modules?.[0]?.functions.find((x) => x.line === line);
-    if (fn) selectFunction(fn);
-    else focus.gotoLine(line, (f?.source.split("\n").length ?? line) || line);
-  }
+  let back = $state<string[]>([]);
+  let fwd = $state<string[]>([]);
 
-  /**
-   * Pick something in the reference sections: focus it in the code beside it.
-   *
-   * A row that knows its own span says so, and that span is used directly. That
-   * is what a test needed: `locate` resolves a **function signature** against
-   * the outline, a test's name is not one, so it came back null and every click
-   * fell through to `gotoLine` — a one-line cursor on the `test "…" do` line,
-   * which is the bug this fixes. The parser has carried `endLine` all along.
-   *
-   * `tag` goes in the `@spec` slot, because a test's `@tag` is the same kind of
-   * thing: the contract above the block, drawn in `--mark`, selected with it but
-   * not part of its body.
-   */
-  function selectFromExplore(sig: string, line: number, span?: Range, tag?: Range | null) {
-    if (span) {
-      focus.select(sig, [span], [], tag ?? null, null);
-      return;
+  /** Open a file in the code pane, as a step in the trail. */
+  async function openPath(path: string, step = true) {
+    error = null;
+    try {
+      const f = byPath(files, path) ? (byPath(files, path) as ReadingFile) : await loadFile(path);
+      if (step && currentPath && currentPath !== f.path) {
+        back = [...back, currentPath];
+        fwd = [];
+      }
+      if (f.path !== currentPath) focus.clear();
+      await showFile(f.path);
+    } catch (e) {
+      error = clean(e);
     }
-    const at = locate(sig, outline?.modules?.[0] ?? null);
-    if (at) focus.select(sig, at.ranges, at.related, at.spec, at.doc);
-    else focus.gotoLine(line, file?.source.split("\n").length ?? line);
+  }
+
+  async function goBack() {
+    const to = back[back.length - 1];
+    if (!to || !currentPath) return;
+    back = back.slice(0, -1);
+    fwd = [...fwd, currentPath];
+    await openPath(to, false);
+  }
+
+  async function goForward() {
+    const to = fwd[fwd.length - 1];
+    if (!to || !currentPath) return;
+    fwd = fwd.slice(0, -1);
+    back = [...back, currentPath];
+    await openPath(to, false);
+  }
+
+  /** Open a module of the project by name, and land on `fn` in it if given. */
+  async function openModule(module: string, fn?: string) {
+    const at = index.find((m) => m.module === module);
+    if (!at) return;
+    await openPath(at.path);
+    if (!fn) return;
+    const mod = byPath(files, at.path)?.outline?.modules?.find((m) => m.name === module);
+    const hit = mod?.functions.find(
+      (f) => `${f.name}/${f.arity}` === fn || displaySig(f) === fn || f.name === fn.split("/")[0],
+    );
+    if (hit) selectFunction(hit, mod ?? null);
   }
 
   /**
-   * Go to a line without selecting anything — a describe, or any container.
+   * Load every module the prose names that is not loaded yet.
    *
-   * The function selection is cleared first: leaving it up would keep the file
-   * dimmed to 32% around a function you are no longer looking at, while the
-   * cursor sat somewhere else entirely.
+   * A reference resolves only against an outline, and nobody may have opened
+   * `Weather.Station` this session — so after each edit the note's qualified
+   * names are checked against the index and whatever is missing is read. The
+   * note re-renders when it lands. Failures are quiet: a file that vanished
+   * leaves its references plain, which the next edit will say again.
    */
-  function cursorFromExplore(line: number) {
-    focus.clearFunction();
-    focus.gotoLine(line, file?.source.split("\n").length ?? line);
+  let naming: ReturnType<typeof setTimeout> | null = null;
+  async function loadNamed() {
+    const want = namedPaths(markdown, index, files);
+    await Promise.all(want.map((p) => loadFile(p).catch(() => null)));
   }
-
-  /** The pre-doc moment still has to feed the code pane, so it gets one entry. */
-  function asReadingFile(o: OpenedFile): ReadingFile {
-    return {
-      path: o.path,
-      filename: o.filename,
-      lang: o.lang,
-      source: o.source,
-      sourceSha: o.sourceSha,
-      snapshotSha: o.sourceSha,
-      stale: false,
-      missing: false,
-      outline: o.outline,
-      hasGit: o.hasGit,
-      branch: o.branch,
-      origin: true,
-    };
-  }
-
-  /** Adopt a whole reading in one go — every mutation returns one of these. */
-  function adopt(r: ipc.Reading, prefer?: string | null) {
-    if (doc?.id !== r.doc.id) opened += 1;
-    doc = r.doc;
-    files = r.files;
-    markdown = r.doc.markdown;
-    dirty = false;
-    const want = prefer && r.files.some((f) => f.path === prefer) ? prefer : null;
-    currentPath = want ?? originOf(r.files)?.path ?? null;
-  }
-
-  /**
-   * Recents, grouped by when you last touched them.
-   *
-   * The grid became a list because a grid has no scan line: names sat at three
-   * different x positions, so you read in a zig-zag. It is not about density —
-   * measured, twelve cards take 392px and twelve rows 432px — it is that a row
-   * carries a date column and a group header without growing, which is how you
-   * find the one from last Tuesday among forty.
-   */
-  const RECENT_BUCKETS = [
-    ["Today", 1],
-    ["This week", 7],
-    ["Earlier", Infinity],
-  ] as const;
-
-  const grouped = $derived.by(() => {
-    const out: { label: string; items: DocSummary[] }[] = [];
-    for (const d of recents) {
-      const days = Math.floor((Date.now() - new Date(d.updatedAt).getTime()) / 86_400_000);
-      const label = (RECENT_BUCKETS.find(([, max]) => days < max) ?? RECENT_BUCKETS[2])[0];
-      const last = out[out.length - 1];
-      if (last && last.label === label) last.items.push(d);
-      else out.push({ label, items: [d] });
-    }
-    return out;
-  });
-
-  const loadRecents = () =>
-    ipc
-      // Twelve rather than six: a card filled a grid cell and a row does not, so
-      // the list can be longer without taking the screen. Anything past this is
-      // ⌘K's job — home is "pick up where you left off", the library is "find any
-      // of the two hundred".
-      .listDocs(undefined, 12)
-      .then((r) => (recents = r))
-      .catch(() => (recents = []));
-
-  // Home is the only place these are shown, so only load them while it is up. Deleting from the library has to say so explicitly — it
-  // changes the same query without touching any state this effect reads.
   $effect(() => {
-    if (files.length) return;
-    loadRecents();
+    markdown;
+    index;
+    if (!doc) return;
+    if (naming) clearTimeout(naming);
+    naming = setTimeout(() => void loadNamed(), 250);
   });
 
-  // ---- opening ------------------------------------------------------------
+  /**
+   * Back from somewhere else, re-read what is on screen.
+   *
+   * The code is live, so an edit made in your editor should be here when you
+   * return — and so should a module someone added, which is why the index is
+   * rebuilt too. One walk and a handful of reads; caching either would be
+   * inventing a staleness problem.
+   */
+  async function refreshLive() {
+    if (!project) return;
+    const p = project;
+    try {
+      index = await ipc.projectIndex(p.path);
+      liveBranch = await ipc.branchOf(p.path);
+    } catch {
+      /* a project folder that vanished is reported when you next act in it */
+    }
+    const fresh = await Promise.all(files.map((f) => ipc.openFile(f.path).catch(() => f)));
+    // Only adopt what changed, so an unchanged file keeps its identity and the
+    // panes do not re-render for nothing.
+    files = files.map((f, i) => (fresh[i].source === f.source ? f : fresh[i]));
+  }
 
+  $effect(() => {
+    const returned = () => {
+      if (document.visibilityState === "visible") void refreshLive();
+    };
+    window.addEventListener("focus", returned);
+    document.addEventListener("visibilitychange", returned);
+    return () => {
+      window.removeEventListener("focus", returned);
+      document.removeEventListener("visibilitychange", returned);
+    };
+  });
+
+  // ---- projects ------------------------------------------------------------
+
+  const loadProjects = () =>
+    ipc
+      .recentProjects()
+      .then((r) => (projects = r))
+      .catch(() => (projects = []));
+
+  $effect(() => {
+    if (!project) void loadProjects();
+  });
+
+  async function loadGlooms() {
+    if (!project) return;
+    try {
+      glooms = await ipc.listDocs(project.id, undefined, 200);
+    } catch {
+      glooms = [];
+    }
+  }
+
+  /** Enter a project: its index, its glooms, and an empty code pane. */
+  async function enterProject(path: string) {
+    error = null;
+    try {
+      const p = await ipc.openProject(path);
+      await leaveProject();
+      project = p;
+      index = await ipc.projectIndex(p.path);
+      liveBranch = await ipc.branchOf(p.path).catch(() => null);
+      await loadGlooms();
+    } catch (e) {
+      error = clean(e);
+    }
+  }
+
+  async function chooseProject() {
+    const picked = await openDialog({ directory: true, multiple: false });
+    if (typeof picked === "string") await enterProject(picked);
+  }
+
+  /** A file from anywhere on disk — it is read, not added to anything. */
   async function pickFile() {
-    if (doc && (await refuseOffBranch())) return;
     const picked = await openDialog({
       multiple: false,
       filters: [{ name: "Elixir", extensions: ["ex", "exs"] }],
     });
-    if (typeof picked === "string") await load(picked);
+    if (typeof picked === "string") await openPath(picked);
   }
 
-  /** Pick a folder to search. Once per project, not once per file. */
-  async function chooseProject() {
-    const picked = await openDialog({ directory: true, multiple: false });
-    if (typeof picked !== "string") return;
-    try {
-      project = await ipc.openProject(picked);
-      projects = await ipc.recentProjects();
-      // Land straight in the search: picking a folder and being returned to an
-      // unchanged screen leaves you wondering whether it worked.
-      showFiles = true;
-    } catch (e) {
-      error = String(e);
-    }
-  }
-
-  async function useProject(p: ipc.Project) {
-    project = await ipc.openProject(p.path).catch(() => p);
-    projects = await ipc.recentProjects();
-    showFiles = true;
-  }
-
-  $effect(() => {
-    ipc
-      .recentProjects()
-      .then((r) => {
-        projects = r;
-        // The last folder is almost always the one you want again.
-        if (!project && r.length) project = r[0];
-      })
-      .catch(() => (projects = []));
-  });
-
-  /**
-   * Open a file.
-   *
-   * **With a reading already open, this adds to it.** That is the whole flow the
-   * feature exists for: during a review you open file after file, and those files
-   * *are* the group — there is no separate gesture for creating one. Opening
-   * something unrelated by accident is undone by the `×` on its tab, which is
-   * cheaper than being asked "same reading or new one?" every single time. The
-   * deliberate out is ← Home, which starts cold.
-   */
-  async function load(path: string) {
-    error = null;
-    if (doc) return addFile(path);
-
-    focus.clear();
-    beginLoad(path);
-    try {
-      const opened = await ipc.openFile(path);
-      files = [asReadingFile(opened)];
-      currentPath = opened.path;
-      if (opened.existing.length) {
-        // Your past reading of this file is worth more than a fresh start — and
-        // that includes a reading where this file is one of several, not the one
-        // it started from.
-        chooser = opened.existing;
-        doc = null;
-        markdown = "";
-      } else {
-        chooser = null;
-        await startFreshDoc(files[0]);
-      }
-    } catch (e) {
-      // The branch guard's refusal is a sentence written for you — "this gloom was
-      // read on main, and you are on fix/x…" — so it goes to the banner as it is,
-      // without the `Error:` a raw `String(e)` would prepend.
-      error = String(e).replace(/^Error:\s*/, "");
-    } finally {
-      endLoad();
-    }
-  }
-
-  /**
-   * Bring a file into the open reading. Nothing is seeded: it contributes source
-   * to read and functions the `/` menu can offer, and leaves your prose alone.
-   */
-  async function addFile(path: string) {
-    if (!doc) return;
-    // The last gate before the snapshot is taken. Rust refuses too — this one is
-    // here so the message is the app's sentence rather than a caught error, and
-    // so the loading state never starts for something that cannot finish.
-    if (await refuseOffBranch()) return;
-    focus.clear();
-    beginLoad(path);
-    loadingStep = "Adding it to this reading";
-    try {
-      const r = await ipc.addDocFile(doc.id, path);
-      // The markdown is the one thing not to adopt here: an autosave may be in
-      // flight, and replacing what you are typing with the server's copy would
-      // lose the sentence you are in the middle of.
-      const pending = markdown;
-      adopt(r, path);
-      markdown = pending;
-      currentPath = path;
-    } catch (e) {
-      error = String(e);
-    } finally {
-      endLoad();
-    }
-  }
-
-  async function removeFile(path: string) {
-    if (!doc) return;
-    try {
-      const r = await ipc.removeDocFile(doc.id, path);
-      const pending = markdown;
-      adopt(r, path === currentPath ? null : currentPath);
-      markdown = pending;
-      focus.clear();
-    } catch (e) {
-      error = String(e);
-    }
-  }
-
-  /** Chooser button: seeding and saving take the same beat as a fresh open. */
-  async function startFreshFrom(opened: ReadingFile) {
-    beginLoad(opened.path);
-    try {
-      await startFreshDoc(opened);
-    } catch (e) {
-      error = String(e);
-    } finally {
-      endLoad();
-    }
-  }
-
-  async function startFreshDoc(opened: ReadingFile) {
-    // Named per IPC call, so the message is what is actually happening rather
-    // than a spinner pretending. Seeding is the slow one: it shells out to
-    // `git log --follow`, which on a long history is the whole wait.
-    loadingStep = "Reading history and seeding the doc";
-    const seeded = opened.outline
-      ? await ipc.seedDoc(opened.path, opened.outline, opened.source)
-      : `# ${opened.filename}\n\n> _what is this file for?_\n`;
-
-    loadingStep = "Saving";
-    doc = await ipc.createDoc({
-      path: opened.path,
-      lang: opened.lang ?? "text",
-      // A test suite names itself; a config or a script has only its filename.
-      title:
-        opened.outline?.tests?.module ??
-        opened.outline?.modules?.[0]?.name ??
-        opened.filename,
-      branch: opened.branch,
-      markdown: seeded,
-      source: opened.source,
-    });
-    markdown = doc.markdown;
-    dirty = false;
-    chooser = null;
-
-    // Re-read the reading rather than trusting the local shape: the origin's
-    // file row is created server-side, and this is the one call that returns it.
-    adopt(await ipc.openReading(doc.id), opened.path);
-
-    // A NEW gloom opens with its name selected, so naming it costs a sentence
-    // and skipping it costs one key. This is the only moment it happens: on a
-    // gloom you already named, stealing the caret would be an interruption
-    // rather than an invitation.
-    renaming = doc.title;
-  }
-
-  async function openExisting(summary: DocSummary, prefer?: string | null) {
-    beginLoad(summary.path);
-    try {
-      await openExistingInner(summary, prefer);
-    } finally {
-      endLoad();
-    }
-  }
-
-  /**
-   * `prefer` is the path you arrived by. Choosing a reading of accounts.ex from
-   * having just opened billing.ex should land you on billing.ex — you asked for
-   * that file, the reading is only how you are going to read it.
-   */
-  async function openExistingInner(summary: DocSummary, prefer?: string | null) {
-    loadingStep = "Re-reading the files";
-    const r = await ipc.openReading(summary.id);
-    adopt(r, prefer ?? null);
-    chooser = null;
-
-    // A reading survives its files moving — each carries its own snapshot, which
-    // is what gets shown when the path no longer resolves — so "not on disk" is
-    // not news worth a banner. What *is* worth saying is the thing you cannot do
-    // from here and how to fix it, and the overwhelmingly common reason a file has
-    // vanished is that you are standing on another branch.
-    await checkBranch();
-    if (offBranch) {
-      // One line. A banner is a glance, and the reassurance that the reading
-      // still works belongs in `?`, not across the top of the window.
-      say(offBranch.here, offBranch.gloom);
-    }
-  }
-
-  /**
-   * Back to the welcome screen.
-   *
-   * Flushes first: autosave is on an 800ms debounce, so leaving mid-sentence
-   * would otherwise fire the timer into a doc that is no longer open and lose
-   * the last thing you typed. `doc` is cleared before `markdown` so the
-   * autosave effect sees no doc rather than an empty one.
-   */
-  async function goHome() {
-    if (timer) clearTimeout(timer);
-    await save();
-
+  async function leaveProject() {
+    await closeGloom();
     focus.clear();
     files = [];
     currentPath = null;
-    doc = null;
-    markdown = "";
-    chooser = null;
-    dirty = false;
-    error = null;
-    // The notice is about the gloom you just left — it has no meaning on home, and
-    // its own timer would have taken 5s to work that out.
-    hush();
+    index = [];
+    glooms = [];
+    back = [];
+    fwd = [];
     referenced = new Set();
   }
 
   /**
-   * A reading was deleted in the library.
-   *
-   * The recents list is a cached query and the query's answer just changed, so it
-   * is reloaded. And if the deleted reading is the one on screen, it has to go:
-   * leaving it open means the next autosave writes to a row that no longer
-   * exists, which surfaces as a "not found" banner several seconds later with no
-   * obvious cause.
+   * Back to home. Flushes first: autosave is on an 800ms debounce, so leaving
+   * mid-sentence would otherwise fire the timer into a gloom that is no longer
+   * open and lose the last thing you typed.
    */
-  function onDocDeleted(id: number) {
-    loadRecents();
-    if (doc?.id !== id) return;
+  async function goHome() {
+    await leaveProject();
+    project = null;
+    error = null;
+  }
 
-    // Cleared without saving, deliberately — there is nothing left to save to,
-    // and `doc` goes first so the autosave effect sees no doc rather than an
-    // empty one.
+  // ---- glooms --------------------------------------------------------------
+
+  /**
+   * Start a gloom. It opens with its name selected, so naming it costs a
+   * sentence and skipping it costs one key. The code pane stays where you were:
+   * a gloom usually starts *because* of what you are looking at.
+   */
+  async function newGloom() {
+    if (!project) return;
+    try {
+      await closeGloom();
+      const d = await ipc.createDoc(project.id);
+      adoptDoc(d);
+      renaming = "";
+      await loadGlooms();
+    } catch (e) {
+      error = clean(e);
+    }
+  }
+
+  function adoptDoc(d: Doc) {
+    doc = d;
+    markdown = d.markdown;
+    dirty = false;
+    opened += 1;
+  }
+
+  /**
+   * Open a gloom, landing on the first module its prose names — that is where
+   * your understanding of it starts. A gloom that names nothing yet leaves the
+   * code pane where it was.
+   */
+  async function openGloom(id: number) {
+    if (doc?.id === id) return;
+    try {
+      await closeGloom();
+      const d = await ipc.loadDoc(id);
+      adoptDoc(d);
+      const first = namedPaths(d.markdown, index, [])[0];
+      await loadNamed();
+      if (first) await openPath(first);
+    } catch (e) {
+      error = clean(e);
+    }
+  }
+
+  /** Back to exploring. The code pane keeps your place. */
+  async function closeGloom() {
     if (timer) clearTimeout(timer);
-    focus.clear();
+    await save();
+    if (readingNow) docPane?.toggleRead();
     doc = null;
     markdown = "";
-    files = [];
-    currentPath = null;
-    chooser = null;
     dirty = false;
-    hush();
+    renaming = null;
+    referenced = new Set();
+  }
+
+  /**
+   * A gloom was deleted in the library. The sidebar is a cached query and its
+   * answer just changed; and if it is the one on screen it has to go, or the
+   * next autosave writes to a row that no longer exists.
+   */
+  function onDocDeleted(id: number) {
+    void loadGlooms();
+    if (doc?.id !== id) return;
+    if (timer) clearTimeout(timer);
+    doc = null;
+    markdown = "";
+    dirty = false;
     referenced = new Set();
   }
 
@@ -825,13 +596,12 @@
       doc = await ipc.saveDoc({ id: doc.id, markdown });
       dirty = false;
     } catch (e) {
-      error = String(e);
+      error = clean(e);
     } finally {
       saving = false;
     }
   }
 
-  // Autosave on every edit, and never leave a pending edit unsaved on exit.
   $effect(() => {
     const text = markdown;
     if (!doc || text === doc.markdown) return;
@@ -852,15 +622,37 @@
     };
   });
 
-  // ---- keyboard -----------------------------------------------------------
+  // ---- selecting from the views --------------------------------------------
 
   /** Select a whole function: every clause, its @spec and its @doc. */
-  function selectFunction(f: ipc.FnInfo) {
+  function selectFunction(f: ipc.FnInfo, module = outline?.modules?.[0] ?? null) {
     const sig = displaySig(f);
-    const at = locate(sig, outline?.modules?.[0] ?? null);
+    const at = locate(sig, module);
     // `select`, not `set` — navigation must never toggle focus off.
     if (at) focus.select(sig, at.ranges, at.related, at.spec, at.doc);
   }
+
+  /**
+   * Pick something in the views: focus it in the code beside it. A row that
+   * knows its own span — a test — says so, and that span is used directly.
+   */
+  function selectFromExplore(sig: string, line: number, span?: Range, tag?: Range | null) {
+    if (span) {
+      focus.select(sig, [span], [], tag ?? null, null);
+      return;
+    }
+    const at = locate(sig, outline?.modules?.[0] ?? null);
+    if (at) focus.select(sig, at.ranges, at.related, at.spec, at.doc);
+    else focus.gotoLine(line, file?.source.split("\n").length ?? line);
+  }
+
+  /** Go to a line without selecting anything — a describe, or any container. */
+  function cursorFromExplore(line: number) {
+    focus.clearFunction();
+    focus.gotoLine(line, file?.source.split("\n").length ?? line);
+  }
+
+  // ---- keyboard -----------------------------------------------------------
 
   /** True while a text field owns the keyboard — never steal keys from typing. */
   function isTyping(target: EventTarget | null): boolean {
@@ -871,73 +663,70 @@
 
   function onKeydown(e: KeyboardEvent) {
     const meta = e.metaKey || e.ctrlKey;
+    const key = e.key.toLowerCase();
 
     if (e.key === "Escape") {
-      if (showReadingFiles) showReadingFiles = false;
-      else if (showHelp) showHelp = false;
+      if (showHelp) showHelp = false;
       else if (showPalette) showPalette = false;
       else if (showFiles) showFiles = false;
       else if (showLibrary) showLibrary = false;
       // Read mode is a mode, and every mode needs an escape that does not depend
-      // on finding the button that started it. Clearing the focus underneath it
-      // would do nothing visible anyway — the next scroll frame sets it again.
+      // on finding the button that started it.
       else if (readingNow) docPane?.toggleRead();
       else focus.clear();
       return;
     }
 
-    // ⌘O is the muscle memory for "open", so it opens the thing you almost always
-    // want: search the folder you are already in. The system picker is for the
-    // rarer case of a file outside the project, and keeps ⇧.
-    //
-    // Every one of these compares `e.key` LOWERCASED. `⇧O` arrives as "O", so a
-    // bare `=== "o"` meant the shifted form silently did nothing — and the same
-    // is true of every shortcut here with Caps Lock on.
-    if (meta && e.key.toLowerCase() === "o") {
+    if (e.key === "?" && !meta && !isTyping(e.target)) {
       e.preventDefault();
-      if (e.shiftKey) pickFile();
-      else showFiles = true;
+      showHelp = !showHelp;
       return;
     }
-    if (meta && e.key.toLowerCase() === "s") {
+
+    if (!project) return;
+
+    // ⌘O and ⌘T both search the project: ⌘T is what the status bar advertises,
+    // ⌘O is what fingers reach for. The system picker keeps ⇧. Every key is
+    // compared LOWERCASED — `⇧O` arrives as "O".
+    if (meta && (key === "o" || key === "t")) {
+      e.preventDefault();
+      if (key === "o" && e.shiftKey) pickFile();
+      else showFiles = !showFiles;
+      return;
+    }
+    if (meta && key === "s") {
       e.preventDefault();
       save();
       return;
     }
-    if (meta && e.key.toLowerCase() === "k") {
+    if (meta && key === "k") {
       e.preventDefault();
       showLibrary = !showLibrary;
       return;
     }
-    // Every way of adding a file goes through the same refusal, so the rule is
-    // learned once rather than per gesture.
-    if (meta && (e.key.toLowerCase() === "t" || e.key.toLowerCase() === "o") && doc && offBranch) {
+    if (meta && e.key === "\\") {
       e.preventDefault();
-      void refuseOffBranch();
+      toggleSide();
       return;
     }
-    if (meta && e.key.toLowerCase() === "t") {
+    // The trail. `[` and `]` alone are CodePane's function motions, so these
+    // take the modifier.
+    if (meta && e.key === "[") {
       e.preventDefault();
-      // ⌘T adds a file to the reading; ⇧ manages the ones already in it. Paired
-      // on purpose — they are the two halves of "the files of this review".
-      if (e.shiftKey) {
-        if (doc) showReadingFiles = !showReadingFiles;
-      } else {
-        showFiles = !showFiles;
-      }
+      void goBack();
       return;
     }
-    // ⌘R would reload the webview in a dev build, so it is prevented before
-    // anything else can act on it.
-    if (meta && e.key.toLowerCase() === "r") {
+    if (meta && e.key === "]") {
+      e.preventDefault();
+      void goForward();
+      return;
+    }
+    // ⌘R would reload the webview in a dev build, so it is prevented first.
+    if (meta && key === "r") {
       e.preventDefault();
       docPane?.toggleRead();
       return;
     }
-    // ⌥1 / ⌥2 are the split's two ends, driven from the keyboard: navigation only,
-    // note only, and the same key again to come back. They are the two tabs the
-    // other design would have given, on a control that also does everything in
-    // between.
     if (e.altKey && (e.key === "1" || e.code === "Digit1") && doc) {
       e.preventDefault();
       docPane?.toggleExplore();
@@ -948,44 +737,31 @@
       docPane?.toggleNote();
       return;
     }
-    // ⌘E flips preview/edit. A toggle rather than two bindings: you are always in
-    // one of the two, so there is nothing for a second key to say.
-    if (meta && e.key.toLowerCase() === "e") {
+    if (meta && key === "e") {
       e.preventDefault();
       docPane?.toggleEdit();
       return;
     }
-    if (meta && e.key.toLowerCase() === "p") {
+    if (meta && key === "p") {
       e.preventDefault();
       if (outline?.modules?.[0]?.functions.length) showPalette = !showPalette;
       return;
     }
-
-    // `?` is a plain character inside a text field, so it only opens help when
-    // nothing is being typed into.
-    if (e.key === "?" && !meta && !isTyping(e.target)) {
-      e.preventDefault();
-      showHelp = !showHelp;
-      return;
-    }
-
-    // Everything else that moves around the code — j/k, [ ], gg, G, H/M/L,
-    // { }, ⌃d/⌃u, zz, yy — belongs to CodePane, which owns the viewport those
-    // motions are measured against.
+    // Everything else that moves around the code — j/k, [ ], gg, G and the rest —
+    // belongs to CodePane, which owns the viewport those motions are measured in.
   }
 </script>
 
-<!-- Surface and the boundary for whatever file is on screen, rendered at the top
-     of the note's own scroll container so the right pane is one column you scroll
-     down rather than two panes competing for height. -->
+<!-- The live views of whatever module is on screen, rendered inside the doc
+     pane so the reach diagram's hover and trace keep the host they need. -->
 {#snippet exploreSections()}
   {#if file}
     <ExploreSections
       {file}
-      {files}
+      {index}
       selected={focus.sig}
       onselect={selectFromExplore}
-      onjump={jumpTo}
+      onjump={(module, fn) => openModule(module, fn)}
       oncursor={cursorFromExplore}
     />
   {/if}
@@ -995,11 +771,9 @@
 
 <div class="app">
   <!-- Row 1: the window's own chrome. Draggable, and kept nearly empty — it
-       shares this strip with the macOS traffic lights. -->
+       shares this strip with the macOS traffic lights. Only the element carrying
+       the attribute is draggable, so the label and the spacer carry it too. -->
   <div class="titlebar" data-tauri-drag-region>
-    <!-- Only the element carrying the attribute is draggable, so the label and
-         the empty stretch carry it too — otherwise the grabbable area is just
-         the few pixels of gap between them. -->
     <span class="brand" data-tauri-drag-region>Glooming</span>
     <span class="spacer" data-tauri-drag-region></span>
     <button class="btn icon" onclick={() => theme.cycle()} title="Cycle theme">
@@ -1010,115 +784,32 @@
     </button>
   </div>
 
-  <!-- Row 2: the app's own header. Everything about the file being read lives
-       here, where there is room for it — and during a load it would still be
-       describing the file you just left, so it steps aside. -->
-  {#if file && !loading}
+  {#if project}
+    <!-- Row 2: the project, and the ways around it. -->
     <div class="apphead">
-      <button class="btn home" onclick={goHome} title="Back to your recent glooms">
-        ← Home
-      </button>
-
-
-      <!-- The file's identity lives in the code pane's own header, where the
-           filename doubles as a copy-the-path button. This row is for the
-           reading's context and the actions. -->
-      {#if file.branch}
-        <!-- Keyed on the value: checking out another branch replays the arrival,
-             which is the one moment this label has something to say. Everything
-             below you may have changed, and the gloom did not. -->
-        <!-- The GLOOM's branch, not the working tree's.
-             A gloom is pinned to the versions it was read at, and the branch those
-             versions came from is part of that reading — it does not change when
-             you check something else out. Showing the live branch made the header
-             report the state of your tree, which is a different tool's job and was
-             a fact about *now* sitting in a window that is entirely about *then*. -->
-        {#key doc?.branch ?? file.branch}
-          <button
-            class="branch"
-            onclick={() => copyBranch(doc?.branch ?? file.branch ?? "")}
-            class:off={!!offBranch}
-            title={offBranch
-              ? `This gloom was read on ${offBranch.gloom}. You are on ${offBranch.here}, so nothing can join it from here.`
-              : "The branch this gloom was read on"}
-          >
-            ⑂ {copiedBranch && copiedBranch === (doc?.branch ?? file.branch)
-              ? "copied ✓"
-              : (doc?.branch ?? file.branch)}
+      <button class="btn home" onclick={goHome} title="Back to your projects">← Home</button>
+      <span class="proj" title={project.path}>{project.name}</span>
+      {#if liveBranch}
+        <!-- The working tree's branch, live. A label: nothing is pinned to it,
+             because a gloom is about the code as it is. Copyable, because a
+             branch name is something you are about to type somewhere else. -->
+        {#key liveBranch}
+          <button class="branch" onclick={() => copyBranch(liveBranch ?? "")} title="The branch you are on — click to copy">
+            ⑂ {copiedBranch && copiedBranch === liveBranch ? "copied ✓" : liveBranch}
           </button>
         {/key}
       {/if}
-      {#if doc}
-        <!-- One button instead of a strip of tabs. Ten filenames need about
-             1200px of tabs and the pane has about 750 — three of ten were
-             off-screen at exactly the size a real review is. What made the strip
-             affordable to lose is that navigation moved to the note's references
-             and the drawer's reaches list. -->
-        <button
-          class="filebtn"
-          onclick={() => (showReadingFiles = true)}
-          title="Files in this gloom (⌘⇧T)"
-        >
-          <i class={fileState} class:earned={earnedPath === file?.path}></i>
-          <span>{file?.filename ?? ""}</span>
-          {#if files.length > 1}
-            <span class="n">{files.length} files</span>
-          {/if}
-          <span class="caret">▾</span>
-        </button>
-      {/if}
+      <button class="btn icon" onclick={toggleSide} title="Show or hide the sidebar (⌘\)">
+        {side ? "Hide sidebar" : "Show sidebar"}
+      </button>
 
       <span class="spacer"></span>
 
       <span class="save" class:dirty>{saving ? "Saving…" : dirty ? "Unsaved" : doc ? "Saved ✓" : ""}</span>
-      <!-- Two actions, both about *this* gloom: find a file in the project, or
-           open one from anywhere. Re-parse went — it re-read a file you had not
-           edited, since lgtm never writes; and Library went with it, because the
-           way to another gloom is ← Home, which is the first thing in this row and
-           now looks like it. `⌘K` still opens the library from anywhere. -->
-      <button
-        class="btn"
-        disabled={!!offBranch}
-        onclick={async () => {
-          if (await refuseOffBranch()) return;
-          showFiles = true;
-        }}
-        title={offBranch
-          ? `This gloom was read on ${offBranch.gloom}; you are on ${offBranch.here}`
-          : "Find a file by name (⌘T)"}
-      >
-        Find…
+      <button class="find" onclick={() => (showFiles = true)} title="Find a module or file (⌘T)">
+        <span>⌕ Find a module or file…</span>
+        <kbd>⌘T</kbd>
       </button>
-      <button
-        class="btn primary"
-        disabled={!!offBranch}
-        onclick={pickFile}
-        title={offBranch
-          ? `This gloom was read on ${offBranch.gloom}; you are on ${offBranch.here}`
-          : "Open a file from anywhere on disk (⌘⇧O)"}
-      >
-        Open file…
-      </button>
-    </div>
-  {/if}
-
-  <!-- Guarded on `file` as well as on the message: a notice is about the gloom on
-       screen, and every path that closes one — Home, a delete from the library —
-       has to leave it behind. -->
-  {#if notice && file}
-    <div class="notice" class:leaving={noticeLeaving}>
-      <span class="mark" aria-hidden="true">⑂</span>
-      <span>
-        You are on
-        <button class="bbadge" onclick={() => copyBranch(notice!.here)} title="Copy branch name">
-          {copiedBranch === notice.here ? "copied ✓" : notice.here}
-        </button>
-        — check out
-        <button class="bbadge" onclick={() => copyBranch(notice!.gloom)} title="Copy branch name">
-          {copiedBranch === notice.gloom ? "copied ✓" : notice.gloom}
-        </button>
-        to add files to this gloom.
-      </span>
     </div>
   {/if}
 
@@ -1129,104 +820,47 @@
     </div>
   {/if}
 
-  {#if loading}
-    <div class="loading">
-      <div class="orb"></div>
-      <b>{loadingFile}</b>
-      <span>{loadingStep}…</span>
-    </div>
-  {:else if !file}
-    <!-- Home, rebuilt around what the app makes. It has three jobs, in this order:
-         resume the gloom you were in, start one, and — for someone who has never
-         seen the word — say what a gloom is. The old screen was a launcher: an
-         icon, a product name and four buttons of equal weight, which told you what
-         the app could do and nothing about what you were doing.
-         `mockup/home.html` is the contract. -->
+  {#if !project}
+    <!-- Home: the projects you explore. A gloom only means something inside the
+         codebase it was written about, so home lists codebases, and each one's
+         glooms live in its sidebar. `mockup/workspace.html` is the contract. -->
     <div class="home">
       <div class="masthead">
         <!-- Bloom, cosmos or aurora, rolled fresh each time you land here. -->
         <Sky />
         <h1>Glo<span>o</span>ming</h1>
         <p>
-          Read a change until you can say <b>looks good to me</b>. Each reading is a
-          <b>gloom</b> — one journey through the code, the files it led you through,
-          and what you worked out on the way.
+          Open a project and read it. A <b>gloom</b> is a note you write while you do —
+          your understanding of one part of the code, kept beside the code it is about.
         </p>
       </div>
 
       <div class="homebody">
         <div class="hwrap">
           <section>
-            <div class="hsec">
-              <h2>Pick up where you left off</h2>
-              <span class="rule"></span>
-              <button class="more" onclick={() => (showLibrary = true)}>all glooms →</button>
-            </div>
-            {#if recents.length}
-              <!-- `.rrow`, not `.grow`: the doc pane's wrapper is `.pane.grow`, so a
-                   bare `.grow` rule was styling the right-hand pane as well — a
-                   class-name collision that `svelte-check` cannot see, because both
-                   are valid classes in the same component. -->
+            <div class="hsec"><h2>Projects</h2><span class="rule"></span></div>
+            {#if projects.length}
               <div class="rlist">
-                {#each grouped as g (g.label)}
-                  <div class="rbucket">{g.label}</div>
-                  {#each g.items as d (d.id)}
-                    <button class="rrow" onclick={() => openExisting(d)}>
-                      <span class="rname" class:unnamed={d.title === d.filename}>{d.title}</span>
-                      {#if d.label}
-                        <span class="rtags">
-                          {#each parseTags(d.label).slice(0, 3) as t (t)}
-                            <span class="rtag" style="--hue:{tagHue(t)}">{t}</span>
-                          {/each}
-                        </span>
-                      {/if}
-                      <span class="rcount">
-                        {d.fileCount}
-                        {d.fileCount === 1 ? "file" : "files"}
-                      </span>
-                      <span class="rwhen">{when(d.updatedAt)}</span>
-                    </button>
-                  {/each}
+                {#each projects as p (p.id)}
+                  <button class="rrow" onclick={() => enterProject(p.path)} title={p.path}>
+                    <span class="pname">{p.name}</span>
+                    <span class="ppath">{p.path}</span>
+                    <span class="pcount" class:none={!p.gloomCount}>
+                      {p.gloomCount ? `${p.gloomCount} ${p.gloomCount === 1 ? "gloom" : "glooms"}` : "no glooms"}
+                    </span>
+                    <span class="rwhen">{when(p.openedAt)}</span>
+                  </button>
                 {/each}
               </div>
             {:else}
               <p class="noglooms">
-                No glooms yet. Open a file and the reading starts — everything you
-                write about it is kept with the version you read.
+                No projects yet. Open the folder of an Elixir codebase and start reading
+                — nothing is copied out of it, and nothing is ever written into it.
               </p>
             {/if}
-          </section>
-
-          <section>
-            <div class="hsec"><h2>Start a gloom</h2><span class="rule"></span></div>
             <div class="start">
-              <button class="go" onclick={() => (showFiles = true)}>
-                Find a file… <kbd>⌘O</kbd>
-              </button>
-              {#if project}
-                <span class="where">
-                  <b>{project.name}</b>
-                  <span>{project.path}</span>
-                </span>
-              {/if}
+              <button class="go" onclick={chooseProject}>Open a folder…</button>
               <span class="alt">
-                <button onclick={chooseProject}>
-                  {project ? "Open a different folder…" : "Open a folder…"}
-                </button>
-                <button onclick={pickFile}>Anywhere on disk… ⌘⇧O</button>
-                <!-- A gloom someone prepared: the files to open, and the note.
-                     Quiet text, like the other rare routes — it is not a fourth
-                     way to start, it is the way to start from someone else's. -->
-                <button onclick={() => { importMode = "import"; showImport = true; }}>
-                  Import a gloom…
-                </button>
-                <!-- The other half: text to copy, fill in and save as a .md.
-                     Its own route rather than only a link inside the importer,
-                     because writing one and opening one are different errands
-                     and the importer is the wrong door for the first. -->
-                <button onclick={() => { importMode = "template"; showImport = true; }}>
-                  New gloom file…
-                </button>
                 <button onclick={() => (showHelp = true)}>What it does ?</button>
               </span>
             </div>
@@ -1236,17 +870,17 @@
             <div class="hsec"><h2>What a gloom is</h2><span class="rule"></span></div>
             <div class="idea">
               <div>
-                <h3>One journey</h3>
+                <h3>A page of understanding</h3>
                 <p>
-                  You open a file; the files it sends you to join it. That set is the
-                  gloom — there is no group to create and manage.
+                  One question you worked out — how an invoice gets charged, where a
+                  session starts. A project collects them, one per thing you learned.
                 </p>
               </div>
               <div>
-                <h3>Pinned in time</h3>
+                <h3>About live code</h3>
                 <p>
-                  Every file is kept as it was when you read it. If the code moves on,
-                  lgtm says so and leaves your reading intact.
+                  Nothing is copied. References find their function wherever it has
+                  moved, and say so when it is gone.
                 </p>
               </div>
               <div>
@@ -1262,18 +896,14 @@
       </div>
     </div>
   {:else}
-    <!-- The gloom's own row: what this journey is *for*, in its own colour so it
-         is not read as one more control in the toolbar above it. A file's name
-         tells you what you are looking at; only this says why you opened it. -->
     {#if doc}
-      <!-- Keyed on the id, so opening a gloom replays the band's arrival and
-           typing in it never does. A remount is cheaper than a class and a
-           timer, and there is nothing here to preserve across one. -->
+      <!-- The gloom's own band, only while one is open. Keyed on the id, so
+           opening a gloom replays its arrival and typing in it never does. -->
       {#key doc.id}
         <div
           class="gloombar arriving"
           class:named
-          class:unnamed={doc.title === seededTitle && renaming === null}
+          class:unnamed={!doc.title && renaming === null}
         >
           {#if renaming !== null}
             <input
@@ -1281,7 +911,7 @@
               bind:value={renaming}
               bind:this={renameEl}
               spellcheck="false"
-              placeholder="What is this gloom for?"
+              placeholder="Name this gloom — what are you trying to understand?"
               onblur={commitRename}
               onkeydown={(e) => {
                 if (e.key === "Enter") {
@@ -1296,14 +926,12 @@
             />
           {:else}
             <button class="gname" onclick={startRename} title="Rename this gloom">
-              {doc.title}<i>✎</i>
+              {doc.title || "Unnamed gloom"}<i>✎</i>
             </button>
           {/if}
 
           <!-- Tags sit with the name, because they are part of what this gloom is
-               called. Each carries its own hue, derived from its text — nobody
-               picks a colour for a word they typed in two seconds, and a random
-               one would make `retry` look different in two places. -->
+               called. Each carries a hue derived from its own text. -->
           <span class="gtags">
             {#each tags as t (t)}
               <button
@@ -1342,101 +970,143 @@
 
           <span class="spacer"></span>
 
-          {#if doc.title === seededTitle && renaming === null}
-            <!-- Still carrying the name the module gave it. An invitation, not an
-                 error — the same idiom as the Explain section's italic line. -->
+          {#if !doc.title && renaming === null}
             <span class="nudge">say what you are here to find out</span>
           {/if}
-
-          <!-- The wordmark, not a badge: at the right-hand end of the line the
-               name sits on, it reads as what the line *is* rather than as a chip
-               attached to it. -->
+          <button class="gclose" onclick={closeGloom} title="Close the note and keep exploring">
+            close ×
+          </button>
           <span class="glabel">Gloom</span>
         </div>
       {/key}
     {/if}
 
-    <div class="split">
-      <!-- The code pane joins read mode's theme.
-           Read mode is a theme, not a darker note: before this, turning it on in
-           light mode left a dark reading pane beside an untouched white code
-           pane — two surfaces disagreeing about whether the lights were out. The
-           classes are the same two `DocPane` puts on itself, so one token set
-           paints both. -->
-      <div
-        class="pane"
-        class:dark={readingNow}
-        class:reading-surface={readingNow}
-        style:flex="0 0 {basis}%"
-      >
-        <!-- Nothing announces staleness over the code any more.
-             A gloom holds the version it was read at, so "this differs from disk"
-             is a fact about the world outside the reading — true, and not worth a
-             bar across the top of the thing you are reading. It still shows where
-             it costs nothing: the dot on the file button, and the words beside each
-             file in ⌘⇧T. -->
-        <!-- Keyed on the path so switching file remounts the pane. Blame and a
-             search belong to the file they were run against; carrying either
-             across a switch would attribute one file's authors to another. -->
-        <div class="codewrap" class:swapping>
-          {#key currentPath}
-            <CodePane
-              source={file.source}
-              lang={file.lang}
-              filename={file.filename}
-              path={file.path}
-              hasGit={file.hasGit}
-              {outline}
-              keysEnabled={!showLibrary &&
-                !showFiles &&
-                !showReadingFiles &&
-                !showPalette &&
-                !showHelp}
-            />
-          {/key}
-        </div>
-      </div>
-
-      <Divider bind:basis />
-
-      <div class="pane grow">
-        {#if chooser}
-          <div class="chooser">
-            <h2>This file is already part of a gloom</h2>
-            <ul>
-              {#each chooser as c (c.id)}
-                <li>
-                  <button onclick={() => openExisting(c, file?.path ?? null)}>
-                    <b>{c.title}</b>
-                    <span>{c.branch ?? "no branch"} · {new Date(c.updatedAt).toLocaleDateString()}</span>
-                  </button>
-                </li>
-              {/each}
-            </ul>
-            <button class="btn" onclick={() => file && startFreshFrom(file)}>Start a fresh doc</button>
+    <div class="work">
+      {#if side && !readingNow}
+        <!-- Where you go: this project's glooms, then the codebase itself. -->
+        <aside class="side">
+          <div class="slabel">
+            Glooms
+            <span class="spacer"></span>
+            <button class="sbtn" onclick={() => (showLibrary = true)} title="Search every gloom (⌘K)">⌘K</button>
+            <button class="sbtn" onclick={newGloom} title="Start a gloom">+</button>
           </div>
-        {:else}
+          <div class="glooms">
+            {#each glooms as g (g.id)}
+              <button class="gitem" class:on={doc?.id === g.id} onclick={() => openGloom(g.id)}>
+                <span class="gn" class:untitled={!g.title}>
+                  {(doc?.id === g.id ? doc.title : g.title) || "Unnamed gloom"}
+                </span>
+                <span class="gage">{when(g.updatedAt)}</span>
+              </button>
+            {:else}
+              <p class="sempty">None yet. Start one when you find something worth writing down.</p>
+            {/each}
+          </div>
+
+          <div class="slabel">Modules <span class="spacer"></span><span class="scount">{appModules.length}</span></div>
+          <div class="tree">
+            {#each treeRows.rows as n (n.key)}
+              <div class="tnode" class:on={currentModule === n.key} class:ns={!n.module} style:padding-left="{4 + n.depth * 12}px">
+                {#if n.kids}
+                  <button class="chev" onclick={() => toggleNode(n.key)} aria-label="Fold">
+                    {treeRows.open.has(n.key) ? "▾" : "▸"}
+                  </button>
+                {:else}
+                  <span class="chev"></span>
+                {/if}
+                <button
+                  class="nm"
+                  title={n.module ? n.module.rel : n.key}
+                  onclick={() => (n.module ? openPath(n.module.path) : toggleNode(n.key))}
+                >
+                  {n.seg}
+                </button>
+                {#if mentioned.has(n.key)}
+                  <i
+                    class="said"
+                    class:earned={!!n.module && earnedPath === n.module.path}
+                    title="Your note mentions this module"
+                  ></i>
+                {/if}
+              </div>
+            {:else}
+              <p class="sempty">No Elixir modules under {project.name}.</p>
+            {/each}
+          </div>
+          <div class="sfoot">
+            {testCount ? `${testCount} test ${testCount === 1 ? "module" : "modules"} — ⌘T to open one` : "Live from disk · nothing is copied"}
+          </div>
+        </aside>
+      {/if}
+
+      <div class="split">
+        <!-- The code pane joins read mode's theme, so both surfaces agree about
+             whether the lights are out. -->
+        <div
+          class="pane"
+          class:dark={readingNow}
+          class:reading-surface={readingNow}
+          style:flex="0 0 {basis}%"
+        >
+          <div class="codewrap" class:swapping>
+            {#if file}
+              <!-- Keyed on the path so switching file remounts the pane. Blame and
+                   a search belong to the file they were run against. -->
+              {#key currentPath}
+                <CodePane
+                  source={file.source}
+                  lang={file.lang}
+                  filename={file.filename}
+                  path={file.path}
+                  hasGit={file.hasGit}
+                  {outline}
+                  trail={{ back: back.length > 0, forward: fwd.length > 0 }}
+                  onback={goBack}
+                  onforward={goForward}
+                  keysEnabled={!showLibrary && !showFiles && !showPalette && !showHelp}
+                />
+              {/key}
+            {:else}
+              <div class="nofile">
+                <p>Pick a module from the sidebar, or find one by name.</p>
+                <button class="btn" onclick={() => (showFiles = true)}>Find a module… <kbd>⌘T</kbd></button>
+              </div>
+            {/if}
+          </div>
+        </div>
+
+        <Divider bind:basis />
+
+        <div class="pane grow">
           <DocPane
             bind:this={docPane}
             bind:markdown
             docId={doc?.id ?? null}
             title={doc?.title ?? ""}
             {files}
+            {known}
+            {labels}
             current={currentPath}
             {dirty}
             {opened}
-            onshowfile={showFile}
+            gloom={!!doc}
+            viewing={currentModule ? (labels.get(currentModule) ?? currentModule) : (file?.filename ?? "")}
+            onstart={newGloom}
+            onshowfile={(p) => openPath(p, !readingNow)}
             onrefs={(paths) => (referenced = paths)}
             onreading={(on) => (readingNow = on)}
             explore={exploreSections}
           />
-        {/if}
+        </div>
       </div>
     </div>
 
     <div class="status">
       <span>
-        {#if outline?.kind === "config"}
+        {#if !file}
+          {index.length} modules in {project.name}
+        {:else if outline?.kind === "config"}
           tree-sitter-{file.lang} · config · {outline.config?.groups.length ?? 0} groups
         {:else if outline?.kind === "test"}
           tree-sitter-{file.lang} · test suite · {outline.tests?.describes.reduce(
@@ -1452,36 +1122,29 @@
         {/if}
       </span>
       {#if outline?.kind === "module" && moduleCount > 1}
-        <span class="warn">{moduleCount} modules in this file — seeded from the first</span>
+        <span class="warn">{moduleCount} modules in this file — the views show the first</span>
       {/if}
       <span class="spacer"></span>
-      {#if outline?.modules?.[0]?.functions.length}
-        <span class="keys">
-          <kbd>↑</kbd><kbd>↓</kbd> lines · <kbd>[</kbd><kbd>]</kbd> fns ·
-          <kbd>⇧click</kbd> range · <kbd>/</kbd> find · <kbd>⌘⇧T</kbd> files ·
-          <kbd>⌥1</kbd><kbd>⌥2</kbd> split · <kbd>⌘R</kbd> lgtm · <kbd>⌘E</kbd> edit ·
-          <kbd>?</kbd> help
-        </span>
-      {/if}
+      <span class="keys">
+        <kbd>⌘T</kbd> find · <kbd>⌘[</kbd><kbd>⌘]</kbd> trail · <kbd>⌘\</kbd> sidebar ·
+        <kbd>⌘R</kbd> lgtm · <kbd>⌘E</kbd> edit · <kbd>?</kbd> help
+      </span>
       {#if doc}
-        <span>
-          doc #{doc.id} → sqlite{files.length > 1 ? ` · ${files.length} files` : ""}
-        </span>
+        <span>gloom #{doc.id} → sqlite</span>
       {/if}
     </div>
   {/if}
 
-  {#if showFiles}
+  {#if showFiles && project}
     <FilePalette
       {project}
-      adding={doc ? doc.title : null}
       onpick={(f) => {
         showFiles = false;
-        load(f.path);
+        openPath(f.path);
       }}
       onpickpath={(p) => {
         showFiles = false;
-        load(p);
+        openPath(p);
       }}
       onchoose={() => {
         showFiles = false;
@@ -1502,55 +1165,19 @@
     />
   {/if}
 
-  {#if showReadingFiles && doc}
-    <FilesModal
-      {offBranch}
-      {files}
-      current={currentPath}
-      {referenced}
-      onpick={(p) => {
-        showReadingFiles = false;
-        switchTo(p);
-      }}
-      onremove={(p) => removeFile(p)}
-      onadd={async () => {
-        if (await refuseOffBranch()) return;
-        showReadingFiles = false;
-        showFiles = true;
-      }}
-      onclose={() => (showReadingFiles = false)}
-    />
-  {/if}
-
+  <!-- Rendered, not merely imported. `HelpModal` was once imported, toggled by
+       `?` and never mounted, for five commits — `component-audit.py` exists
+       because of that. -->
   {#if showHelp}
     <HelpModal onclose={() => (showHelp = false)} />
   {/if}
 
-  <!-- Rendered, not merely imported. `HelpModal` was imported, toggled by `?`
-       and by two buttons, and its `{#if}` had been dropped in an unrelated
-       rewire — so `?` did nothing for five commits. `component-audit.py` exists
-       because of that, and this block is why it stays quiet. -->
-  {#if showImport}
-    <ImportModal
-      mode={importMode}
-      projectPath={project?.path ?? null}
-      onclose={() => (showImport = false)}
-      onopen={async (reading) => {
-        showImport = false;
-        adopt(reading);
-        // An imported gloom is on the branch it was just validated against, so
-        // this always agrees — but `liveBranch` is shell state that would
-        // otherwise still describe whatever was open before.
-        await checkBranch();
-      }}
-    />
-  {/if}
-
-  {#if showLibrary}
+  {#if showLibrary && project}
     <Library
+      {project}
       onopen={(d) => {
         showLibrary = false;
-        openExisting(d);
+        openGloom(d.id);
       }}
       ondelete={onDocDeleted}
       onclose={() => (showLibrary = false)}
@@ -1956,78 +1583,7 @@
     border-color: color-mix(in srgb, white 34%, transparent);
     color: #fff;
   }
-  /* The file you are in, and the way to the rest — 136px, constant whatever the
-     file count. */
-  .filebtn {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 3px 9px;
-    font: inherit;
-    font-family: var(--mono);
-    font-size: 11.5px;
-    color: var(--gloom-ink);
-    /* The gloom's own teal, because this button is the gloom's files — it opens
-       the shape of the change, and the shape is drawn in this colour. Among four
-       neutral controls in a neutral row it was the one you hunt for most and the
-       hardest to find; now it is the only coloured thing there.
 
-       (It used to borrow `--code-bg` to look like the file it names, which was
-       white, and once the header became a dark theme it stayed white while its
-       label went near-white with everything else. A control takes its surface
-       from the surface it is ON.) */
-    background: color-mix(in srgb, var(--gloom) 20%, transparent);
-    border: 1px solid color-mix(in srgb, var(--gloom) 45%, transparent);
-    border-radius: 6px;
-    cursor: pointer;
-    box-shadow: var(--shadow);
-  }
-  .filebtn:hover {
-    border-color: var(--gloom);
-    background: color-mix(in srgb, var(--gloom) 30%, transparent);
-  }
-  .filebtn i {
-    width: 5px;
-    height: 5px;
-    flex: none;
-    border-radius: 50%;
-    background: var(--pub);
-  }
-  .filebtn i.stale {
-    background: var(--priv);
-  }
-  .filebtn i.unread {
-    background: transparent;
-    box-shadow: inset 0 0 0 1.5px var(--fg-faint);
-  }
-  .filebtn .n {
-    font-family: var(--sans);
-    font-size: 9.5px;
-    color: var(--gloom-ink);
-    opacity: 0.75;
-    border-left: 1px solid var(--line);
-    padding-left: 7px;
-  }
-  .filebtn .caret {
-    font-size: 8px;
-    color: var(--fg-faint);
-  }
-  /* Earned: the dot fills and one ring leaves. Once — this marks a thing that
-     just became true, not a state that keeps being true. */
-  .filebtn i.earned {
-    position: relative;
-    background: var(--pub);
-    box-shadow: none;
-    animation: fill var(--fast) var(--ease-out) both;
-  }
-  .filebtn i.earned::after {
-    content: "";
-    position: absolute;
-    inset: -3px;
-    border-radius: 50%;
-    border: 1.5px solid var(--pub);
-    animation: dotring var(--ring) var(--ease-out) both;
-  }
   /* No scale. At 5px, `scale(0.4)` is a 2px dot popping to 5px — well past the
      0.9–0.97 the physicality rule allows, and tuning it to 0.9 would make it
      invisible, which is the tell that it was never the part doing the work. The
@@ -2048,15 +1604,6 @@
     100% {
       opacity: 0;
       transform: scale(1.9);
-    }
-  }
-  /* Motion off: the dot is simply green, which was always the actual message. */
-  @media (prefers-reduced-motion: reduce) {
-    .filebtn i.earned {
-      animation: none;
-    }
-    .filebtn i.earned::after {
-      display: none;
     }
   }
 
@@ -2083,7 +1630,6 @@
     transform: translateY(4px);
   }
 
-
   /* Which branch you are standing on. It was a grey pill among grey pills, and it
      is the one piece of context that silently changes what every file under it
      says. It now carries the gloom's own accent, and arrives when it changes. */
@@ -2105,18 +1651,6 @@
   }
   .branch:hover {
     background: color-mix(in srgb, var(--accent) 24%, transparent);
-  }
-  /* Wandered off it.
-     Amber said "something is wrong", and nothing is: the reading is intact and
-     reads normally from here, it just cannot grow. So the chip goes *quiet* —
-     neutral ink, a dashed edge — which is the same thing the disabled buttons
-     beside it are saying, in the same language. A second colour would have been
-     a third meaning in a row that already has two. */
-  .branch.off {
-    color: var(--fg-dim);
-    background: color-mix(in srgb, white 7%, transparent);
-    border-style: dashed;
-    border-color: color-mix(in srgb, white 26%, transparent);
   }
 
   /* One breath as it arrives — the label only re-mounts when the branch actually
@@ -2152,67 +1686,6 @@
   }
   .save.dirty {
     color: var(--priv);
-  }
-
-  /* A remark, in the gloom's own colour rather than the warning amber: nothing
-     here has gone wrong. It arrives from just above and leaves on its own. */
-  .notice {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    padding: 6px 14px;
-    font-size: 12px;
-    color: var(--gloom-deep);
-    background: color-mix(in srgb, var(--gloom-deep) 10%, var(--bg));
-    border-bottom: 1px solid color-mix(in srgb, var(--gloom-deep) 28%, transparent);
-    animation: noticeIn var(--fast) var(--ease-out) both;
-  }
-  /* The names, as badges: the sentence is scaffolding, these are what you read —
-     and what you click, since the reply to this notice is a checkout elsewhere. */
-  .bbadge {
-    font: inherit;
-    font-family: var(--mono);
-    font-size: 11px;
-    color: inherit;
-    background: color-mix(in srgb, var(--gloom-deep) 16%, transparent);
-    border: 1px solid color-mix(in srgb, var(--gloom-deep) 30%, transparent);
-    border-radius: 4px;
-    padding: 1px 6px;
-    cursor: pointer;
-  }
-  .bbadge:hover {
-    background: color-mix(in srgb, var(--gloom-deep) 26%, transparent);
-  }
-
-  .notice .mark {
-    font-family: var(--mono);
-    opacity: 0.7;
-  }
-  .notice.leaving {
-    animation: noticeOut 0.6s ease both;
-  }
-  @keyframes noticeIn {
-    from {
-      opacity: 0;
-      transform: translateY(-6px);
-    }
-  }
-  @keyframes noticeOut {
-    to {
-      opacity: 0;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    /* It still appears and still goes; it just does not travel to get here. */
-    .notice {
-      animation: noticeFade var(--fast) ease both;
-    }
-    @keyframes noticeFade {
-      from {
-        opacity: 0;
-      }
-    }
   }
 
   .banner {
@@ -2293,50 +1766,7 @@
     color: var(--fg-dim);
   }
 
-  .loading {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-  }
-  .loading b {
-    font-family: var(--mono);
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--fg);
-  }
-  .loading span {
-    font-size: 12px;
-    color: var(--fg-faint);
-  }
-  /* The same 2.1s breath the focus bar uses, so waiting feels like part of the
-     app rather than a borrowed spinner. */
-  .orb {
-    width: 46px;
-    height: 46px;
-    border-radius: 50%;
-    margin-bottom: 10px;
-    background: color-mix(in srgb, var(--accent) 16%, transparent);
-    border: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
-    animation: breathe var(--slow) ease-in-out infinite;
-  }
-  @keyframes breathe {
-    0%,
-    100% {
-      transform: scale(0.88);
-      opacity: 0.55;
-    }
-    50% {
-      transform: scale(1);
-      opacity: 1;
-    }
-  }
   @media (prefers-reduced-motion: reduce) {
-    .orb {
-      animation: none;
-    }
     /* The masthead still greets you; it just stops travelling to do it. */
     .masthead::before {
       animation: bandLift var(--greet) ease 0.18s both;
@@ -2454,18 +1884,6 @@
     height: 1px;
     background: var(--line-soft);
   }
-  .hsec .more {
-    font: inherit;
-    font-size: 11px;
-    color: var(--fg-dim);
-    background: none;
-    border: 0;
-    padding: 0;
-    cursor: pointer;
-  }
-  .hsec .more:hover {
-    color: var(--accent);
-  }
 
   /* A list, not a grid.
      Not for density — measured, twelve cards take 392px and twelve rows 432px —
@@ -2483,19 +1901,6 @@
     border-radius: 10px;
     overflow: hidden;
     background: var(--bg-raised);
-  }
-  .rbucket {
-    padding: 6px 12px;
-    font-size: 9px;
-    font-weight: 600;
-    letter-spacing: 0.11em;
-    text-transform: uppercase;
-    color: var(--fg-faint);
-    background: var(--bg-inset);
-    border-bottom: 1px solid var(--line-soft);
-  }
-  .rbucket:not(:first-child) {
-    border-top: 1px solid var(--line-soft);
   }
   .rrow {
     display: flex;
@@ -2522,51 +1927,15 @@
   .rrow:hover {
     background: color-mix(in srgb, var(--gloom-deep) 8%, transparent);
   }
-  .rname {
-    flex: 1;
-    min-width: 0;
-    font-family: var(--serif);
-    font-size: 14.5px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  /* Still called after its module: the same invitation the band gives. */
-  .rname.unnamed {
-    color: var(--fg-faint);
-    font-style: italic;
-  }
-  .rtags {
-    flex: none;
-    display: flex;
-    gap: 4px;
-    min-width: 0;
-  }
-  .rtag {
-    font-family: var(--mono);
-    font-size: 9.5px;
-    line-height: 1;
-    padding: 2px 6px;
-    border-radius: 999px;
-    white-space: nowrap;
-    /* On paper rather than ink, so the same hue needs a darker lightness to hold
-       its own — one token pair, two surfaces. */
-    color: oklch(0.45 0.12 var(--hue));
-    background: oklch(0.45 0.12 var(--hue) / 0.12);
-  }
 
   /* The origin filename was here and went: the name identifies the gloom, and a
      second identifier in every row is a column you read past. */
-  .rcount,
   .rwhen {
     flex: none;
     text-align: right;
     font-family: var(--mono);
     font-size: 10px;
     color: var(--fg-faint);
-  }
-  .rcount {
-    width: 52px;
   }
   .rwhen {
     width: 64px;
@@ -2609,28 +1978,6 @@
   }
   .start .go:hover {
     background: var(--gloom-bg);
-  }
-  .start .go kbd {
-    font-family: var(--mono);
-    font-size: 10px;
-    padding: 1px 5px;
-    border-radius: 3px;
-    background: color-mix(in srgb, white 14%, transparent);
-    color: #b8f0e6;
-  }
-  .start .where {
-    display: grid;
-    gap: 2px;
-    font-size: 12px;
-  }
-  .start .where b {
-    font-family: var(--mono);
-    font-size: 12px;
-  }
-  .start .where span {
-    font-family: var(--mono);
-    font-size: 10.5px;
-    color: var(--fg-faint);
   }
   .start .alt {
     margin-left: auto;
@@ -2679,41 +2026,283 @@
     color: var(--fg-dim);
   }
 
-  .chooser {
-    padding: 40px 30px;
-    max-width: 520px;
+  /* ---- the project workspace ---------------------------------------------
+     `mockup/workspace.html` is the contract. Three columns, one job each: the
+     sidebar is where you go, the code pane is what you read, the right pane is
+     the live views and — when one is open — your note. */
+  .proj {
+    font-weight: 600;
+    font-size: 12.5px;
+    color: var(--fg);
+    white-space: nowrap;
   }
-  .chooser h2 {
-    font-size: 14px;
-    margin: 0 0 12px;
-    color: var(--fg-dim);
-  }
-  .chooser ul {
-    list-style: none;
-    padding: 0;
-    margin: 0 0 16px;
-  }
-  .chooser li button {
-    display: block;
-    width: 100%;
-    text-align: left;
+  .find {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 220px;
     font: inherit;
+    font-size: 11.5px;
+    color: var(--fg-dim);
     background: var(--bg-raised);
     border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 10px 12px;
-    margin-bottom: 8px;
+    border-radius: 6px;
+    padding: 4px 10px;
     cursor: pointer;
+  }
+  .find:hover {
     color: var(--fg);
   }
-  .chooser li button:hover {
-    border-color: var(--accent);
+  .find kbd {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10px;
+    opacity: 0.8;
   }
-  .chooser li span {
-    display: block;
+  .gclose {
+    font: inherit;
+    font-size: 11.5px;
+    color: var(--gloom-dim);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .gclose:hover {
+    color: var(--gloom-ink);
+  }
+  .work {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+  /* Narrow on purpose: the code pane is the reason the tool exists, and three
+     columns on a laptop squeeze it. ⌘\ takes this away entirely. */
+  .side {
+    flex: 0 0 224px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-raised);
+    border-right: 1px solid var(--line);
+  }
+  .slabel {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 12px 5px;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+  }
+  .sbtn {
+    font: inherit;
+    font-size: 10.5px;
+    letter-spacing: 0;
+    line-height: 1;
+    color: var(--fg-dim);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 2px 6px;
+    cursor: pointer;
+  }
+  .sbtn:hover {
+    color: var(--gloom-deep);
+    border-color: var(--gloom-deep);
+  }
+  .scount {
+    font-family: var(--mono);
+    letter-spacing: 0;
+  }
+  .glooms {
+    flex: none;
+    max-height: 38%;
+    overflow: auto;
+    padding: 0 6px;
+  }
+  .gitem {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    width: 100%;
+    font: inherit;
+    text-align: left;
+    color: var(--fg);
+    background: transparent;
+    border: 0;
+    border-radius: 5px;
+    padding: 5px 7px;
+    cursor: pointer;
+  }
+  .gitem:hover {
+    background: var(--bg-inset);
+  }
+  .gitem.on {
+    background: color-mix(in srgb, var(--gloom-deep) 13%, transparent);
+  }
+  .gn {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--serif);
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .gitem.on .gn {
+    color: var(--gloom-deep);
+    font-weight: 600;
+  }
+  .gn.untitled {
+    font-style: italic;
+    color: var(--fg-faint);
+  }
+  .gage {
+    flex: none;
+    font-size: 10px;
+    color: var(--fg-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .sempty {
+    margin: 2px 8px 6px;
+    font-size: 11px;
+    line-height: 1.45;
+    font-style: italic;
+    color: var(--fg-faint);
+  }
+  .tree {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 0 6px 14px;
+    font-size: 12px;
+  }
+  .tnode {
+    display: flex;
+    align-items: center;
+    height: 23px;
+    border-radius: 5px;
+    padding-right: 6px;
+    white-space: nowrap;
+  }
+  .tnode:hover {
+    background: var(--bg-inset);
+  }
+  .tnode.on {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+  .tnode .chev {
+    flex: none;
+    width: 14px;
+    font: inherit;
+    font-size: 9px;
+    text-align: center;
+    color: var(--fg-faint);
+    background: transparent;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+  }
+  .tnode .nm {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font: inherit;
+    text-align: left;
+    color: var(--fg);
+    background: transparent;
+    border: 0;
+    padding: 0 2px;
+    cursor: pointer;
+  }
+  .tnode.ns .nm {
+    color: var(--fg-dim);
+  }
+  .tnode.on .nm {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  /* Your note names this module. What the hollow file dot used to say, inverted:
+     the set is derived from your prose, so the mark is for what you HAVE written
+     about, not what you have not. */
+  .said {
+    position: relative;
+    flex: none;
+    width: 6px;
+    height: 6px;
+    margin-left: 6px;
+    border-radius: 50%;
+    background: var(--gloom-deep);
+  }
+  .said.earned {
+    animation: fill var(--ring) var(--ease-out) both;
+  }
+  .said.earned::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    border: 1.5px solid var(--gloom-deep);
+    animation: dotring var(--ring) var(--ease-out) both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .said.earned::after {
+      animation: none;
+      opacity: 0.5;
+    }
+  }
+  .sfoot {
+    flex: none;
+    padding: 8px 12px;
+    border-top: 1px solid var(--line);
+    font-size: 10.5px;
+    line-height: 1.4;
+    color: var(--fg-faint);
+  }
+  .nofile {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: var(--fg-faint);
+    font-size: 12.5px;
+  }
+  .nofile p {
+    margin: 0;
+  }
+  .nofile kbd {
+    font-family: var(--mono);
+    font-size: 10px;
+    margin-left: 6px;
+    opacity: 0.8;
+  }
+  .pname {
+    flex: none;
+    font-weight: 600;
+    font-size: 13.5px;
+  }
+  .ppath {
+    flex: 1;
+    min-width: 0;
     font-family: var(--mono);
     font-size: 11px;
     color: var(--fg-faint);
-    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .pcount {
+    flex: none;
+    font-size: 11.5px;
+    color: var(--gloom-deep);
+  }
+  .pcount.none {
+    color: var(--fg-faint);
   }
 </style>

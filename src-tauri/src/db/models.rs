@@ -1,114 +1,50 @@
 use serde::{Deserialize, Serialize};
 
-/// A full doc, including both large text columns.
+/// A gloom: a note in a project's knowledge base.
+///
+/// Prose and nothing else. There is no snapshot of the code and no list of the
+/// files it covers — the code is always read live from disk, and the modules a
+/// gloom is about are whatever its prose names.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct Doc {
     pub id: i64,
-    pub path: String,
-    pub filename: String,
-    pub lang: String,
+    pub project_id: i64,
+    /// Empty until you name it.
     pub title: String,
-    pub branch: Option<String>,
+    /// Tags, comma-separated.
     pub label: Option<String>,
     pub markdown: String,
-    pub source: String,
-    pub source_sha: String,
     pub created_at: String,
     pub updated_at: String,
 }
 
-/// Everything the library list and the reopen chooser need — deliberately
-/// without `markdown` or `source`, so listing never drags text around.
+/// What the sidebar and the library list — deliberately without `markdown`, so
+/// listing never drags text around.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct DocSummary {
     pub id: i64,
-    pub path: String,
-    pub filename: String,
-    pub lang: String,
+    pub project_id: i64,
     pub title: String,
-    pub branch: Option<String>,
     pub label: Option<String>,
-    pub source_sha: String,
     pub created_at: String,
     pub updated_at: String,
-    /// How many files this reading covers. 1 for every doc written before
-    /// readings could span several.
-    pub file_count: i64,
 }
 
-/// What the frontend receives when a file is opened: the source, its outline,
-/// and any docs already written about this path.
+/// A file as it is on disk right now: its source and its outline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenedFile {
     pub path: String,
     pub filename: String,
     pub source: String,
-    pub source_sha: String,
     pub lang: Option<String>,
     pub outline: Option<crate::parse::Outline>,
-    /// Prefilled from the nearest `.git/HEAD`; null outside a repo.
+    /// Read from the nearest `.git/HEAD`; null outside a repo.
     pub branch: Option<String>,
     /// True when a `.git` directory exists — gates the Blame button.
     pub has_git: bool,
-    pub existing: Vec<DocSummary>,
-}
-
-/// One file in a reading, as stored.
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-#[serde(rename_all = "camelCase")]
-pub struct DocFile {
-    pub id: i64,
-    pub doc_id: i64,
-    pub path: String,
-    pub filename: String,
-    pub lang: String,
-    pub source: String,
-    pub source_sha: String,
-    pub position: i64,
-    pub added_at: String,
-}
-
-/// One file in a reading, as the UI needs it: the source to display, its
-/// outline, and whether the code has moved since it was read.
-///
-/// `source` is what to *show* — disk when the file is readable, the stored
-/// snapshot when it is not. That is the whole point of keeping a snapshot per
-/// file: a reading survives one of its files being deleted.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReadingFile {
-    pub path: String,
-    pub filename: String,
-    pub lang: Option<String>,
-    pub source: String,
-    /// sha of `source` — the thing on screen.
-    pub source_sha: String,
-    /// sha of the snapshot taken when this file joined the reading.
-    pub snapshot_sha: String,
-    /// The file on disk has changed since it was read.
-    pub stale: bool,
-    /// Not on disk any more; `source` is the snapshot.
-    pub missing: bool,
-    pub outline: Option<crate::parse::Outline>,
-    pub has_git: bool,
-    pub branch: Option<String>,
-    /// The file this doc was seeded from. Its module owns `lgtm:functions`, and
-    /// it cannot be removed from the reading.
-    pub origin: bool,
-}
-
-/// A whole reading in one payload: the doc plus every file it covers.
-///
-/// One round trip rather than N, for the same reason `open_file` returns source
-/// and outline and existing docs together — the UI renders from one payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Reading {
-    pub doc: Doc,
-    pub files: Vec<ReadingFile>,
 }
 
 /// One line of `git blame` output.
@@ -134,8 +70,7 @@ pub struct FileHistory {
     pub last: Option<String>,
 }
 
-/// A folder you search within. Deliberately thin: a project is a path, not a
-/// scanned index or a set of member files.
+/// A codebase you explore. A path, a name, and the glooms written about it.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
@@ -143,6 +78,8 @@ pub struct Project {
     pub path: String,
     pub name: String,
     pub opened_at: String,
+    /// How many glooms belong to it — what home shows beside the name.
+    pub gloom_count: i64,
 }
 
 /// One candidate in the file picker.

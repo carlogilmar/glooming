@@ -26,19 +26,22 @@
     surfaceOf,
     testsOf,
   } from "$lib/explore";
-  import type { Range, ReadingFile } from "$lib/ipc";
+  import type { IndexedModule, Range, ReadingFile } from "$lib/ipc";
 
   let {
     file = null,
-    files = [],
+    index = [],
     selected = "",
     onselect,
     onjump,
     oncursor,
   }: {
     file: ReadingFile | null;
-    /** The whole reading — a reached module that is in it can be jumped to. */
-    files: ReadingFile[];
+    /**
+     * Every module in the project. A reached module that is in it can be opened
+     * — the whole codebase is reachable now, not only the files a gloom held.
+     */
+    index: IndexedModule[];
     selected: string;
     /**
      * `span` is what makes a test select as a test: without it the shell falls
@@ -48,7 +51,8 @@
      * what a `@tag` is to a test.
      */
     onselect?: (sig: string, line: number, span?: Range, tag?: Range | null) => void;
-    onjump?: (path: string, line: number) => void;
+    /** Open a module of the project, landing on `fn` (`insert/1`) in it. */
+    onjump?: (module: string, fn: string) => void;
     /** Go to a line without selecting anything — for a container. */
     oncursor?: (line: number) => void;
   } = $props();
@@ -155,33 +159,27 @@
       : "",
   );
 
-  /** The file an isolated function lives in, when it is one of ours. */
+  /** Where an isolated function lives, when it is in this project. */
   const isolatedFile = $derived.by(() => {
     if (!isolated) return null;
-    const mod = isolated.slice(0, isolated.lastIndexOf("."));
-    return inReading.get(mod.split(".").pop() ?? "") ?? null;
+    return inProject.get(isolated.slice(0, isolated.lastIndexOf("."))) ?? null;
   });
 
   function jumpTo(to: string) {
     const mod = to.slice(0, to.lastIndexOf("."));
-    const fnName = to.slice(to.lastIndexOf(".") + 1);
-    const target = inReading.get(mod.split(".").pop() ?? "");
-    if (!target) return;
-    const hit = target.outline?.modules
-      ?.flatMap((m) => m.functions)
-      .find((f) => `${f.name}/${f.arity}` === fnName || f.name === fnName.split("/")[0]);
-    if (hit) onjump?.(target.path, hit.line);
+    if (inProject.has(mod)) onjump?.(mod, to.slice(to.lastIndexOf(".") + 1));
   }
 
-  /** Modules this file reaches that are themselves under review. */
-  const inReading = $derived.by(() => {
-    const out = new Map<string, ReadingFile>();
+  /**
+   * Modules this file reaches that live in the project, by full name — which is
+   * what the diagram's outside column carries, so nothing is matched by a last
+   * segment that two Pipelines would share.
+   */
+  const inProject = $derived.by(() => {
+    const out = new Map<string, IndexedModule>();
     for (const dep of module?.deps ?? []) {
-      const short = dep.module.split(".").pop();
-      const hit = files.find((f) =>
-        f.outline?.modules?.some((m) => m.name.split(".").pop() === short),
-      );
-      if (hit && hit.path !== file?.path) out.set(short ?? "", hit);
+      const hit = index.find((m) => m.module === dep.module);
+      if (hit && hit.path !== file?.path) out.set(dep.module, hit);
     }
     return out;
   });
@@ -514,14 +512,14 @@
           <span>— showing only what calls it</span>
           {#if isolatedFile}
             <button class="mini go" onclick={() => jumpTo(isolated!)}>
-              open {isolatedFile.filename} ↗
+              open {isolatedFile.rel.split("/").pop()} ↗
             </button>
           {/if}
         </p>
       {:else}
         <p class="hint">
-          Click anything on the right to see just the functions here that call it{inReading.size
-            ? ` — ${[...inReading.keys()].join(", ")} ${inReading.size === 1 ? "is" : "are"} also in this reading`
+          Click anything on the right to see just the functions here that call it{inProject.size
+            ? `, and open it from there — ${inProject.size === 1 ? "it is" : `${inProject.size} of these are`} in this project`
             : ""}
         </p>
       {/if}

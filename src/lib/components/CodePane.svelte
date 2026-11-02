@@ -20,6 +20,9 @@
     hasGit = false,
     outline = null,
     keysEnabled = true,
+    trail = { back: false, forward: false },
+    onback,
+    onforward,
   }: {
     source: string;
     lang: string | null;
@@ -29,6 +32,13 @@
     outline: Outline | null;
     /** False while a modal is up — motions must not fire behind a dialog. */
     keysEnabled: boolean;
+    /**
+     * Whether the trail of modules you opened leads anywhere either way. The
+     * inspector chain, kept as back and forward — ⌘[ and ⌘] from the keyboard.
+     */
+    trail?: { back: boolean; forward: boolean };
+    onback?: () => void;
+    onforward?: () => void;
   } = $props();
 
   let body = $state<HTMLDivElement | null>(null);
@@ -946,6 +956,12 @@
 
 <div class="pane">
   <div class="panehead">
+    {#if onback || onforward}
+      <span class="trail">
+        <button disabled={!trail.back} onclick={() => onback?.()} title="Back along your trail (⌘[)">←</button>
+        <button disabled={!trail.forward} onclick={() => onforward?.()} title="Forward (⌘])">→</button>
+      </span>
+    {/if}
     {#if filename}
       <button class="name" onclick={copyPath} title="Click to copy the full path&#10;{path}">
         {filename}
@@ -1259,8 +1275,33 @@
      it for 1.3s would mean a second set of states to maintain for a moment nobody
      is clicking in. They fade out and come back as the gold recedes, which also
      leaves the filename alone on the fill, which is the whole message. */
-  .panehead :global(.fontsize) {
+  .panehead :global(.fontsize),
+  .panehead .trail {
     animation: headAside var(--greet) var(--ease-out) both;
+  }
+  .trail {
+    display: flex;
+    gap: 2px;
+    margin-right: 2px;
+  }
+  .trail button {
+    font: inherit;
+    font-size: 11px;
+    line-height: 1;
+    color: var(--fg-dim);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 2px 6px;
+    cursor: pointer;
+  }
+  .trail button:hover:not(:disabled) {
+    color: var(--fg);
+    border-color: var(--fg-faint);
+  }
+  .trail button:disabled {
+    opacity: 0.35;
+    cursor: default;
   }
   @keyframes headAside {
     from,

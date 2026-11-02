@@ -9,19 +9,12 @@
 
   let {
     project = null,
-    /**
-     * Name of the reading in progress, if there is one. Opening a file joins it
-     * rather than starting a new one, and `↵` should say so before you press it
-     * — the whole flow is that the files you open during a review *are* the set.
-     */
-    adding = null,
     onpick,
     onpickpath,
     onchoose,
     onclose,
   }: {
     project: Project | null;
-    adding: string | null;
     onpick: (f: ProjectFile) => void;
     onpickpath: (path: string) => void;
     onchoose: () => void;
@@ -190,8 +183,7 @@
       <span class="spacer"></span>
       <span>
         <kbd>↑</kbd><kbd>↓</kbd> move ·
-        <kbd>↵</kbd>
-        {#if adding}<b class="join">add to {adding}</b>{:else}open{/if} ·
+        <kbd>↵</kbd> open ·
         <kbd>esc</kbd> close
       </span>
     </footer>
@@ -208,10 +200,6 @@
     justify-content: center;
     align-items: flex-start;
     padding-top: 10vh;
-  }
-  .join {
-    color: var(--accent);
-    font-weight: 600;
   }
   .panel {
     width: min(680px, 92vw);

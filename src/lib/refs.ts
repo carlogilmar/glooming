@@ -1,81 +1,66 @@
 // Recognising references in prose.
 //
 // There is deliberately no new syntax: inline code that happens to name
-// something lgtm knows becomes a reference, and everything else stays ordinary
-// inline code. That keeps the markdown portable — paste a reading into a PR
-// comment and it still reads correctly, which would not survive inventing
+// something in the project becomes a reference, and everything else stays
+// ordinary inline code. That keeps the markdown portable — paste a gloom into a
+// PR comment and it still reads correctly, which would not survive inventing
 // `{{create_user/1}}`.
 //
-// The forms recognised, and **the arity is optional**:
+// **Every reference is looked up by name, every render.** A gloom holds no copy
+// of the code, so a reference is a question asked of the code as it is now —
+// which is what lets it follow a function that moved, and say so when it is
+// gone. That is the whole reason there are no plain line ranges any more: `L25`
+// cannot follow anything and cannot tell you it broke.
 //
-//   `MyApp.Billing.to_cents`      module-qualified — the whole family, every
-//                                 arity. This is what the `/` menu inserts, and
-//                                 it is how you would write it in prose anyway
-//   `MyApp.Billing.to_cents/1`    the same, narrowed to exactly one arity
-//   `to_cents`                    the module the prose is currently about
-//   `to_cents/1`                  the same, narrowed
-//   `L30-34`                      a plain line range, for the bits that aren't
-//                                 definitions — case-insensitive, and `L30..34`
-//                                 works too
-//   `billing.ex:30-34`            the same, said out loud about another file
+//   `MyApp.Billing.to_cents`        every arity — what the `/` menu inserts
+//   `MyApp.Billing.to_cents/1`      the same, narrowed to exactly one arity
+//   `MyApp.Billing.charge/2:3-6`    lines 3–6 of that function, counted from its
+//                                   first line — an edit elsewhere in the file
+//                                   cannot move it
+//   `to_cents`, `to_cents/1`        bare: only in the module the prose is
+//                                   currently about
+//   `Weather.Pipeline`              the module itself
 //
-// **A reference without an arity means every arity**, because that is already how
-// selection thinks: the focus store tints sibling arities as "related" on the
-// grounds that they are one function to a reader, even though the BEAM treats
-// them as separate. So `get_user` selects `get_user/1` and `get_user/2` together,
-// and writing `get_user/1` is the narrowing. It also retires `search/1..2`, which
-// was never a readable thing to have in the middle of a sentence.
+// The module part may be any dot-suffix — `Billing.charge` is fine while
+// `Billing` is unique in the project. When it is not, the reference is
+// **ambiguous**, which is a third state beside resolved and broken: it is not
+// wrong, it is underspecified, and the reader is offered the candidates rather
+// than a guess.
 //
-// ---- what dangles, and what quietly stays prose -----------------------------
+// ---- what breaks, and what quietly stays prose ------------------------------
 //
-// A name that *looks* like a reference but isn't in the reading is **dangling**:
-// it renders struck through rather than falling back to plain text, because the
-// code moving out from under your explanation is exactly the thing you want to be
-// told about.
-//
-// A **qualified name whose module is not in the reading** is not a reference at
-// all — `String.trim` is prose about the standard library, not a broken link —
-// and a **bare name with no arity** is the other exception. Prose
-// about Elixir is full of lowercase words in backticks that are not functions —
-// `attrs`, `opts`, `conn`, `config`, `path` — so treating an unresolved one as a
-// broken reference would strike through half of what you write. A bare name
-// therefore resolves or stays ordinary inline code, and cannot warn you that the
-// code moved. The three explicit forms (qualified, or carrying an arity) are
-// unmistakably meant as references, so they all still dangle visibly.
+// A **qualified name whose module is not in the project** is not a reference at
+// all — `String.trim` is prose about the standard library, not a broken link.
+// A **bare name that resolves to nothing** stays prose too: writing about Elixir
+// is full of `attrs`, `opts` and `conn`. Everything else explicit — a missing
+// function in a module the project *has*, a bare name carrying an arity, lines
+// past the end of the function — renders struck through, because the code moving
+// out from under your explanation is exactly what you want to be told.
 //
 // ---- why the resolver is stateful -------------------------------------------
 //
-// A reading covers several files, so "which file" has to be answered for every
-// reference, and half of them do not say. An unqualified name means the file the
-// prose is currently about, so references resolve **in document order**, each one
-// threading the file forward:
+// A bare name means the module the prose is currently about, so references
+// resolve **in document order**, each one threading the module forward:
 //
-//     Then `MyApp.Billing.charge/2` builds the invoice.  → billing.ex
-//     `L25-29` is where it rounds.                       → still billing.ex
+//     Then `MyApp.Billing.charge/2` builds the invoice.  → Billing
+//     `to_cents/1` is where it rounds.                   → still Billing
 //
-// That is how the prose already reads, and — this is the part that matters — it
-// depends only on document order, never on which tab happens to be open. Keying
-// off the current tab would make read mode walk a different path depending on
-// where you were standing when you started scrolling.
+// It depends only on document order — never on which file happens to be open —
+// or read mode would walk a different path depending on where you were standing
+// when you started scrolling. And there is no fallback past the thread: across a
+// whole codebase, `changeset/1` exists in thirty modules.
 
 import type { ReadingFile } from "$lib/ipc";
-import {
-  byPath,
-  findByFilename,
-  findByName,
-  findFn,
-  findQualified,
-  findQualifiedByName,
-  knowsModule,
-  origin,
-} from "$lib/fileset";
+import { fileForModule, inModule, matchModules, moduleForName } from "$lib/fileset";
 
 export interface Ref {
-  /** Bare `name/arity` — the focus identity, shared with rows and tiles. */
+  /** Bare `name/arity` — the focus identity, shared with rows. */
   sig: string;
-  /** Which file of the reading this points into. */
+  /** Which loaded file this points into. */
   path: string;
   filename: string;
+  /** What the chip shows: the module at its shortest unique name. */
+  label: string;
   /**
    * Every span this reference selects — one per arity, each covering that
    * arity's clauses plus its @spec and @doc.
@@ -89,50 +74,35 @@ export interface Ref {
   start: number;
   /** Last line of the last span, for the "reading N lines" pill. */
   end: number;
+  /** A reference to the module itself rather than to something in it. */
+  module?: boolean;
 }
 
-/** `create_user`, `valid?` — a function name on its own. */
-const NAME = /^[a-z_][A-Za-z0-9_]*[!?]?$/;
-/** `create_user/1`, `search/1..2`, `valid?/1` — a name with an arity. */
-const SIG = /^([a-z_][A-Za-z0-9_]*[!?]?)\/(\d+(?:\.\.\d+)?)$/;
-/**
- * `MyApp.Billing.charge` and `MyApp.Billing.charge/2` — a name that carries its
- * own module, with the arity optional.
- */
-const QUALIFIED =
-  /^([A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*)\.([a-z_][A-Za-z0-9_]*[!?]?)(?:\/(\d+(?:\.\.\d+)?))?$/;
-/**
- * `L30`, `L30-34`, `l30..34`.
- *
- * Case-insensitive because nobody reaches for the shift key mid-sentence, and
- * `..` is accepted alongside `-` because it is already how an arity range is
- * written in this same grammar.
- */
-const LINES = /^[Ll](\d+)(?:\s*(?:-|\.\.)\s*(\d+))?$/;
-/** `billing.ex:30-34`, `billing.ex:L30`. The `L` is optional after a filename. */
-const FILE_LINES =
-  /^([A-Za-z0-9_.\-]+\.exs?):[Ll]?(\d+)(?:\s*(?:-|\.\.)\s*(\d+))?$/;
+export interface Ambiguous {
+  ambiguous: true;
+  /** Every module the written name could mean, full names. */
+  candidates: string[];
+  /** The module part as written, so a choice can replace exactly that. */
+  written: string;
+}
 
-/**
- * Does this inline code even claim to be a reference?
- *
- * `NAME` is in here so a bare `to_cents` gets *offered* to the resolver — but a
- * bare name that resolves to nothing comes back as `null`, not `"dangling"`, so
- * `attrs` and `opts` stay ordinary inline code. See the note at the top.
- */
+export type Resolution = Ref | Ambiguous | "dangling" | null;
+
+const NAME = "[a-z_][A-Za-z0-9_]*[!?]?";
+const MOD = "[A-Z][A-Za-z0-9_]*(?:\\.[A-Z][A-Za-z0-9_]*)*";
+/** `:3` or `:3-6` — lines inside the function. */
+const LINES = "(?::(\\d+)(?:-(\\d+))?)?";
+
+/** `to_cents`, `to_cents/1`, `to_cents/1:3-6`. */
+const BARE = new RegExp(`^(${NAME})(?:\\/(\\d+))?${LINES}$`);
+/** `MyApp.Billing.charge`, with the arity and the lines optional. */
+const QUALIFIED = new RegExp(`^(${MOD})\\.(${NAME})(?:\\/(\\d+))?${LINES}$`);
+/** `Weather.Pipeline`. */
+const MODULE = new RegExp(`^${MOD}$`);
+
+/** Does this inline code even claim to be a reference? */
 export function looksLikeRef(text: string): boolean {
-  return (
-    NAME.test(text) ||
-    SIG.test(text) ||
-    QUALIFIED.test(text) ||
-    LINES.test(text) ||
-    FILE_LINES.test(text)
-  );
-}
-
-/** `search/1..2` → the top arity is the identity. */
-function arityOf(spec: string): number {
-  return parseInt(spec.split("..").pop() ?? "0", 10);
+  return BARE.test(text) || QUALIFIED.test(text) || MODULE.test(text);
 }
 
 interface FnLike {
@@ -166,52 +136,81 @@ function spansOf(fns: FnLike[]): Pick<Ref, "ranges" | "start" | "end"> {
   };
 }
 
-function lineCountOf(file: ReadingFile): number {
-  return file.source.split("\n").length;
-}
-
-function lineRef(
-  file: ReadingFile,
-  text: string,
-  a: number,
-  b: number,
-): Ref | "dangling" {
-  // `L15-9` is obvious enough to just honour rather than reject.
-  const start = Math.min(a, b);
-  const end = Math.max(a, b);
-  const lines = lineCountOf(file);
-  // Past the end of the file is the same failure as naming a deleted function:
-  // the code moved under the explanation. Say so, rather than resolving to lines
-  // that don't exist and silently doing nothing.
-  if (start < 1) return "dangling";
-  if (lines > 0 && start > lines) return "dangling";
-  const to = lines > 0 ? Math.min(end, lines) : end;
-  return {
-    sig: text,
-    path: file.path,
-    filename: file.filename,
-    ranges: [{ start, end: to }],
-    start,
-    end: to,
-  };
+/**
+ * Lines `a`–`b` of a function, counted from its first line.
+ *
+ * Counted from the `def`, not from the file, so an edit anywhere else cannot move
+ * them. Past the function's last line is the one way they can still break — the
+ * function got shorter under your explanation — and that dangles rather than
+ * quietly highlighting whatever comes next.
+ */
+function linesIn(fns: FnLike[], a: number, b: number): Pick<Ref, "ranges" | "start" | "end"> | null {
+  const first = Math.min(...fns.map((f) => f.line));
+  const last = Math.max(...fns.map((f) => spanOf(f).end));
+  const lo = Math.min(a, b);
+  const hi = Math.max(a, b);
+  const start = first + lo - 1;
+  const end = first + hi - 1;
+  if (lo < 1 || end > last) return null;
+  return { ranges: [{ start, end }], start, end };
 }
 
 export interface Resolver {
-  /** Resolve one reference, threading the current file forward. */
-  resolve(text: string): Ref | "dangling" | null;
-  /** Back to the reading's origin. Call once per render pass. */
+  /** Resolve one reference, threading the current module forward. */
+  resolve(text: string): Resolution;
+  /** Back to no thread. Call once per render pass. */
   reset(): void;
-  /** The file the prose is currently about — exposed for tests. */
+  /** The module the prose is currently about — exposed for tests. */
   readonly current: string | null;
 }
 
 /**
- * A resolver over one reading. Stateful by design (see the note at the top);
- * `reset()` puts the thread back to the origin at the start of a render.
+ * A resolver over the project. Stateful by design (see the note at the top);
+ * `reset()` clears the thread at the start of a render.
+ *
+ * `known` is every module name in the project; `files` the ones loaded, whose
+ * outlines say where things are; `labels` how each module is shown.
  */
-export function refResolver(files: ReadingFile[]): Resolver {
-  const home = () => origin(files)?.path ?? null;
-  let current: string | null = home();
+export function refResolver(
+  files: ReadingFile[],
+  known: string[],
+  labels: Map<string, string>,
+): Resolver {
+  let current: string | null = null;
+  const label = (m: string) => labels.get(m) ?? m;
+
+  /** A qualified name's module part, or the reason it is not one. */
+  function moduleFor(written: string): string | Ambiguous | null {
+    const hits = matchModules(known, written);
+    if (hits.length > 1) return { ambiguous: true, candidates: hits, written };
+    return hits[0] ?? null;
+  }
+
+  function fnRef(
+    module: string,
+    name: string,
+    arity: string | undefined,
+    a: string | undefined,
+    b: string | undefined,
+    explicit: boolean,
+  ): Resolution {
+    // In the project but not loaded yet: the shell is fetching it, and the note
+    // re-renders when it lands. Plain until then, never struck through — "not
+    // read yet" is not "gone".
+    if (!fileForModule(files, module)) return null;
+    const hit = inModule(files, module, name, arity === undefined ? null : parseInt(arity, 10));
+    if (!hit) return explicit ? "dangling" : null;
+    current = module;
+
+    const top = Math.max(...hit.fns.map((f) => f.arity));
+    const sig = arity === undefined ? `${name}/${top}` : `${name}/${arity}`;
+    const lines = a ? `:${a}${b ? `-${b}` : ""}` : "";
+    const shown = `${explicit ? `${label(module)}.` : ""}${name}${arity === undefined ? "" : `/${arity}`}${lines}`;
+
+    const spans = a ? linesIn(hit.fns, parseInt(a, 10), parseInt(b ?? a, 10)) : spansOf(hit.fns);
+    if (!spans) return "dangling";
+    return { sig, path: hit.file.path, filename: hit.file.filename, label: shown, ...spans };
+  }
 
   return {
     get current() {
@@ -219,100 +218,50 @@ export function refResolver(files: ReadingFile[]): Resolver {
     },
 
     reset() {
-      current = home();
+      current = null;
     },
 
-    resolve(text: string): Ref | "dangling" | null {
-      if (!files.length) return null;
-
-      // `billing.ex:30-34` — names its file, so it also moves the thread.
-      const fileLines = FILE_LINES.exec(text);
-      if (fileLines) {
-        const file = findByFilename(files, fileLines[1]);
-        if (!file) return "dangling";
-        current = file.path;
-        const a = parseInt(fileLines[2], 10);
-        return lineRef(file, text, a, fileLines[3] ? parseInt(fileLines[3], 10) : a);
-      }
-
-      // `MyApp.Billing.charge` — names its module, so it also moves the thread.
-      // The arity is optional; without one it means every arity of that name.
+    resolve(text: string): Resolution {
       const qual = QUALIFIED.exec(text);
       if (qual) {
-        const [, mod, name, arity] = qual;
-        // `String.trim`, `Enum.map`, `GenServer.call` — prose about code outside
-        // the reading, not a broken reference to code inside it. Only a module
-        // that is actually one of your files may render as struck through.
-        //
-        // The trade: remove a file from the reading and its references go quiet
-        // rather than breaking loudly. That case has its own signals — the ×
-        // spells out what it does, and the strip shows the set — whereas a
-        // struck-through `String.trim` has none and just looks like a bug.
-        if (!knowsModule(files, mod)) return null;
-        if (arity === undefined) {
-          const hit = findQualifiedByName(files, mod, name);
-          if (!hit) return "dangling";
-          current = hit.file.path;
-          return {
-            // The identity is bare `name/arity` so a chip and a table row can
-            // still recognise each other. With several arities the top one wins,
-            // which is the same identity rule the outline uses.
-            sig: `${name}/${Math.max(...hit.fns.map((f) => f.arity))}`,
-            path: hit.file.path,
-            filename: hit.file.filename,
-            ...spansOf(hit.fns),
-          };
-        }
-        const hit = findQualified(files, mod, name, arityOf(arity));
-        if (!hit) return "dangling";
-        current = hit.file.path;
+        const [, written, name, arity, a, b] = qual;
+        const module = moduleFor(written);
+        // `String.trim`, `Enum.map` — prose about code outside the project.
+        if (module === null) return null;
+        if (typeof module !== "string") return module;
+        return fnRef(module, name, arity, a, b, true);
+      }
+
+      if (MODULE.test(text)) {
+        const module = moduleFor(text);
+        if (module === null) return null;
+        if (typeof module !== "string") return module;
+        const file = fileForModule(files, module);
+        const info = file ? moduleForName([file], module) : null;
+        if (!file || !info) return null;
+        current = module;
         return {
-          sig: `${name}/${arity}`,
-          path: hit.file.path,
-          filename: hit.file.filename,
-          ...spansOf([hit.fn]),
+          sig: module,
+          path: file.path,
+          filename: file.filename,
+          label: label(module),
+          ranges: [{ start: info.line, end: info.line }],
+          start: info.line,
+          end: info.line,
+          module: true,
         };
       }
 
-      // `L30-34` — inherits whichever file the prose is currently about.
-      const lines = LINES.exec(text);
-      if (lines) {
-        const file = byPath(files, current) ?? origin(files);
-        if (!file) return "dangling";
-        const a = parseInt(lines[1], 10);
-        return lineRef(file, text, a, lines[2] ? parseInt(lines[2], 10) : a);
-      }
-
-      // `charge/2` — the current file first, then the origin, then the rest.
-      const sig = SIG.exec(text);
-      if (sig) {
-        const hit = findFn(files, current, sig[1], arityOf(sig[2]));
-        if (!hit) return "dangling";
-        current = hit.file.path;
-        return {
-          sig: text,
-          path: hit.file.path,
-          filename: hit.file.filename,
-          ...spansOf([hit.fn]),
-        };
-      }
-
-      // `charge` — every arity, in the module the prose is currently about.
-      //
-      // Returns **null** rather than "dangling" when it finds nothing, and that
-      // asymmetry is deliberate: this is the one form that overlaps with ordinary
-      // prose, so an unresolved one has to stay ordinary prose. `attrs` and
-      // `opts` must not strike through.
-      if (!NAME.test(text)) return null;
-      const family = findByName(files, current, text);
-      if (!family) return null;
-      current = family.file.path;
-      return {
-        sig: `${text}/${Math.max(...family.fns.map((f) => f.arity))}`,
-        path: family.file.path,
-        filename: family.file.filename,
-        ...spansOf(family.fns),
-      };
+      // A bare name: only in the module the prose is threading. With an arity
+      // it is unmistakably meant as a reference, so it may dangle; without one
+      // it overlaps with ordinary prose, so an unresolved one stays prose.
+      const bare = BARE.exec(text);
+      if (!bare || !current) return null;
+      const [, name, arity, a, b] = bare;
+      const r = fnRef(current, name, arity, a, b, false);
+      if (r === "dangling" && arity === undefined && !a) return null;
+      if (r === null && (arity !== undefined || a)) return "dangling";
+      return r;
     },
   };
 }

@@ -1,16 +1,20 @@
 <script lang="ts">
-  // Everything you've written, and the only way back to it. Built for a few
-  // hundred docs rather than a few: search, three orderings, folder grouping,
-  // and full keyboard navigation — a flat list stops being usable at about ten.
-  import { listDocs, deleteDoc, type DocSummary } from "$lib/ipc";
+  // Every gloom in this project, and the way back to any of them. Built for a
+  // few hundred rather than a few: search over the name, the tags and the prose,
+  // two orderings, and full keyboard navigation — a flat list stops being usable
+  // at about ten. The sidebar holds the recent ones; this is for finding the rest.
+  import { listDocs, deleteDoc, type DocSummary, type Project } from "$lib/ipc";
   import { when } from "$lib/when";
   import { parseTags, tagHue } from "$lib/tags";
 
   let {
+    project,
     onopen,
     onclose,
     ondelete,
   }: {
+    /** Glooms belong to a project, so the library is one project's. */
+    project: Project;
     onopen: (d: DocSummary) => void;
     onclose: () => void;
     /**
@@ -21,7 +25,7 @@
     ondelete?: (id: number) => void;
   } = $props();
 
-  type Sort = "recent" | "name" | "folder";
+  type Sort = "recent" | "name";
 
   let query = $state("");
   let sort = $state<Sort>("recent");
@@ -36,7 +40,7 @@
   async function refresh() {
     loading = true;
     try {
-      docs = await listDocs(query || undefined, 500);
+      docs = await listDocs(project.id, query || undefined, 500);
     } finally {
       loading = false;
     }
@@ -55,47 +59,12 @@
     confirming = null;
   });
 
-  const sorted = $derived.by(() => {
+  const flat = $derived.by(() => {
     const list = [...docs];
-    if (sort === "name") {
-      list.sort((a, b) => a.title.localeCompare(b.title));
-    } else if (sort === "folder") {
-      list.sort(
-        (a, b) => folderOf(a).localeCompare(folderOf(b)) || a.filename.localeCompare(b.filename),
-      );
-    } else {
-      list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    }
+    if (sort === "name") list.sort((a, b) => (a.title || "~").localeCompare(b.title || "~"));
+    else list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     return list;
   });
-
-  /** Grouped for display; a single unnamed group when we're not grouping. */
-  const groups = $derived.by(() => {
-    if (sort !== "folder") return [{ label: "", items: sorted }];
-    const out: { label: string; items: DocSummary[] }[] = [];
-    for (const doc of sorted) {
-      const label = prettyFolder(folderOf(doc));
-      const last = out[out.length - 1];
-      if (last && last.label === label) last.items.push(doc);
-      else out.push({ label, items: [doc] });
-    }
-    return out;
-  });
-
-  /** Flat order, so ↑/↓ crosses group boundaries the way the eye does. */
-  const flat = $derived(groups.flatMap((g) => g.items));
-
-  function folderOf(d: DocSummary): string {
-    return d.path.replace(/\/[^/]+$/, "");
-  }
-
-  function prettyFolder(path: string): string {
-    const home = "/Users/";
-    if (!path.startsWith(home)) return path;
-    const rest = path.slice(home.length);
-    const cut = rest.indexOf("/");
-    return cut === -1 ? "~" : "~" + rest.slice(cut);
-  }
 
   async function confirmDelete(doc: DocSummary) {
     await deleteDoc(doc.id);
@@ -138,12 +107,11 @@
   <div class="panel" onclick={(e) => e.stopPropagation()} onkeydown={onKey}>
     <header>
       <!-- svelte-ignore a11y_autofocus -->
-      <input placeholder="Search name, tag, file, path or branch…" bind:value={query} autofocus />
+      <input placeholder="Search {project.name}'s glooms — name, tag or what they say…" bind:value={query} autofocus />
 
       <div class="seg" role="group" aria-label="Sort">
         <button class:on={sort === "recent"} onclick={() => (sort = "recent")}>Recent</button>
         <button class:on={sort === "name"} onclick={() => (sort = "name")}>Name</button>
-        <button class:on={sort === "folder"} onclick={() => (sort = "folder")}>Folder</button>
       </div>
 
       <button class="btn" onclick={onclose}>Close</button>
@@ -154,15 +122,10 @@
         <p class="empty">Loading…</p>
       {:else if !flat.length}
         <p class="empty">
-          {query ? `Nothing matches “${query}”.` : "No glooms yet — open a file to start one."}
+          {query ? `Nothing matches “${query}”.` : `No glooms in ${project.name} yet — start one from the sidebar.`}
         </p>
       {:else}
-        {#each groups as group (group.label)}
-          {#if group.label}
-            <div class="grouphead">{group.label} <span>{group.items.length}</span></div>
-          {/if}
-          {#each group.items as doc (doc.id)}
-            {@const idx = flat.indexOf(doc)}
+          {#each flat as doc, idx (doc.id)}
             <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
             <div
               class="row"
@@ -176,15 +139,8 @@
                   <div class="what">
                     <b>Delete this gloom?</b>
                     <span>
-                      Removes the markdown you wrote and the
-                      {doc.fileCount > 1
-                        ? `${doc.fileCount} source snapshots saved with it`
-                        : "source snapshot saved with it"}. This cannot be undone.
-                      <em>
-                        {doc.fileCount > 1
-                          ? `None of the ${doc.fileCount} files on disk are touched.`
-                          : `Your ${doc.filename} file on disk is not touched.`}
-                      </em>
+                      Removes the note you wrote. This cannot be undone.
+                      <em>No code is touched — a gloom never holds any.</em>
                     </span>
                   </div>
                   <div class="acts">
@@ -197,11 +153,9 @@
                   </div>
                 </div>
               {:else}
-                <!-- The same row home uses: the name, its tags, then the counts and
-                     the age in fixed columns at the right so they line up down the
-                     list. The origin filename went with the redesign — the name is
-                     what identifies a gloom, and the folder is the group header. -->
-                <span class="rname" class:unnamed={doc.title === doc.filename}>{doc.title}</span>
+                <!-- The same row the sidebar uses: the name, its tags, then the age in
+                     a fixed column at the right so it lines up down the list. -->
+                <span class="rname" class:unnamed={!doc.title}>{doc.title || "Unnamed gloom"}</span>
                 {#if doc.label}
                   <span class="rtags">
                     {#each parseTags(doc.label).slice(0, 4) as t (t)}
@@ -209,10 +163,6 @@
                     {/each}
                   </span>
                 {/if}
-                <span class="rcount">
-                  {doc.fileCount}
-                  {doc.fileCount === 1 ? "file" : "files"}
-                </span>
                 <span class="rwhen">{when(doc.updatedAt)}</span>
                 <button
                   class="del"
@@ -225,7 +175,6 @@
               {/if}
             </div>
           {/each}
-        {/each}
       {/if}
     </div>
 
@@ -316,25 +265,6 @@
     padding: 40px 24px;
     text-align: center;
     margin: 0;
-  }
-
-  .grouphead {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    display: flex;
-    gap: 8px;
-    align-items: baseline;
-    padding: 7px 14px;
-    background: var(--bg-inset);
-    border-bottom: 1px solid var(--line-soft);
-    font-family: var(--mono);
-    font-size: 10.5px;
-    color: var(--fg-faint);
-  }
-  .grouphead span {
-    color: var(--fg-faint);
-    opacity: 0.7;
   }
 
   .row {
@@ -466,16 +396,12 @@
     color: oklch(0.86 0.09 var(--hue));
     background: oklch(0.86 0.09 var(--hue) / 0.14);
   }
-  .rcount,
   .rwhen {
     flex: none;
     text-align: right;
     font-family: var(--mono);
     font-size: 10px;
     color: var(--fg-faint);
-  }
-  .rcount {
-    width: 52px;
   }
   .rwhen {
     width: 64px;

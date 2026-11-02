@@ -137,67 +137,49 @@ export interface Outline {
   tests: TestInfo | null;
 }
 
+/** A gloom, as the sidebar and the library list it — without the prose. */
 export interface DocSummary {
   id: number;
-  path: string;
-  filename: string;
-  lang: string;
+  projectId: number;
+  /** Empty until you name it. */
   title: string;
-  branch: string | null;
+  /** Tags, comma-separated. */
   label: string | null;
-  sourceSha: string;
   createdAt: string;
   updatedAt: string;
-  /** Files this reading covers. 1 for a doc about a single file. */
-  fileCount: number;
 }
 
+/** A gloom: prose and nothing else. No snapshot, no file list. */
 export interface Doc extends DocSummary {
   markdown: string;
-  source: string;
 }
 
+/** A file as it is on disk right now. */
 export interface OpenedFile {
   path: string;
   filename: string;
   source: string;
-  sourceSha: string;
   lang: string | null;
   outline: Outline | null;
   branch: string | null;
   hasGit: boolean;
-  existing: DocSummary[];
 }
 
 /**
- * One file of a reading, as the UI needs it.
+ * A file loaded this session — on screen, walked through, or named by the prose.
  *
- * `source` is what to show: disk when the file is readable, the snapshot when it
- * is not — which is what lets a reading survive one of its files being deleted.
+ * The name is kept from when a gloom was a *reading* of a set of files; it is
+ * now a cache of live reads, and nothing about it is stored. Same shape as
+ * `OpenedFile`, so one becomes the other without conversion.
  */
-export interface ReadingFile {
-  path: string;
-  filename: string;
-  lang: string | null;
-  source: string;
-  sourceSha: string;
-  /** sha of the snapshot taken when this file joined the reading. */
-  snapshotSha: string;
-  /** This file has changed on disk since it was read. Per-file, deliberately. */
-  stale: boolean;
-  /** Not on disk any more; `source` is the snapshot. */
-  missing: boolean;
-  outline: Outline | null;
-  hasGit: boolean;
-  branch: string | null;
-  /** The file the doc was seeded from. Cannot be removed from the reading. */
-  origin: boolean;
-}
+export type ReadingFile = OpenedFile;
 
-/** A whole reading: the note, and every file it covers. */
-export interface Reading {
-  doc: Doc;
-  files: ReadingFile[];
+/** One module in the project, and the file it is defined in. */
+export interface IndexedModule {
+  module: string;
+  path: string;
+  rel: string;
+  test: boolean;
 }
 
 export interface BlameLine {
@@ -221,133 +203,36 @@ export const blameFile = (path: string) =>
 
 // ---- docs ----------------------------------------------------------------
 
-export const seedDoc = (path: string, outline: Outline, source: string) =>
-  invoke<string>("seed_doc", { path, outline, source });
-
-export const createDoc = (args: {
-  path: string;
-  lang: string;
-  title: string;
-  branch: string | null;
-  markdown: string;
-  source: string;
-}) => invoke<Doc>("create_doc", args);
+/** Start an unnamed gloom in a project. */
+export const createDoc = (projectId: number) => invoke<Doc>("create_doc", { projectId });
 
 export const saveDoc = (args: {
   id: number;
   markdown?: string;
   title?: string;
-  branch?: string;
   label?: string;
 }) => invoke<Doc>("save_doc", args);
 
 export const loadDoc = (id: number) => invoke<Doc>("load_doc", { id });
 
-export const listDocs = (query?: string, limit = 100) =>
-  invoke<DocSummary[]>("list_docs", { query: query ?? null, limit });
+export const listDocs = (projectId: number, query?: string, limit = 200) =>
+  invoke<DocSummary[]>("list_docs", { projectId, query: query ?? null, limit });
 
 export const deleteDoc = (id: number) => invoke<void>("delete_doc", { id });
 
-// ---- the files a reading covers --------------------------------------------
-// Every one of these returns the whole reading, so the UI replaces its state
-// rather than patching it — the same one-payload habit as `open_file`.
-
-export const openReading = (id: number) => invoke<Reading>("open_reading", { id });
-
-/**
- * Generate one `lgtm:*` block for an already-parsed file.
- *
- * Round-trips to Rust even though the outline is already here, because the sort
- * order must live in exactly one place — see `block_for`.
- */
-export const blockFor = (
-  kind: "stats" | "surface" | "deps" | "treemap",
-  path: string,
-  outline: Outline,
-) => invoke<string>("block_for", { kind, path, outline });
-
-/** Adding a file seeds nothing. It contributes source, and vocabulary. */
-export const addDocFile = (id: number, path: string) =>
-  invoke<Reading>("add_doc_file", { id, path });
-
-export const removeDocFile = (id: number, path: string) =>
-  invoke<Reading>("remove_doc_file", { id, path });
-
-
-// ---- exporting -------------------------------------------------------------
-
-/**
- * Write a note's markdown to a path the user picked in the save dialog.
- *
- * Returns the normalised path it actually wrote, so the confirmation can name
- * the file rather than the string that was passed in.
- */
+/** Write the note to a path the save dialog chose. The only write outside the DB. */
 export const exportNote = (path: string, markdown: string) =>
   invoke<string>("export_note", { path, markdown });
 
-// ---- importing a gloom -----------------------------------------------------
-
-export interface ImportProblem {
-  /** 1-based; null for something the file as a whole is missing. */
-  line: number | null;
-  message: string;
-}
-
-export interface PreviewFile {
-  path: string;
-  line: number;
-  found: boolean;
-}
-
-/**
- * `unchecked` is a first-class answer, not a failure. The check speaks only when
- * it is sure — no `branch:` in the file, not a repository, a detached HEAD.
- */
-export type BranchCheck =
-  | { state: "unchecked"; why: string }
-  | { state: "same"; branch: string }
-  | { state: "differs"; wants: string; here: string };
-
-export interface ImportPreview {
-  name: string;
-  /** The project as the file wrote it — shown even when it does not resolve. */
-  project: string;
-  /** The directory actually checked: `project`, or the one you chose instead. */
-  root: string;
-  rootOk: boolean;
-  rootChosen: boolean;
-  branch: BranchCheck;
-  files: PreviewFile[];
-  noteBytes: number;
-  problems: ImportProblem[];
-  /** Every check passed. Import is offered only when this is true. */
-  ready: boolean;
-}
-
-/**
- * A gloom file with the project and branch already filled in.
- *
- * Generated in Rust beside the parser, so a key cannot be added to one and
- * forgotten in the other.
- */
-export const gloomTemplate = (project?: string | null) =>
-  invoke<string>("gloom_template", { project: project ?? null });
-
-/** Read a gloom file and say what is wrong with it, if anything. */
-export const previewImport = (path: string, root?: string | null) =>
-  invoke<ImportPreview>("preview_import", { path, root: root ?? null });
-
-/** Create the gloom. Re-validates from scratch — never trusts the preview. */
-export const importGloom = (path: string, root?: string | null) =>
-  invoke<Reading>("import_gloom", { path, root: root ?? null });
-
 // ---- projects --------------------------------------------------------------
 
+/** A codebase you explore, and how many glooms belong to it. */
 export interface Project {
   id: number;
   path: string;
   name: string;
   openedAt: string;
+  gloomCount: number;
 }
 
 export interface ProjectFile {
@@ -364,3 +249,7 @@ export const recentProjects = () => invoke<Project[]>("recent_projects");
 export const forgetProject = (id: number) => invoke<void>("forget_project", { id });
 
 export const projectFiles = (path: string) => invoke<ProjectFile[]>("project_files", { path });
+
+/** Every module in the project and where it lives. Derived on every call. */
+export const projectIndex = (path: string) =>
+  invoke<IndexedModule[]>("project_index", { path });

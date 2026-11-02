@@ -31,10 +31,6 @@
           what: "Puts the review cursor on that line, for reading one line at a time. Click it again to drop it",
         },
         { action: "click empty space", what: "Clears the selection" },
-        {
-          action: "click the sticky header",
-          what: "Once you scroll past a definition its signature pins to the top; clicking it jumps back",
-        },
         { action: "click the filename", what: "Copies the file's full path, ready to paste into your editor" },
       ],
     },
@@ -64,18 +60,25 @@
         { keys: ["⌘R"], what: "LGTM: walk the code in the order your prose takes it. The pass you finish a gloom with — `esc` also leaves it" },
         { keys: ["⌘E"], what: "Edit / preview the note. Entering edit leaves LGTM mode; typing under a scroll-driven selection is chaos" },
         {
-          action: "the top of the note",
+          action: "the views",
           what:
-            "What you navigate the current file by, above your writing in the same scroll: a " +
-            "module's surface and the boundary it reaches through; a config script's settings, " +
-            "marked env or literal; a suite's describes and the context each one starts with. " +
-            "It follows the file you are in — scroll down to write, up to look something up",
+            "The right pane's top half, always live from disk: a module's surface and the " +
+            "boundary it reaches through; a config script's settings, marked env or literal; a " +
+            "suite's describes and the context each one starts with. They follow the file on " +
+            "screen, with or without a gloom open",
         },
         {
-          keys: ["⌘⇧T"],
+          action: "the sidebar",
           what:
-            "The files in this reading — filter, ↑↓↵ to switch, × or ⌫ to remove one you opened " +
-            "by accident. `⌘T` adds another. The button in the header does the same",
+            "This project's glooms, then its modules as a namespace tree — for browsing when you " +
+            "do not know a name yet. A teal dot marks a module the open gloom mentions. `⌘\\` " +
+            "hides it; read mode always does",
+        },
+        {
+          keys: ["⌘[", "⌘]"],
+          what:
+            "Back and forward along your trail — every module you opened, from the tree, ⌘T, a " +
+            "reference or the reach diagram. Also the ← → in the code pane's header",
         },
         { keys: ["Esc"], what: "Clear the selection" },
       ],
@@ -138,206 +141,131 @@
       ],
     },
     {
-      title: "Your explanation",
-      note: "Plain markdown with five extra blocks. The values live in the text, so you can edit any of them.",
+      title: "Glooms",
+      note:
+        "A gloom is a note in this project's knowledge base: one thing you worked out, in your " +
+        "own words, beside the code it is about. It stores your prose and nothing else — no copy " +
+        "of the code — so it always describes the code as it is now.",
       rows: [
-        { action: "Preview / Edit", what: "Rendered blocks, or the raw markdown source" },
         {
-          action: "Copy",
+          action: "Start a gloom",
           what:
-            "The note's markdown on the clipboard, exactly as written — no front matter, nothing " +
-            "generated. It is plain markdown, so it reads correctly pasted into a PR comment or a " +
-            "notes app",
+            "From the + in the sidebar, or the bar under the views while exploring. It opens with " +
+            "its name selected; exploring without one saves nothing at all",
         },
         {
-          action: "New gloom file…",
+          action: "open a gloom",
           what:
-            "On home. A gloom file with the project and branch already filled in — copy it, add " +
-            "the name and the files, save it as a .md, and import it. Also what to hand a skill",
+            "Lands the code pane on the first module its prose names, which is where your " +
+            "understanding of it starts. `close ×` in its band goes back to exploring and keeps " +
+            "your place in the code",
         },
+        { action: "Preview / Edit", what: "The rendered note, or its raw markdown" },
         {
-          action: "Import a gloom…",
+          action: "Copy / Save…",
           what:
-            "On home. A markdown file whose front matter names the project and the files, and " +
-            "whose body becomes the note — a reading you can hand to someone. Nothing is created " +
-            "until the directory, every file and the branch all check out",
-        },
-        {
-          action: "Save…",
-          what:
-            "The same markdown as a .md file, named after the gloom. lgtm writes nothing else " +
-            "anywhere: your source files are never touched",
+            "The note's markdown, exactly as written — every reference carries its full module " +
+            "name, so it reads correctly pasted into a PR comment or opened on another machine. " +
+            "Your source files are never touched",
         },
         {
           action: "A− / A+",
-          what:
-            "Text size for both Preview and Edit, kept separately from the code pane's. Headings, " +
-            "inline code and the markdown source all scale with it; the blocks keep their own " +
-            "sizes, since they are data rather than text",
+          what: "Text size for both Preview and Edit, kept separately from the code pane's",
         },
         {
           keys: ["/"],
           what:
-            "While editing, insert a reference without remembering its arity. Filters as you type " +
-            "— ↑↓ then ↵. Only fires at a word boundary, so a path or a date stays prose",
+            "While editing, insert a reference to any function in a file you have open or have " +
+            "walked through. It inserts the full module name and no arity — the footer shows the " +
+            "exact text. Only fires at a word boundary, so a path or a date stays prose",
         },
         {
-          action: "the surface block",
+          action: "hover the reach diagram",
           what:
-            "Public left, private right, sorted by name and scrolling separately — the directory. " +
-            "Click a row to focus it in the code",
-        },
-        { action: "click a table row", what: "Focuses that function in the code" },
-        { action: "click a treemap tile", what: "The same — sized by lines of code, biggest three labelled" },
-        {
-          action: "hover the reach block",
-          what:
-            "The module drawn as a closed shape, with lines only where a call leaves it. Hover a " +
-            "function to see what it reaches, or something outside to see who reaches it. Functions " +
-            "that reach nothing stay quiet — that silence is the point",
-        },
-        {
-          action: "click a function there",
-          what:
-            "Focuses it in the code and pins its connections, so the picture still answers " +
-            "“what does this reach” while you read",
+            "The module drawn as a closed shape, with lines only where a call leaves it. Click " +
+            "something outside to see who here calls it, and open it from there — any module in " +
+            "the project can be followed",
         },
         { keys: ["⌘S"], what: "Force a save. Autosave already runs 800ms after you stop typing" },
+        { keys: ["⌘K"], what: "Search every gloom in this project — by name, tag or what it says" },
+      ],
+    },
+    {
+      title: "References",
+      note:
+        "Inline code naming something in the project becomes a reference, looked up by name every " +
+        "time the note renders — so it follows a function that moved, and says so when it is " +
+        "gone. No new syntax: the markdown still reads correctly anywhere.",
+      rows: [
         {
-          action: "one gloom, one branch",
+          action: "`MyApp.Billing.charge`",
           what:
-            "A file may only join a gloom from the branch the gloom was read on. A gloom is a " +
-            "reading of one version of a change, and a file snapshotted from another branch is " +
-            "a second version of the world in the same note — with line numbers your prose " +
-            "describes as though they were the same. Check out that branch to carry on, or " +
-            "start a new gloom for where you are",
+            "Every arity of it; `charge/2` narrows to one. Shown at its shortest unique name — " +
+            "`Billing.charge` — while the text keeps the full one",
         },
         {
-          action: "“has changed on disk”",
+          action: "`MyApp.Billing.charge/2:3-6`",
           what:
-            "A gloom holds the versions of the files it was read at — the pane shows the " +
-            "snapshot, and the note's line numbers keep meaning what they meant. When a file " +
-            "moves on, the strip above the code says so. Nothing merges: to read the new " +
-            "version, start a new gloom",
+            "Lines 3–6 of that function, counted from its first line, so an edit elsewhere in the " +
+            "file cannot move them. Plain line numbers are gone: they could not follow anything",
+        },
+        { action: "`Weather.Pipeline`", what: "The module itself — a step that opens it" },
+        {
+          action: "an unqualified name",
+          what:
+            "Means the module the prose is currently about: after `MyApp.Billing.charge/2`, a bare " +
+            "`to_cents/1` is Billing's. Only that module — across a whole codebase, a bare " +
+            "`changeset/1` could be thirty things",
+        },
+        {
+          action: "a dashed reference",
+          what:
+            "Ambiguous: `Pipeline.run` with two Pipelines in the project. Click it to choose, and " +
+            "the text is rewritten to the full name. Read mode skips it until then",
+        },
+        {
+          action: "a struck-through reference",
+          what:
+            "The function it names is gone, or the lines are past its end. It stays visible " +
+            "rather than becoming plain text, and read mode skips it",
+        },
+        {
+          action: "`attrs`, `String.trim`",
+          what:
+            "Left as prose. A bare word that names no function, and a module that is not in this " +
+            "project, are things you write about code — not broken references to it",
         },
       ],
     },
     {
       title: "Reading",
-      note:
-        "Write about the code and lgtm walks it for you. Any inline code naming a function in " +
-        "the reading — `create_user`, or `Billing.charge` for one in another module — " +
-        "becomes a reference, and `L30-34` points at plain lines. No new syntax, so the markdown " +
-        "still reads correctly pasted into a PR comment.",
       rows: [
         {
           action: "▷ LGTM",
           what:
-            "Scroll the doc and the code follows your prose order — not the file's. The rest of " +
-            "the file recedes further than usual, and what you are leaving lingers for a beat so " +
-            "the jump reads as a connection rather than a cut. It is named for what it is for: " +
-            "the pass at the end of which you can say looks good to me",
+            "Scroll the note and the code follows your prose order — not the file's — crossing " +
+            "into whichever module the next reference names. Named for what it is for: the pass " +
+            "at the end of which you can say looks good to me",
         },
         {
           action: "one step per reference",
           what:
             "Every reference is a stop, triggered as you reach the sentence naming it — so a " +
-            "paragraph that names three functions walks the code through all three, in the order " +
-            "your prose takes them, while the paragraph stays highlighted",
+            "paragraph that names three functions walks the code through all three",
         },
         {
-          action: "a struck-through reference",
+          action: "crossing a module",
           what:
-            "The function it names is gone from the reading. It stays visible rather than quietly " +
-            "becoming plain text — you should see when code moves out from under your explanation",
-        },
-        {
-          action: "a reference with a left edge",
-          what:
-            "It points into another file of the reading. Clicking it, or scrolling onto it, swaps " +
-            "the code pane first — the pane dips and names where you landed, rather than " +
-            "crossfading line ranges between two files that share nothing",
-        },
-        {
-          action: "a module is its last segment",
-          what:
-            "`SingleTarget.foo`, not the whole path to it — the prefix is the same for every " +
-            "module in the reading. Any longer piece of the path still works, and two modules " +
-            "sharing a last segment both keep their full names rather than becoming ambiguous",
-        },
-        {
-          action: "the arity is optional",
-          what:
-            "`get_user` means every arity of it — they are one function to a reader, and both " +
-            "get highlighted. Write `get_user/2` when you mean exactly that one. This is what " +
-            "`/` inserts, because `search/1..2` was never readable in a sentence",
-        },
-        {
-          action: "`attrs`, `String.trim`",
-          what:
-            "Left as ordinary prose, not struck through. A bare word that names no function, and " +
-            "a module that isn't one of your files, are things you write about code — not broken " +
-            "references to it. Anything explicit still strikes through when it goes missing",
-        },
-        {
-          action: "an unqualified name",
-          what:
-            "Means the file the prose is currently about: after `MyApp.Billing.charge/2`, a bare " +
-            "`L25-29` is still billing's. That depends only on the order of your prose, never on " +
-            "which tab happens to be open — so a reading walks the same path every time",
-        },
-      ],
-    },
-    {
-      title: "A reading of several files",
-      note:
-        "One note can cover more than one file, because a change worth reviewing usually does. " +
-        "There is no gesture for creating a group: with a reading open, opening a file joins it, " +
-        "and the files you open during a review are the set. Adding a file seeds nothing — your " +
-        "note stays yours — it just widens what you can reference.",
-      rows: [
-        {
-          action: "the file tabs",
-          what:
-            "Switcher and progress at once. A green dot means your note references that file, " +
-            "amber that it has changed on disk since you read it, and hollow that you opened it " +
-            "and never mentioned it — the same nudge an empty explanation slot is",
-        },
-        {
-          action: "× on a tab",
-          what:
-            "Removes a file you opened by accident. Its snapshot leaves the reading; your note " +
-            "and the file on disk are untouched. The file the reading started from has no × — " +
-            "delete the whole reading instead",
-        },
-        {
-          keys: ["/", "stats"],
-          what:
-            "Block commands, for when your explanation wants a reader to see something: " +
-            "`/stats` for size and history, `/surface` for the directory, `/deps`, `/treemap`. " +
-            "Add a space and a filename — `/surface impact_stage.ex` — for any other file in " +
-            "the reading. Nothing is inserted for you; add one where you want it and delete it " +
-            "when you don't",
-        },
-        {
-          keys: ["/"],
-          what:
-            "While editing, offers every function in the reading, grouped by module. Every " +
-            "reference it inserts is module-qualified — a one-file reading becomes a multi-file " +
-            "one as soon as you open another, and what you already wrote has to still mean it. " +
-            "The footer shows the exact text ↵ will give you",
-        },
-        {
-          action: "← Home, then open",
-          what: "The way to start a separate reading rather than adding to this one",
+            "The pane dips and its header lights up in gold, rather than crossfading line ranges " +
+            "between two files that share nothing",
         },
       ],
     },
     {
       title: "Other kinds of file",
       note:
-        "A module is not the only shape a file comes in, and the blocks that suit one say nothing " +
-        "about another — so lgtm seeds different blocks depending on what it finds.",
+        "A module is not the only shape a file comes in, so the views change with what lgtm " +
+        "finds.",
       rows: [
         {
           action: "a config script",
@@ -348,45 +276,37 @@
         {
           action: "a test suite",
           what:
-            "Describes with a strip of one square per test, shaded by how much it asserts, plus " +
-            "the setup each group inherits and the context its tests start with",
+            "Describes as foldable sections, the setup each one inherits, and every assertion " +
+            "marked by kind inside a selected test",
         },
         {
           action: "anything else",
-          what:
-            "A script, a one-off .exs, a file that doesn't parse — a title, the size, and a blank " +
-            "page. No error, and no empty blocks pretending there was something to say",
+          what: "One line saying there is nothing structural to navigate by — never empty boxes",
         },
       ],
     },
     {
-      title: "Files and docs",
+      title: "Projects and files",
       rows: [
-        { action: "← Home", what: "Back to your recent readings. Saves anything pending first" },
+        { action: "← Home", what: "Back to your projects. Saves anything pending first" },
         {
-          keys: ["⌘O", "⌘T"],
+          keys: ["⌘T", "⌘O"],
           what:
-            "Find a file by name in the open folder — and with a reading open, add it to that " +
-            "reading. Matches the whole path, so `web/proc` and `my_app/acc` both narrow, and " +
-            "pasting a full path works too, for anything outside the project",
+            "Find a module or file by name in the project. Matches the whole path, so `web/proc` " +
+            "and `my_app/acc` both narrow, and a pasted full path works too",
         },
         {
           action: "Open a folder…",
           what:
-            "Pick the project once; it is remembered, and the last one is reopened next launch. " +
-            "Build output and dependencies are never listed",
+            "On home. A project is a folder, remembered with its glooms. Build output and " +
+            "dependencies are never listed",
         },
+        { keys: ["⌘⇧O"], what: "The system file picker, for a file outside the project" },
         {
-          keys: ["⌘⇧O"],
+          action: "coming back to the window",
           what:
-            "The system file picker, for a file outside the project. ⌘O searches the open folder " +
-            "instead — that is the one you want almost every time",
-        },
-        {
-          keys: ["⌘K"],
-          what:
-            "Library: search, sort by recent / name / folder, ↑↓↵ to open. A reading of several " +
-            "files shows a `+n` beside its first one",
+            "Re-reads what you have open and rebuilds the module index, so an edit made in your " +
+            "editor is there when you return",
         },
         { keys: ["?"], what: "This help" },
       ],

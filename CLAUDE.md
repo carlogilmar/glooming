@@ -1,19 +1,26 @@
 # lgtm
 
-A desktop tool for **reading code deeply**. You open one source file; the window
-splits with the source on the left and your explanation on the right. lgtm
-parses the file and seeds the explanation with what it found — its size and
-history, its surface, what it reaches outside itself — and you fill in the prose. Clicking anything in the explanation focuses
-it in the code, and with `▷ Read` on, **scrolling the explanation walks the
-code in the order your prose takes it**. The explanation is saved and comes back
-next time.
+A desktop tool for **reading a codebase deeply** — onboarding to one you do not
+know yet is the case it is built for. You open a **project**; a sidebar holds its
+modules as a namespace tree, and opening one splits the window: source on the
+left, the live **views** of that module on the right — its surface, the boundary
+it reaches through. Following a call opens the next module, and your trail is
+walkable with `⌘[` / `⌘]`.
 
-Not every file is a module: a config script and a test suite get blocks of their
-own, and anything unrecognised gets a blank page rather than empty ones.
+Writing is optional. When there is something worth keeping you start a
+**gloom** — a note in the project's knowledge base, in your own words, whose
+references can name any function in the codebase. Clicking a reference focuses
+it in the code, and with `▷ LGTM` on, **scrolling the note walks the code in the
+order your prose takes it**, across modules. A project collects glooms, one per
+thing you worked out.
 
-A reading is not always one file either. With a reading open, opening another
-file **joins it** — the files you open during a review are the set — and
-references may name any of them.
+A gloom stores your prose and nothing else. The code is **always read live**, so
+a reference finds its function wherever it has moved, and strikes itself through
+when it is gone.
+
+Not every file is a module: a config script and a test suite get views of their
+own, and anything unrecognised says there is nothing to navigate by rather than
+showing empty boxes.
 
 Elixir is the only language so far. The architecture assumes more will follow.
 
@@ -36,9 +43,11 @@ These are deliberate, and pushing back on them needs a real argument:
 |---|---|
 | Editing source code | lgtm reads. Your editor edits. The left pane is read-only, permanently. |
 | Git diffs, PR fetching, branch checkout | Cut during design. You read committed files; lgtm just opens a path. |
-| Call graphs, cross-module analysis, "who calls this" | A reading may cover several files, but lgtm never reasons *across* them. It parses each one and lets your prose do the joining. |
-| Groups you create and manage | There is no gesture for making one. You open files during a review and those files are the reading; the `×` on a tab undoes an accident. Anything more is a project manager, not a reading tool. |
-| Reconciling a changed file into an existing gloom | lgtm reads committed code, not code in progress. A gloom is a reading of a particular version; merging a changed file into it produces a note half of which describes lines that no longer exist. Open the new version as a new gloom — the old reading stays intact beside it. |
+| Call graphs, "who calls this" across the project | The project index knows which module lives in which file, and nothing more. Each file is still parsed alone; your prose does the joining. A reverse-call index is the obvious next step and has not been argued for yet. |
+| Groups you create and manage | A gloom has no file set to manage. The modules it covers are whatever its prose names — derived, never stored. |
+| Snapshots of the code | Cut on purpose when the project became the unit (see *The project is what you explore*). A knowledge base about live code decays, and the tool's job is to make that decay visible — struck-through references — rather than to freeze the code and drift silently away from what runs. |
+| Plain line references (`L25-29`) | They cannot follow code that moves and cannot say they broke. Lines are written *inside a function* instead: `Billing.charge/2:3-6`. |
+| Blocks in the note (`lgtm:*` fences) | Their values were text, which was right only while a snapshot guaranteed the code under them could not change. The live views beside the note do the job, and cannot disagree with the code. |
 | Any AI/LLM involvement | The explanation is *yours*. Writing it is the point — generating it would defeat the tool. |
 | `import` in the reach block | It puts functions in scope unqualified, so a bare `cast(...)` can't be told from a local call. Showing it with zero call sites would read as a bug. |
 
@@ -201,89 +210,204 @@ rm -rf src-tauri/target      # then build as usual; ~2 min from cold
 ## Repo layout
 
 ```
-mockup/index.html              standalone visual contract — no build, just open it
-mockup/deps.html               the reach block's visual contract
-mockup/surface.html            the surface block's visual contract
+mockup/workspace.html          THE CONTRACT for the project model: home, exploring, writing, LGTM
+mockup/index.html              the original single-file contract — parser line numbers are pinned to it
+mockup/deps.html               the reach diagram's visual contract
+mockup/surface.html            the surface's visual contract
 mockup/kinds.html              config / test / fallback — the non-module kinds
 mockup/tests.html              navigating a suite: the two clicks, and three navigation candidates
-mockup/import.html             importing a gloom: the format, and the validation panel in five states
-    src/import.rs              the gloom file's header — parsed, never YAML
 mockup/reading.html            scroll-driven reading, first cut
 mockup/authoring.html          read mode as shipped, plus the edge cases
-mockup/group.html              a reading across several files
 mockup/motion.html             the animation contract, replayable
 mockup/explore.html            the explore drawer: surface + reach beside the note
-mockup/files.html              ten mixed-kind files: the files modal, and the drawer per kind
 mockup/motion-audit.html       every motion finding, before and after
 mockup/reading-theme.html      read mode as a theme: five palettes, five faces, measured
-mockup/home.html               the home screen rebuilt around glooms
-mockup/stack.html              the files modal as the shape of the change
+mockup/home.html               the home screen as it was before projects (history)
+mockup/{group,files,stack,import}.html   history: the file set, the files modal, import — all cut
 scripts/motion-audit.py        every animation vs its reduced-motion rule
 scripts/effect-audit.py        $effects that read and write the same $state
 scripts/component-audit.py     components imported but never rendered
 app-icon.png                   icon source (1024², RGBA); also copied to static/
-IMPLEMENTATION_PLAN.md         the reasoning behind every decision here
+IMPLEMENTATION_PLAN.md         the reasoning behind every decision here (predates projects)
 README.md                      user-facing: clone, install, run, build
 
 src/
   app.css                      design tokens for light and dark; hljs → token mapping
   routes/
     +layout.svelte             theme init
-    +page.svelte               shell: titlebar, app header, split, status bar, autosave
+    +page.svelte               shell: home, the workspace (sidebar, split), index, trail, autosave
   lib/
     components/
-      CodePane.svelte          source, line numbers, blame, focus, search, vim motions, font size
-      DocPane.svelte           preview/edit/read, block styling, row wiring, treemap tooltip
+      CodePane.svelte          source, line numbers, blame, focus, search, vim motions, trail ← →
+      DocPane.svelte           views + note, preview/edit/read, references, the ambiguity chooser
       FontStepper.svelte       A− / A+, shared by both panes
-      ExploreSections.svelte   surface table + the boundary, above the note in one scroll
+      ExploreSections.svelte   the live views: surface table + the boundary, per file kind
       Sky.svelte               the masthead's weather: bloom, cosmos or aurora, rolled per visit
-      FilesModal.svelte        ⌘⇧T — the reading's files: switch, add, remove
-      FilePalette.svelte       ⌘T — find a file, or add one to the reading
+      FilePalette.svelte       ⌘T — find a file in the project, or paste a path
       FnPalette.svelte         ⌘P — jump to a function by name
-      RefMenu.svelte           / — insert a reference, from any file in the reading
+      RefMenu.svelte           / — insert a reference to any loaded function
       HelpModal.svelte         ? — what everything does
       Divider.svelte           draggable split, double-click reset
-      Library.svelte           saved docs: search, sort, folder grouping, keyboard nav, delete
+      Library.svelte           ⌘K — one project's glooms: search, sort, keyboard nav, delete
     stores/
       theme.svelte.ts          ported from Alexandria; lgtm defaults to LIGHT
       focus.svelte.ts          which function is selected — shared by BOTH panes
       fontSize.svelte.ts       a remembered, clamped font size; one per pane
-    explore.ts                 what the drawer shows: surface rows, reach lines
-    fileset.ts                 the reading's file set: which file owns what
-    markdownit.ts              markdown-it + the lgtm:* fence renderers
-    lgtmBlock.ts               parses the functions block
-    refs.ts                    references in prose, and which file each one means
-    slash.ts                   the `/` menu's grammar: commands and their arguments
+    explore.ts                 what the views show: surface rows, reach lines
+    fileset.ts                 the index + loaded files: which module means what, and how it is shown
+    markdownit.ts              markdown-it + references (no blocks)
+    refs.ts                    references in prose, resolved by name across the project
+    slash.ts                   when the `/` menu is still a live query
     select.ts                  one signature → every span worth highlighting
-    when.ts                    relative dates (the library's ages)
-    treemap.ts                 parses + draws the treemap block
-    stats.ts                   parses + draws the stats block
-    deps.ts                    parses + draws the reach block (see mockup/deps.html)
-    shape.ts                   the gloom as layers: thickness ∝ size (see mockup/stack.html)
-    surface.ts                 parses + draws the surface block (see mockup/surface.html)
+    when.ts                    relative dates
+    deps.ts                    draws the reach diagram (see mockup/deps.html)
     tags.ts                    a gloom's tags, in docs.label
-    settings.ts                parses + draws the config settings block
-    tests.ts                   parses + draws the test suite block
+    exporting.ts               a gloom's name → a filename
     ipc.ts                     typed wrappers over invoke()
 
 src-tauri/
   src/
     parse/elixir.rs            tree-sitter → Outline   ← the load-bearing file
     parse/kinds.rs             config scripts and test suites
-    seed.rs                    Outline + source + git history → starter markdown
-    git.rs                     .git/HEAD read + lazy blame + log for stats
-    db/{mod,models,docs}.rs    pool, serde shapes, doc CRUD
-    db/doc_files.rs            the files one reading covers
-    commands/{files,docs}.rs   IPC surface (blame lives in files.rs)
-    commands/projects.rs       open a folder, walk it for Elixir files
-    db/projects.rs             remembered folders, most recent first
-  migrations/0001_initial.sql
-  migrations/0002_projects.sql
-  migrations/0003_doc_files.sql
-  tests/pipeline.rs            end-to-end, pinned to the mockup
+    index.rs                   the project index: module names → files, by line scan
+    git.rs                     .git/HEAD read + lazy blame + log
+    db/{mod,models,docs}.rs    pool, serde shapes, gloom CRUD
+    db/projects.rs             remembered folders and their gloom counts
+    commands/files.rs          open a file (always live), branch, blame
+    commands/docs.rs           gloom CRUD, export
+    commands/projects.rs       open a folder, walk it, index it
+  migrations/0001…0003         history
+  migrations/0004_glooms_in_a_project.sql   drops snapshots and file sets; glooms belong to a project
+  tests/pipeline.rs            end-to-end parse checks, pinned to the mockup
 ```
 
 ## Core concepts
+
+### The project is what you explore; a gloom is a note in it
+
+`mockup/workspace.html` is the contract. **This section supersedes anything below
+that describes a gloom as a set of files, a snapshot, or a reading of a version**
+— those sections were removed, and what was cut is listed at the end of this one.
+Elsewhere, "the reading" in older prose means the gloom.
+
+**The day it is built for.** You open Glooming and pick a project. You browse its
+modules, follow a call into another one, and at some point start a gloom — *How
+an invoice gets charged* — and write while you read. Tomorrow is a different
+feature and a different gloom. Weeks later, opening `Billing` shows a teal dot in
+the tree because a gloom mentions it, and a renamed function shows as a
+struck-through reference in the note that explained it. A knowledge base about
+live code decays; the tool makes the decay visible.
+
+**Three things stand where a reading's file set used to:**
+
+| | What | Stored? |
+|---|---|---|
+| the index | every module in the project and its file (`index.rs`, a line scan) | no — rebuilt on open and on window focus |
+| the loaded files | files read this session, with outlines: on screen, walked through, named by the prose | no — a cache of live reads |
+| the gloom | title, tags, markdown, `project_id` | yes, `docs` |
+
+**The index is names only.** Parsing every file with tree-sitter to answer "which
+file is `Weather.Pipeline` in" would be wasted work; a `defmodule` scan with
+indentation-tracked nesting answers it exactly for formatted code. Only a file you
+open, or one your prose names, is parsed in full. `namedPaths` finds the qualified
+names in the markdown whose files are not loaded, and the shell loads them after
+each edit (250ms debounce); the note re-renders when they land. Until then such a
+reference renders *plain*, never struck through — "not read yet" is not "gone".
+
+**Coming back to the window re-reads everything loaded and rebuilds the index**,
+so an edit made in your editor is there when you return. Only files whose source
+changed are replaced, so unchanged panes do not re-render.
+
+**Glooms belong to a project.** `docs.project_id` has no `ON DELETE CASCADE`, and
+`forget_project` refuses while glooms exist: tidying the recents list must never
+be the gesture that deletes what you wrote. Home lists projects, with their gloom
+counts; the sidebar lists the open project's glooms; `⌘K` searches them, prose
+included.
+
+**Exploring needs no gloom.** With none open the right pane is all views and the
+grip's place says *Exploring — nothing is saved* with **Start a gloom** beside it.
+`DocPane` stays mounted in that state (`gloom={false}`) because it owns the reach
+diagram's hover and trace wiring. A new gloom is unnamed, opens with its name
+field focused, and starts as the invitation (`INVITATION` in `commands/docs.rs`).
+Opening a gloom lands the code pane on the first module its prose names; closing
+one (`close ×` in the band) returns to exploring and keeps your place.
+
+**The sidebar** (`⌘\`, hidden in read mode) is the project's glooms above its
+module tree. Test modules are left out of the tree and counted at the foot — a
+suite is something you open with `⌘T`, not a part of the app you navigate by.
+The path to the module on screen is always unfolded. A teal dot marks a module
+the open gloom names — the old hollow-dot signal inverted, because the set is now
+derived from what you wrote. It fills with one ring the moment your prose first
+names it.
+
+**The trail** is every module you opened, as back/forward (`⌘[` / `⌘]`, and ← →
+in the code pane header). Read mode's file crossings do not add to it — scrolling
+a note is not navigating.
+
+#### References, across a whole codebase
+
+| Written | Means |
+|---|---|
+| `` `MyApp.Billing.to_cents` `` | every arity — what `/` inserts |
+| `` `MyApp.Billing.to_cents/1` `` | narrowed to one arity |
+| `` `MyApp.Billing.charge/2:3-6` `` | lines 3–6 of the function, counted from its first line |
+| `` `to_cents`, `to_cents/1:2` `` | bare: **only** in the module the prose is threading |
+| `` `Weather.Pipeline` `` | the module itself — a step that opens it |
+
+**The text stores the full name; the chip shows the shortest unique one.**
+`moduleLabels` gives each module the shortest dot-suffix that names it uniquely in
+the project, so `MyApp.Billing` shows as `Billing` while `Weather.Pipeline` and
+`Ai.Pipeline` each show as themselves. Storing the short form would make a note
+that is unique today ambiguous the day someone adds a second `Billing`; the full
+name also makes an exported note resolve on a teammate's machine.
+
+**Ambiguous is a third state**, beside resolved and broken. A typed
+`Pipeline.run` with two Pipelines renders dashed amber; clicking it offers the
+candidates and rewrites every occurrence of that text to the chosen full name.
+`matchModules` takes an exact name outright, otherwise dot-boundary suffixes —
+`Pipeline` never matches `ProcessingPipeline`.
+
+**Bare names thread, and stop there.** The old fallback (origin, then every file
+in order) is gone: across a codebase, `changeset/1` exists in thirty modules.
+
+**Lines inside a function replace line ranges.** Counted from the first clause's
+`def`, so edits elsewhere cannot move them; past the function's last line they
+dangle, which is the one way they can still drift and it is visible.
+
+**Read mode skips what cannot be walked.** Steps are `code.ref[data-line]`;
+ambiguous and broken chips carry no `data-line`, so the walk passes them rather
+than stopping or highlighting the wrong code.
+
+**The `/` menu offers every function in a loaded file** — you write about what you
+have read — and inserts the full module name with no arity.
+
+#### Sharing
+
+Copy and Save… export the markdown verbatim; with full names in every reference it
+resolves against any checkout of the same repository. Opening a shared `.md` as a
+gloom ("Open a gloom file…", into the current project, with a small name/tags
+header) is decided but **not built yet** — it replaces the old import, without a
+file list or a branch check, because there is no snapshot left to validate.
+Storing glooms as files in the repo is open again now that the 42× snapshot
+argument is gone, and deliberately deferred.
+
+#### Built and then cut, 2026-11
+
+So they are not rebuilt by accident:
+
+- **Snapshots** (`docs.source`, `doc_files`), staleness, and the per-file dots.
+- **The file set**: `add_doc_file` / `remove_doc_file`, the origin file,
+  `for_path` and the "already part of a gloom" chooser, `⌘⇧T` and `FilesModal` /
+  `shape.ts` (the portrait of a change could return as a project-level view).
+- **The branch guard** (`branch_mismatch`, off-branch gating, the notice). The
+  branch chip is now a plain, copyable label of the live branch.
+- **Import** (`import.rs`, `ImportModal`, the template).
+- **Seeding** (`seed.rs`): a new gloom is the invitation and nothing else.
+- **Every `lgtm:*` block** and its renderer — `stats`, `surface`, `treemap`,
+  `functions`, `settings`, `tests` — and the `/` block commands. `deps.ts`,
+  `explore.ts` and the views' drawing code stay; they draw the live views. A
+  fence in a note is now just code. Stats and treemap may come back as *views*.
+- **Plain line references**, `L25-29` and `billing.ex:25-29`.
 
 ### To the user, a reading is a **gloom**
 
@@ -366,358 +490,13 @@ The rename takes the server's row but puts **your** markdown back — an autosav
 may be in flight, and adopting the server's copy would lose the sentence you are
 half-way through. Same one-payload habit as the file mutations.
 
-### A doc is a *reading*, not a note
-
-One row in `docs` = one file + the markdown you wrote about it. It stores a
-**snapshot of the source** (`source` + `source_sha`), so your prose can never
-silently drift onto code that changed underneath it. Opening a path that
-already has docs offers the existing one rather than starting a duplicate.
-
-`branch` and `label` are inert metadata — they exist so two readings of the
-same file are distinguishable. They never drive file loading.
-
-### A reading can cover several files
-
-A change worth reviewing rarely lives in one file, so a doc is one note over a
-**set** of files. The set accumulates: with a reading open, opening a file joins
-it. There is deliberately **no gesture for creating a group** — the files you
-open during a review *are* the group, and asking "same reading or a new one?"
-fifty times a day would cost more than the occasional stray file. A stray file
-is undone by the `×` on its tab; the way to start a separate reading is
-← Home, then open.
-
-**The file set lives in rows, not in the markdown.** This is the one place the
-"markdown IS the data" rule does not apply, and the reason is consistency, not
-convenience: a single-file doc's `path` has always been a column, so the note has
-never declared which file it was about. Putting a *set* of paths into the prose
-would be a new inconsistency rather than a preserved principle. Portability is
-already covered — the module-qualified references in the prose tell a reader
-which modules a reading covers, inline and in context, which beats a list at the
-top. An earlier design had an `lgtm:files` block; it was cut for exactly this,
-and with it went the question of what happens when the block and the DB disagree.
-
-`docs.path` stays the **origin**: the file the reading was seeded from, whose
-module owns `lgtm:functions`, what the library groups by, and the one file that
-cannot be removed. Everything else in `doc_files` joined later.
-
-**One snapshot per file, so staleness is per-file.** A single `docs.source` could
-only ever say "something changed". `docs.source` is still maintained for the
-origin, because the library and the chooser read it — Both are written once, when the file
-joins, and never again.
-
-**One gloom, one branch.** A file may only join a gloom from the branch the gloom
-was read on. A gloom is a reading of *one version* of a change; a file snapshotted
-from another branch is a second version of the world sitting silently in the same
-note, with line numbers your prose will describe as though they were the same —
-and nothing later can untangle that, so `add_doc_file` refuses at the door with a
-sentence that says what to do (*check out `main` to keep going, or start a new
-gloom for `fix/x`*).
-
-`branch_mismatch` is deliberately **narrow**: it refuses only when it is sure. Both
-sides must be in a repository and the **same** repository — a file from another
-checkout has branch names that mean nothing here — and both branch names must be
-readable. A detached HEAD, a repo with no commits, a file outside git: all pass,
-because *"I cannot tell"* is not *"no"*. A false refusal blocks work; a false pass
-costs one confusing note. Pinned by `a_gloom_without_a_branch_accepts_anything` and
-`a_file_outside_git_is_not_refused`.
-
-**The live branch has to be asked for, not remembered.** `ReadingFile.branch` is
-sampled when the reading is *built*, so it says where you were when you opened the
-gloom — and the case this guard exists for is checking out another branch in a
-terminal afterwards, which nothing in the app has any reason to notice. The first
-cut compared against that stale value and blocked nothing at all. `branch_of` is a
-command of its own (one read of `.git/HEAD`), re-asked when the reading changes,
-whenever the window comes back to the front — you switched branches in the terminal
-you just came from — and **awaited at the gesture itself**, because a check only as
-fresh as the last focus is not fresh enough for the one action it guards.
-
-**The UI stops offering what the guard refuses.** A rule enforced only in Rust is a
-rule you learn by tripping over it, so `offBranch` — `docs.branch` against the live
-branch — disables *Find…* and *Open file…*, short-circuits `⌘T`,
-`⌘O` and `⌘⇧O` into the same explanation, replaces the files modal's **Add a file**
-row with why it is missing, and turns the branch chip **quiet** — neutral ink, dashed
-edge. Amber said *something is wrong*, and nothing is: the reading is intact and
-reads normally from here, it simply cannot grow. Quiet says the same thing the
-disabled buttons beside it are saying, in the same language, and avoids a third
-meaning in a row that already has two. The chip still names only the gloom's
-branch, because that is the fact it is for; where *you* are is in its tooltip and
-in the banner. One sentence, at whichever gesture you reached
-for.
-
-**And the banner says what to do rather than what happened.** Opening a gloom whose
-files are not on the current branch used to report *"Not on disk any more: … —
-showing the snapshot"*, which is true, already handled, and not news: the snapshot
-is the whole design. It now says, in one line, *"You are on `fix/x` — check
-out `main` to add files to this gloom."* — and it says it as a **notice**, not as
-the error banner: teal rather than amber, arriving from just above, holding long
-enough to read twice, and leaving on its own after 5.8s.
-
-That split is the point. The banner is for things that went wrong and stay wrong
-until you deal with them — a failed save, a missing file — so it waits to be
-dismissed. Being on another branch is a *state* you are standing in, visible in the
-chip and in the disabled buttons, and a strip that stays across the top saying so
-becomes furniture within a minute. `noticeLeaving` gives it a fade rather than a
-disappearance; under reduced motion it still appears and still goes, it just does
-not travel to get here.
-
-**The notice is structured, not a sentence.** `{ here, gloom }` rather than
-pre-formatted text, so the two branch names can be drawn as **badges** — the
-sentence is scaffolding, the names are what you read — and so they can be *copied*.
-
-**Every branch name in the app is a copy button**, the chip included. The reply to
-this notice is a `git checkout` in another window, so the name is something you are
-about to type somewhere else. The confirmation lands on the name itself (`copied ✓`
-for 1.4s): a toast for two words would be louder than the thing it confirms. Same trigger, useful sentence, and the same
-sentence every refused gesture gives — a banner is a glance, and the reassurance
-that the reading still works belongs in `?`.
-
-Opening an existing gloom on the wrong branch is **not** restricted — the reading
-is made of snapshots and shows the same thing whatever you have checked out. It is
-only *adding* that mixes versions.
-
-**Adding a file seeds nothing.** No blocks, no headings, no edit to your prose.
-The only thing it changes is what `/` can offer you. That is the whole feature:
-by the second file the note is yours, and generating more of it would be writing
-your reading for you.
-
-**References answer "which file", and half of them don't say.** So they resolve
-in **document order**, each threading the current file forward:
-
-```markdown
-Then `MyApp.Billing.charge/2` builds the invoice.   → billing.ex
-`L25-29` is where it rounds.                        → still billing.ex
-```
-
-`refs.ts` is therefore a stateful resolver, reset once per render by a `md.render`
-override. Order-dependence is the point: it means an unqualified name resolves
-the way the sentence reads, and — this is what matters — it depends **only** on
-document order, never on which tab happens to be open. Keying off the current tab
-would make read mode walk a different path depending on where you were standing
-when you started scrolling. Search order for a bare name is *threaded file →
-origin → the rest in strip order*.
-
-**The arity is optional, and the `/` menu leaves it out.** A reference without one
-means *every* arity, which is already how selection thinks: the focus store tints
-sibling arities as "related" on the grounds that they are one function to a
-reader. So `get_user` selects `get_user/1` and `get_user/2` together, `get_user/1`
-is the narrowing, and `search/1..2` — never a readable thing to have in the middle
-of a sentence — is retired as a reference form.
-
-A name-only reference therefore carries **several spans, not one**. The chip
-holds `data-ranges="20-22,28-29"`, because two arities can sit either side of an
-unrelated function and one enclosing `min..max` range would light that function up
-too. `data-line` / `data-end` remain the scroll target and the line count.
-
-| Written | Means |
-|---|---|
-| `` `Billing.to_cents` `` | every arity; names its own module, and moves the thread |
-| `` `Billing.to_cents/1` `` | the same, narrowed to one arity |
-| `` `to_cents` `` | every arity, in the threaded module |
-| `` `to_cents/1` `` | the same, narrowed |
-| `` `L25-29` `` | plain lines in the threaded file |
-| `` `billing.ex:25-29` `` | plain lines, said out loud about another file |
-
-**A module is named by its last segment.** `ImpactPipeline.Shared.AlertImpact.SingleTarget.foo`
-is unreadable mid-sentence, and the prefix is identical for every module in the
-reading — so it carries no information exactly where it costs the most. The last
-segment *is* the module's name; everything before it is where the file lives.
-
-`findModule` resolves an exact name first, then any **dot-boundary** suffix, so
-`SingleTarget`, `AlertImpact.SingleTarget` and the full path all reach the same
-module and you can write as much of it as you feel like. The dot is what stops
-`Target` matching `SingleTarget`.
-
-**Shortened only where the short form is unique.** Two files whose modules both
-end in `.Worker` would give `Worker.run` two meanings, so `moduleLabels` leaves
-*those* fully qualified and shortens everything else. Ambiguity here is rare;
-resolving it silently the wrong way would not be.
-
-The same rule applies wherever a module name is **printed** — block headers, the
-reach diagram's boundary and its outside labels — with the full name on a
-`title`/`<title>`. The `module=` in the block *text* stays the full name: that is
-what locates the file, and shortening it there would break the mapping. In the
-reach diagram the kind label's offset is computed from the *drawn* width, not the
-full name's, or it lands in the middle of nowhere.
-
-**Two forms are allowed to fail silently, and both have to be.** Making the arity
-optional widened what *looks* like a reference straight into ordinary prose, so
-`resolveRef` returns `null` — plain inline code, no strikethrough — rather than
-`"dangling"` in exactly two cases:
-
-- **A bare name that resolves to nothing.** Prose about Elixir is full of
-  lowercase words in backticks that are not functions: `attrs`, `opts`, `conn`,
-  `config`, `path`. Striking them through would ruin half of what you write.
-- **A qualified name whose module is not in the reading.** `String.trim`,
-  `Enum.map`, `GenServer.call` are prose about code outside the reading, not
-  broken links into it. Before the arity became optional these did not match at
-  all; afterwards every mention of the standard library struck itself through.
-  `knowsModule` is the gate.
-
-Everything explicit still dangles visibly: a missing function in a module you *do*
-have, and anything carrying an arity. The trade on the second rule is that
-removing a file makes its references go quiet rather than break loudly — that case
-has its own signals (the `×` spells out what it does, and the strip shows the
-set), whereas a struck-through `String.trim` has none and just looks like a bug.
-
-**Every reference the `/` menu inserts names its module. Always** — from the
-first file onward, not only once a reading covers several.
-
-That rule was arrived at twice, and the second time corrected an inconsistency.
-`seed.rs` already qualifies the references it generates on the grounds that
-**generated text is written once and never revisited**, so it has to stay correct
-as the reading grows. An inserted reference is no more revisited than a seeded
-one: you open accounts.ex, insert six bare references, then open billing.ex — and
-those six are now resolved by *search order* rather than by what they say.
-Qualifying only above two modules made the seeder and the menu disagree about the
-same durability argument.
-
-It is also what makes a note stand on its own where it matters most: pasted into a
-PR comment, with no file strip beside it to explain itself.
-
-The label is the module's own name, **never the tab that happens to be open**. An
-earlier version keyed off the tab, so looking at billing.ex and picking `charge/2`
-inserted a bare name: the same keystroke produced different text depending on
-where you were standing. The tab still *ranks* the menu, because you are usually
-writing about what you are looking at — that is a preference, not a meaning. The
-footer spells out the exact text `↵` will insert, since the row shows a bare
-signature and what lands is neither bare nor arity-bearing.
-
-A bare name still *resolves* (threaded file → origin → the rest), because prose
-you typed yourself may well be loose and old docs are full of it. It is simply not
-something the menu will ever produce.
-
-**Blocks find their own file from the `module=` they already carried.** That
-attribute existed for readability; in a multi-file reading it becomes the thing
-that locates the right outline, so `lgtm:functions module=MyApp.Billing` keeps
-working while you are standing in accounts.ex. Every block renderer's output is
-tagged with `data-path` by one helper in `markdownit.ts` rather than by threading
-a path through six signatures — which is safe only because each of them returns a
-string starting with `<div`.
-
-**Arriving in a file washes the whole pane, not just the header.** Lighting the
-header points at where the filename lives, which is the right answer to *which
-file* — but in read mode the doc is driving and your eyes are on the prose, so a
-32px strip changing colour at the edge of vision is easy to scroll straight past.
-The event being announced is that everything under it is a different file now, so
-the announcement covers everything under it.
-
-`.stage` carries it, in two layers, exactly as the gloom band's greeting does: a
-**sweep** of `--read` gold says something happened, and a brief **lift** under it
-keeps the pane from looking unlit while the sweep is still at the top edge. On
-read mode's near-black Nocturne a flat wash is a couple of points of luminance —
-invisible, which is the lesson the band already paid for. It travels **down**,
-not across, because the gutter and the source arrive top-down on the same mount
-and one direction reads as a single gesture where two read as two things at once.
-`-120%` to `320%` of a 45%-tall band is fully off one edge to fully off the other,
-computed rather than eyeballed. 0.18s of delay, so it is the *consequence* of the
-header lighting.
-
-**`.stage` must clip it, and that is not optional — it shipped broken.** At both
-ends the band is entirely *outside* the box it decorates, so with nothing
-clipping it, it swept across the pane header, the app header and the title strip
-on the way past. Far worse than the paint: the overflow gave `.app` scrollable
-height, and `.app` is `overflow: hidden` — which clips but still makes a scroll
-container, and the browser scrolls one of those to reveal a focused or
-`scrollIntoView`-ed descendant. So selecting anything scrolled the whole window
-up and put the app header **behind the traffic lights**, while the footer changed
-width as a scrollbar came and went. One missing `overflow` produced three
-symptoms, none of which looked like a missing `overflow`.
-
-`clip`, not `hidden`: `hidden` would make the stage itself a scroll container,
-which is the same bug one level down. Both sweeps that predate this one clip
-themselves (`.gloombar`, `.masthead`), which is why neither had ever shown it.
-
-`scripts/motion-audit.py` now enforces it: **a keyframe that translates more than
-100% of its own size travels outside its box, so whatever hosts it must declare
-`overflow`.** Verified by removing the clip and watching it fail. No gate is needed: `CodePane` is keyed on the path, so a mount is
-a new file. Under reduced motion the sweep hands its job to the lift and stops
-travelling.
-
-**Crossing a file is a different transition from moving within one.** The 620ms
-crossfade — outgoing ranges lingering under incoming ones — is what makes a jump
-read as a connection instead of a cut. Across two different files there is
-nothing shared to fade between, so the same treatment reads as a glitch. The pane
-dips instead and **the code pane's own header lights up in read-mode gold**, and
-`focus.step` takes a `path` so it can skip the crossfade. `focus.path` exists for
-that one decision.
-
-It is full-strength `--read` at the peak, not a mix into the header's own surface:
-mixed down it becomes a beige wash, which is a different signal. The controls in
-that header fade out for the announcement and come back as the gold recedes —
-`A−`/`A+` on a gold fill is a control wearing someone else's colour, and recolouring
-them would mean maintaining a second set of states for a moment nobody clicks in.
-It also leaves the filename alone on the fill, which is the message.
-
-Naming the landing used to be a gold pill floating over the code. The filename was
-on screen the whole time, two inches away — so the pill was a second copy of a fact
-rather than a signal about it, and it covered the first line of the file to tell you
-which file it was. Lighting the header points at where the answer already lives. No
-gate is needed: `CodePane` is keyed on the path, so a mount *is* a new file.
-
-**A pane must paint its own surface *and* its own text, not merely define the
-tokens.** Two bugs of one shape, found a day apart:
-
-- `body` sets `color: var(--fg)` **once**, and what descends from it is the
-  *computed* colour. Redefining `--fg` on an ancestor of the code pane therefore
-  changed the token and repainted nothing: every untokenised glyph stayed
-  near-black on read mode's near-black surface. `.panebody` in `CodePane` now
-  re-declares `color: var(--fg)`. The doc pane never had it, because its
-  `.panebody` always set `color: var(--doc-fg)`.
-- The same thing with the background, one level up. The swap dip faded
-  `.codewrap` to nothing over a `.pane` that set `--code-bg` and never used it, so
-  every cross-file jump revealed the app's `--bg` — a white flash, and in read mode
-  a white flash through a dark theme. `.pane:not(.grow)` now paints
-  `var(--code-bg)`.
-
-Defining a token is not using it, and a theme swap only repaints what some rule
-actually reads. Both bugs were invisible until a *subtree* was themed differently
-from the document, which is exactly what read mode does.
-
-**The dip goes to a tenth, not to nothing.** At zero the pane is blank for 130ms
-and reads as a *load*; a deep dip with 4px of downward travel reads as the same
-pane changing what it shows. The arriving file then plays its own gutter cascade
-for free, because `CodePane` is keyed on the path and a mount is a new file.
-
-**CodePane is keyed on the path.** Switching file remounts it, deliberately:
-blame and a search belong to the file they were run against, and carrying either
-across a switch would attribute one file's authors to another.
-
-**The hollow dot is the finding.** A tab's dot is green when your prose
-references that file, amber when it has changed on disk, and hollow when you
-opened it and never mentioned it. Opening a file to check something and never
-coming back to it is the normal accident of a review, and the hollow dot is the
-file-level version of an Explain section still showing its invitation. `DocPane` reports the
-referenced paths by walking `code.ref[data-path]` after each render — the DOM
-already knows, so nothing is recomputed.
-
-**`for_path` matches the whole set, not just the origin.** You open billing.ex on
-Tuesday as part of a reading of accounts.ex, and on Wednesday you open billing.ex
-first. Matching only `docs.path` would hide that reading and quietly start a
-duplicate. Choosing it also lands you on the file you arrived by, not on the
-origin — you asked for that file; the reading is only how you are going to read
-it.
-
-The strip only appears at two files or more, and `vocabulary()` inserts bare
-names inside their own file, so **a single-file reading looks and behaves exactly
-as it always did**.
-
 ### The markdown IS the data
 
-This is the load-bearing principle for every `lgtm:*` block. Blocks are written
-out **with their values already in them** at seed time; renderers only format
-what the text says. Nothing is recomputed at render time.
-
-That buys three things: the doc is readable as plain text anywhere, it survives
-being pasted into a PR comment, and you can hand-edit anything you disagree
-with. The live `Outline` is consulted for exactly **one** thing — the line
-number a row or tile jumps to.
-
-The one deliberate exception is **which files a reading covers**, which lives in
-`doc_files` rather than in the prose — see above for why that is the consistent
-choice rather than a violation.
-
-A block whose body is empty renders as a short "re-seed this doc, or write
-`…` style rows here" hint, never as a blank box.
+Still true of the note — it is plain markdown, readable anywhere, and nothing is
+added on the way out — but it no longer carries blocks of values. What a module
+*is* comes from the live views, which read the code as it is now; what you
+*understood* is the prose. The two cannot drift, because only one of them claims
+to describe the code.
 
 ### A file is not always a module
 
@@ -838,21 +617,6 @@ destructure. `provides` is a best-effort read of the block's *last expression*
 lives elsewhere in the file, so its keys are `None` — **unknown, which is not
 the same as "provides nothing"** — and the UI shows `+?` rather than guessing.
 
-### Every block at a glance
-
-| Tag | File kind | Renderer | Seeded? |
-|---|---|---|---|
-| `lgtm:stats` | all | `stats.ts` — key-agnostic, formats whatever keys it finds | yes |
-| `lgtm:surface` | module | `surface.ts` — two scrolling columns, sorted by name | yes |
-| `lgtm:treemap` | module | `treemap.ts` — squarified, top 3 labelled | **no** — write it when you want it |
-| `lgtm:functions` | module | `markdownit.ts` — a prose slot per function | **no** — write it when you want it |
-| `lgtm:deps` | module | `deps.ts` — the boundary, omitted when nothing is reached | when it reaches something |
-| `lgtm:settings` | config | `settings.ts` — grouped by app, env vs literal | yes |
-| `lgtm:tests` | test | `tests.ts` — describes, setups, assertions by kind | yes |
-
-`lgtm:stats` serving four file kinds is why it renders whatever keys the text
-carries instead of expecting a fixed set — one renderer, no per-kind variants.
-
 ### The right pane is a split you own
 
 The pane has two jobs that want the same height, and for a while it was one
@@ -947,98 +711,6 @@ Two consequences:
   whose module is also under review switches file and focuses it. It used to live
   in a separate reaches list; the picture can carry it, and the same fact in two
   places is one place too many.
-
-### The files modal is the shape of the change
-
-`⌘⇧T` was a list: one row per file, a dot, the state in words. It worked, and it
-said nothing about the *change* — ten filenames tell you what you have open, never
-what you are looking at. So the picker became a **portrait**, drawn from
-`mockup/stack.html`: one layer per file, **thickness ∝ size**, the grain inside it
-the functions it is made of, pale until your prose has named it. The same click
-answers both questions at once — which file, and which part of this is big.
-
-**One claim, so everything else stayed out.** No threads to the modules a file
-reaches (a portrait is not a dependency list), no reading path, no line-count
-captions, no per-setting marks. The things that survived are the ones the list was
-already saying: filled or dashed is written-about, amber is stale or gone, a
-heavier border is the file you are in, `×` on hover removes, and the origin has no
-`×` because it is what the reading is anchored to.
-
-**The name column is measured, not fixed.** 138px fitted `AllTargets` and clipped
-`ImpactPipelineTelemetryReporter`, so `labelWidth` sizes it from the longest name in
-the gloom, clamped between 110 and 300px, and the plates start after it. The modal
-itself went to `min(860px, 94vw)`: a picture with a name column and a readable grain
-needs the room, and a list never did.
-
-**The hover path comes from the layer, not the cursor.** `cursor` indexes the
-*filtered* hits, for the keyboard; a layer knows its index into `files`. Using one
-for the other showed the wrong path — or none at all — the moment a filter was
-typed. And the path is trimmed from the left in JS (`tailPath`) rather than by CSS,
-because a right-to-left ellipsis needs `direction: rtl`, which reorders the segments
-of anything with punctuation in it.
-
-**Geometry lives in `shape.ts`, and is pure.** Both bugs found while drawing it
-were sums rather than taste, and both are now probed headlessly rather than clicked
-at:
-
-- **Marks ran past the plate that owned them.** Widths were shared as
-  `(len/total) × width` and the gaps were *added afterwards*, so a module with
-  seven private helpers drew its last mark outside its own layer. Padding and gaps
-  come off the width first.
-- **A floor ate the proportion.** Sharing a fixed height between twelve files put
-  every band within 4px of the minimum: still a usable list, no longer saying
-  anything about size. The proportional pool **grows with the set** — 18px floor
-  plus 40px a file — which holds the tallest at ~2.3× the shortest at twelve files
-  against a √ ratio of 3.6×, and the body scrolls for the rest. The floor is there
-  because this is a *picker*: no layer may be too small to click.
-
-**√lines, not lines.** Linear draws a 26-line config at a fifth of a 342-line
-module and the layer effectively disappears.
-
-**Filtering dims rather than removes.** Proportion is the claim the picture makes,
-and a stack that re-proportions itself as you type would lie about it. `↑↓` still
-walk only the matches.
-
-**The footer says one thing at a time**: the path you are pointing at (truncated
-from the left, because the end identifies it), or why nothing can be added from
-this branch, or what removing would cost. The branch refusal here is **one line and
-names no branches** — as badges, a real name like `feature/impact-retry-fix` wrapped
-the footer into three lines of chrome, and the names are already in the header chip
-and the notice. In a footer the only thing worth saying is that the gloom cannot
-grow from where you are. The path is there because it is the one
-fact a module name cannot carry, and a footer can hold a long one where a row
-cannot.
-
-### The files modal replaced the tab strip
-
-`⌘⇧T`, or the file button in the app header. `FilesModal.svelte` — the Library
-idiom scoped to one reading: filter, `↑↓↵`, grouped by directory with sticky
-headers, `×` or `⌫` to remove with an inline confirm, and an **Add a file** row.
-
-The strip was cut on a measurement, not a preference: **ten filenames need about
-1200px of tabs and the left pane has about 750**, so three of ten were off-screen
-at exactly the size a real review is. Its whole job was "which files, and which am
-I in", and it stopped doing that job precisely when it mattered.
-
-What made it affordable to lose is that **navigation had already moved**: the
-note's references, and the drawer's reaches list. Switching file is no longer the
-main way you get around, so it can cost a keystroke.
-
-**The button that opens it is the only coloured thing in that row** — the gloom's
-own teal, because it opens the *shape of the change* and the shape is drawn in that
-colour. Among four neutral controls it was the one you reach for most and the
-hardest to find.
-
-The header button is **136px, constant whatever the file count** — the filename,
-the count, and one dot for the current file's state. Hollow still means "your prose
-has not mentioned this", and the *earned* animation moved here with it: the moment
-your prose first names something in the file you are looking at, the dot fills and
-one ring leaves. `⌘T` adds a file, `⌘⇧T` manages the ones already in — the two
-halves of the same idea, paired on purpose.
-
-The state each row shows is said in **words** as well as a dot — *referenced in
-your note*, *not mentioned yet*, *changed on disk*. A strip had five pixels for
-that; a ten-row list has room to spell it out.
 
 ### Navigation lives beside the note, not in it
 
@@ -1205,151 +877,6 @@ The blocks themselves are untouched — all five still render, `lgtm:functions`
 still renders, and `/` inserts any of them. What changed is that **nothing puts one
 in your note but you**.
 
-### What a seeded module doc actually is
-
-````markdown
-# MyApp.Accounts
-
-> Reads and writes for the `users` table.
-
-## Explain
-
-_The code is on the left — write what you make of it here. Press `/` while
-editing to reference any function in this reading; once your prose names one,
-`▷ Read` will walk the code in the order you wrote it._
-````
-
-That is the whole thing. One heading, and an invitation under it.
-`a_seeded_module_doc_carries_no_blocks` pins that there is not a single fence.
-
-### The blocks, when you ask for one
-
-`/stats`, `/surface`, `/deps`, `/treemap` — for the file you are looking at, or
-`/surface impact_stage.ex` for any other file in the reading. Generated by
-`block_for` in `commands/docs.rs`, which is in Rust even though the frontend holds
-the outline: **the block's order has to come from one place**, and surface was once
-generated in both `seed.rs` and the renderer and they disagreed.
-
-`stats` is the only one needing more than the outline — the line counts come from
-the source and the history from git, so it re-reads both rather than trusting
-numbers the frontend happens to be holding.
-
-What each one writes:
-
-````markdown
-```lgtm:stats
-lines: 42
-code: 33
-public: 3
-private: 2
-commits: 14
-authors: Carlo Padilla, Jane Rivera
-created: 2025-02-14
-updated: 2026-08-10
-```
-
-```lgtm:surface module=MyApp.Accounts
-public:
-  create_user/1 : 12
-  get_user!/1   : 24
-private:
-  normalize/1   : 30 2 clauses
-```
-
-```lgtm:deps module=MyApp.Accounts
-  MyApp.Repo : app
-    insert/1 : create_user/1
-    get/2    : get_user/1
-```
-````
-
-**The space is the interesting part.** The menu closes on whitespace, and has to:
-a bare `/` followed by a space is a slash in ordinary prose and must stay one. So
-the rule became *a space is an argument separator only once a command name
-matches* — which keeps the protection and buys the argument. `stillOpen` in
-`slash.ts` owns it, shared between `DocPane` deciding whether to stay open and
-`RefMenu` deciding what to show, or the two would disagree about what is still a
-live query. A command needs **two** characters before it matches, so `/s` still
-filters functions on the way to `/smembers`.
-
-Naming a file **replaces** the function list rather than appending to it — you are
-choosing a target, not a reference, and showing both would be two menus in one.
-Only files with a module are offered, since `block_for` would refuse a config
-script and offering something that fails is worse than not offering it. The
-directory is shown beside a filename **only when two files in the reading share
-it** — three pipelines each with a `config.ex` is the normal case, and this is the
-one place lgtm lets you choose between them by hand.
-
-Insert one where you want it, delete it when you don't. That is the whole point of
-not seeding them: a block you asked for beats three you scroll past.
-
-**Two blocks are renderable and deliberately not seeded.** Both were
-seeded once and both were cut for the same reason — a generated section above the
-part you write in has to earn that space every single time you open a file:
-
-- `lgtm:treemap`. Function sizes answer a question you ask *occasionally*: "is
-  anything in here disproportionate?"
-- `lgtm:functions`. It was a **second listing of the names `lgtm:surface` already
-  gives you**, and its one unique offering — a prose slot per function — turned
-  out to be the wrong shape. An explanation follows the path through a module.
-  An alphabetical index does not.
-
-Both generators (`treemap_block`, `functions_block`) stay, stay `pub`, and stay
-tested against their own output rather than against the seeder's, because a block
-whose only producer is a hand-typed guess drifts away from its renderer. Write
-either fence yourself when you want it.
-
-**A block is never regenerated, and neither is the source under it.** A gloom holds
-the version it was read at, so a block written on Tuesday still describes the code
-the pane is showing. What tells you the world moved on is the file's own "changed
-on disk" row — and, for the code you *wrote about*, the dangling reference.
-
-**Private helpers are not seeded anywhere.** They are in `lgtm:surface` (it is a
-directory, so it lists everything) and one `/` away when your explanation needs to
-reach one. Notes used to carry a **generated list of every private helper** as
-inline references, specifically so `▷ Read` did something on a file you had not
-written a word about. `/` does that job better: you reference the functions your
-explanation actually reaches, in the order your prose takes them. **A list of
-things you did not choose was never really a reading.**
-
-Two consequences worth stating rather than leaving to be discovered:
-
-- **`▷ Read` stays hidden until you write the first reference** (the button is
-  gated on `steps.length`). The invitation text names both `/` and `▷ Read` for
-  exactly this reason — otherwise it reads as a missing feature rather than a
-  hidden one.
-- **A function's `@doc` is no longer copied into the doc.** It used to become the
-  starting prose of its row in `lgtm:functions`. It is still right there in the
-  code pane, styled as prose — and not duplicating what the source already says
-  is the better default.
-
-**Every seed ends with `## Explain` and an invitation**, never a bare heading — an
-empty section reads as something missing. The config, test and plain seeds get a
-shorter invitation that does not promise `/` or `▷ Read`, since neither does
-anything without functions to reference.
-
-### The treemap
-
-**Not seeded** — see above; you write the fence when you want it. Function sizes
-as area, the one view the table can't give you: *is anything in here
-disproportionate?* Squarified `d3-hierarchy` layout, drawn to an SVG string
-during the synchronous markdown pass.
-
-Deliberate choices, each of which replaced something that read worse:
-
-- **No header, legend or footer.** Chrome was eating the space the chart needed.
-- **Only the top 3 are labelled**, with the line count as the primary label and
-  the name below it when the square has room. Numbers on every cell turned it
-  into a wall of digits.
-- **The top 3 breathe** (`brightness` + `saturate`, staggered 0.25s). A pulsing
-  outline — Alexandria's treatment — was invisible at this size.
-- **Corner radius scales with the cell** (`min(bw,bh) * 0.12`, capped at 5). A
-  fixed `rx` turns small cells into lozenges.
-- **Tooltip is rendered by DocPane, not `<title>`.** Native tooltips are slow to
-  appear and unstyleable; tiles carry `data-tip` and the pane draws a pill that
-  follows the pointer.
-- Public is green, private is amber — the same colours the functions table uses.
-
 ### The reach block
 
 `mockup/deps.html` is the contract; `deps.ts` is the port. The concept is a
@@ -1418,37 +945,14 @@ unqualified, so a bare `cast(...)` is indistinguishable from a local call
 without a symbol table for the imported module. Showing it with zero call sites
 would read as a bug.
 
-### A gloom is pinned to the versions it was read at
+### A gloom is about live code
 
-**The pane shows the snapshot, not the file.** `read_one` returns
-`doc_files.source`, and the outline is parsed from *that* — so a line number in
-your prose means next month what it meant today, and the surface, the reach and
-every reference stay consistent with what is on screen.
-
-Disk is read for exactly one thing: whether it has moved on. That is worth a row
-above the code — *"the code I am reading is no longer the code that runs"* is
-precisely what a reader needs to know — but it is **a statement, not an offer**.
-
-**There is no reconciliation, no re-snapshot and no re-parse.** All three were
-built and all three are gone, along with `reconcile.rs`, `resnapshot_doc_file`,
-`reconcile_doc` and the `reparse` command. The argument that removed them:
-
-- **lgtm reads committed code, not code in progress.** A gloom is a reading of a
-  particular version. Merging a changed file into it produces a note half of which
-  describes lines that no longer exist, and no merge algorithm can tell you which
-  half.
-- **The alternative is one gesture.** ← Home, open the file, and you have a new
-  gloom of the new version — with the old reading still intact beside it in the
-  library, which is what you want when the question is "what changed".
-- **Reconciliation was already vestigial.** It only ever touched `lgtm:functions`,
-  which stopped being seeded, so on nearly every doc it did nothing at all.
-
-What survives is the *signal*, in two places: a file that has changed on disk says
-so above the code and on its dot in the files modal, and a **dangling reference**
-strikes through in the prose where you wrote it. Both put the fact where you are
-looking without pretending the tool can fix it.
-
-`a_gloom_keeps_the_source_it_was_read_at` pins the premise.
+It used to be pinned: every file it touched was snapshotted, the pane showed the
+snapshot, and a changed file said so. That was right for reviewing one version of
+a change and wrong for a knowledge base, where the point is that next month's
+reading of a gloom describes next month's code. The database stays — it holds the
+glooms and the projects — but it is no longer the reason a gloom is a row rather
+than a file; see *Sharing* above.
 
 ### Motion means something
 
@@ -1708,78 +1212,21 @@ where you are; it just stops hiding the author colours or the matches you asked
 for. Without this, turning on blame with a function selected leaves 68% of the
 authors invisible.
 
-### Home is about glooms, not about the app
+### Home is a list of projects
 
-`mockup/home.html` is the contract. Three bands, in the order you need them:
+A gloom only means something inside the codebase it was written about, so home
+lists **projects** — name, path, gloom count, when you were last in it — and each
+project's glooms live in its sidebar. One way in (**Open a folder…**), then three
+sentences on what a gloom is.
 
-1. **An ink masthead** — `--gloom-bg`, the wordmark in `--display`, and one sentence
-   defining the word for someone who has never seen it. It plays the same accent
-   sweep the gloom band does: same surface, same greeting.
-2. **The glooms you were in** — as a **list**, grouped *Today / This week /
-   Earlier*: name, origin file, file count, age. Twelve of them, where the cards
-   showed six.
+The masthead keeps its weather — `Sky.svelte`, bloom / cosmos / aurora, rolled per
+visit — and it is still the only ambient motion outside the two already budgeted.
+It stops when the window is hidden, cleans up on unmount, and under reduced motion
+composes one frame and holds it.
 
-   It was a grid of cards first, and the reason for changing is **not** density —
-   measured, twelve cards take 392px and twelve rows 432px; rows only win past
-   about thirty. It is that a grid has no scan line: names sit at three different x
-   positions and you read in a zig-zag, where a list has one left edge you read
-   down. A row also carries a date column and a group header without growing, which
-   is how you find the one from last Tuesday among forty, and the thirteenth gloom
-   extends a list where it reflows a grid.
-
-   A miniature of each gloom's *shape* was drawn in the row and cut: at 62×16 it
-   was decoration, and the picture has a place of its own behind `⌘⇧T`. The origin
-   filename went the same way — the name identifies the gloom, and a second
-   identifier in every row is a column you read past. A row still called after its
-   module is greyed and italic, the same invitation the band gives.
-
-   **Capped at 720px**, not the full 1080: a short name stretched across the window
-   is mostly whitespace with its date lost at the far end, and pairing the two costs
-   an eye movement the width of the screen.
-
-   **The row class is `.rrow`, and that is not cosmetic.** It was `.grow`, which is
-   also the doc pane wrapper's class (`.pane.grow`) — so the list's rules were
-   styling the right-hand pane too: its padding, its border, its cursor. Both are
-   valid classes in one component, so `svelte-check` sees nothing. The rule this
-   leaves: in a file this size, prefix a new block's classes rather than reaching
-   for the obvious short word.
-
-   The boundary this preserves: home is *pick up where you left off*, `⌘K` is *find
-   any of the two hundred*.
-3. **One way to start**, with the current project beside it and the rarer routes as
-   quiet text. The old screen offered four buttons of equal weight, which is four
-   decisions before you have started.
-
-Then three sentences on what a gloom is. The features are discoverable; the idea is
-not, and nothing else in the app has room to say it.
-
-**The masthead has weather, and it is the only ambient motion outside the two
-already budgeted.** `Sky.svelte` draws one of three on a canvas — **bloom** (rings
-opening from a point, which is where the *name* comes from: the swell when water
-first hits coffee grounds), **cosmos** (parallax drift with a faint twinkle), or
-**aurora** (three sine bands under soft gradients) — and **which one is rolled when
-home appears**. A surface you land on a dozen times a day should not be identical a
-dozen times a day, and since none of the three says anything, none can say the wrong
-thing by being picked.
-
-Home is the one place this is affordable: you are not reading code on it and nothing
-here has to be tracked. Everywhere else the rule stands.
-
-A fourth candidate, **constellation**, is kept in the mockup and was cut: it draws
-lines between dots, and the reach diagram is a real graph — teaching the eye that
-teal lines between dots are ornamental is the one thing worth not doing.
-
-Three things it does that a decorative canvas usually forgets: it **stops when the
-window is hidden**, it **disconnects its observer and cancels its frame on unmount**,
-and under `prefers-reduced-motion` it composes **one** frame and holds it — the
-picture survives, the movement does not. That last one is the same rule the CSS
-follows; `scripts/motion-audit.py` cannot see canvas, so it is written here instead.
-
-**`--gloom-deep` came out of this.** The bright teal is for ink surfaces and
-measures **2.2:1** on a card — the home screen needed the same hue at a weight that
-survives on paper (5.2:1 light; in dark it *is* the bright one). Measured on the
-rest: hero title 12.5:1, hero prose 6.2:1, card name 17.2:1, meta 6.1:1, the start
-button 10.9:1.
+`--gloom-deep` came out of the old home screen: the bright teal is for ink surfaces
+and measures 2.2:1 on paper; the deep one is 5.2:1, and it is what the project
+counts, the sidebar's selected gloom and the tree's dots use.
 
 ### The app header is a small theme
 
@@ -2224,118 +1671,17 @@ needed explaining, which meant it wasn't working. The same data as a plain
 two-axis chart (step across, file position down) is legible, and is parked as a
 possible `lgtm:path` block rather than built.
 
-### A gloom can arrive as a file
+### Projects are a path, and an index derived from it
 
-`Import a gloom…` on home. A markdown file whose front matter names the project
-and the files, and whose body becomes the note — a reading you can prepare for
-someone, or have a skill prepare for you.
+A project is picked explicitly with **Open a folder…** and remembered in a
+`projects` table, most recent first, with the glooms that belong to it. `⌘T`
+searches its files by name.
 
-````markdown
----
-project: ~/Coding/GitHub/my_app
-name: Accounts — the write path
-branch: main
-files:
-  - lib/my_app/accounts.ex
-  - lib/my_app/billing.ex
----
-
-`Accounts.create_user/1` normalises the attrs first…
-````
-
-**This is not the `lgtm:files` block that was cut**, and the distinction is the
-whole reason it can exist. That one was a *storage* format — a list living inside
-a note, coexisting with `doc_files`, two sources of truth that drift the moment
-you press `×` on a tab. This is a *transfer* format: read once at the door, then
-discarded. It never coexists with the rows, so *"what happens when they
-disagree"* cannot arise. Importing the same file twice makes two glooms — the
-same call as opening a changed file as a new gloom rather than reconciling it.
-
-**Front-matter delimiters, and a fixed four-key schema parsed line by line — not
-YAML.** Four keys do not justify a language that also has anchors, flow style and
-`no` meaning `false`, and the Rust situation is its own argument (`serde_yaml` is
-deprecated). The line rule is *better* for this input: everything after the first
-colon is the value, verbatim, so `name: Accounts: the write path` means what it
-looks like where real YAML would reject it. It is the rule `settings.rs`,
-`tests.rs` and every other block here is already read with.
-
-**Paths are relative to `project`; the first file is the origin.** `docs.path`,
-what the library groups by, the one file that cannot be removed. `~` is expanded,
-which is the one thing that makes a shared file portable for free — a colleague
-with the same layout under their own home directory just works.
-
-**`New gloom file…` writes the template, and it is generated in Rust.** Beside
-the parser, on the same argument that keeps `lgtm:surface` sorted in one place: a
-template declared somewhere else is a second declaration of the schema, and the
-two drift the first time a key is added.
-`the_template_only_needs_filling_in` parses the generated template and fails if
-any complaint is about anything but a **blank** — an unknown key or a malformed
-line there would mean the two halves disagree.
-
-It is pre-filled rather than empty, because *ready to fill* is the point: the
-project path is the most tedious line to type and the easiest to get subtly
-wrong, and the branch is right there to be read. What is left is the name and the
-files, which are the only parts you actually know. A blank template deliberately
-does **not** validate — it is a form, and the panel says which fields are still
-empty rather than pretending otherwise.
-
-Two doors, one panel: `New gloom file…` on home, and `Start from a template`
-inside the importer. Writing one and opening one are different errands, and the
-importer is the wrong door for the first — but a second modal would be a second
-scrim, a second `Esc` and a second set of chrome to keep in step.
-
-**Nothing is created unless everything checks out.** Strict, in this order,
-because a later check is meaningless if an earlier one failed:
-
-| Check | Fails when |
-|---|---|
-| front matter | absent, or not the first thing in the file |
-| keys | a required one missing, or an **unknown one present** — named with its line, never ignored, because silently skipping `flies:` is how a typo becomes a mystery |
-| `files` | empty, duplicated, absolute, or escaping the root with `..` |
-| `project` | not a directory here — offers **Choose the directory…**, which re-runs every check against the root you pick |
-| each file | listed and not found, each one named |
-| `branch` | present, readable on both sides, and different |
-
-**Every one of those blocks, the branch included.** An earlier cut let a branch
-mismatch through on the grounds that the gloom would still build — every file
-resolved, so nothing was actually broken. That was wrong for the reason the whole
-tool is built on: a gloom is a reading of **one version**, and importing a note
-written on `main` onto `fix/retry` puts a reading of one version over the code of
-another. It is the same argument that makes `add_doc_file` refuse a file from
-another branch, and there is no *Import anyway*.
-
-**But the branch check stays narrow**, exactly as `branch_mismatch` is. No
-`branch:` in the file, not a git repository, a detached HEAD, no commits yet —
-all `Unchecked`, which is a first-class answer and never blocks. *"I cannot
-tell"* is not *"no"*.
-
-**`repo_root` starts at the path when it is a directory.** It took a file before
-and began at `.parent()`, which every existing caller wanted — but the import
-check asks about a project *directory*, so it silently skipped the repository it
-was standing in and answered "not a git repository" for a repository. Unchanged
-for every caller that passes a file; pinned by
-`a_repository_directory_resolves_to_itself`.
-
-**Validation and loading are one step.** You choose a file and what appears is
-already the answer; a *Validate* button would be a control whose only job is to
-ask a question the app can answer on its own. **And it is re-run from scratch at
-the gesture** — `create_from_file` never trusts the preview the panel is showing,
-because you can check a branch out in a terminal while a dialog is on screen.
-
-`create_from_file` takes a pool rather than `State`, so the whole chain — parse,
-disk, git, rows — is tested without a Tauri app around it, and the command stays
-the thin part. `commands` and `git` are `pub` for the same reason `db` is.
-
-### Projects are a path, nothing more
-
-`⌘T` searches the open folder by name; the folder is picked explicitly with
-**Open a folder…** and remembered in a `projects` table, most recent first, so
-the last one is reopened next launch.
-
-Deliberately thin. There is **no index on disk, no scan at startup and no notion
-of membership** — the walk runs when the palette opens, takes milliseconds even
-on a large app, and caching it would be inventing a staleness problem to solve
-in a tree that changes while you work.
+Still deliberately thin. There is **no index on disk and no notion of
+membership**. The module index (`project_index`) is rebuilt in memory when the
+project opens and whenever the window regains focus; the file walk runs when the
+palette opens. Both take milliseconds on a large app, and caching either would be
+inventing a staleness problem to solve in a tree that changes while you work.
 
 Two things it does *not* do, both on purpose:
 
@@ -2393,32 +1739,18 @@ the order you typed them reads as importance.
 
 ### The library
 
-`⌘K`. Built for a few hundred docs, not a few: search over title/filename/path/
-branch, three orderings (Recent / Name / Folder), sticky folder-group headers,
-and `↑`/`↓`/`↵` keyboard navigation that crosses group boundaries in visual
-order.
+`⌘K`, or the `⌘K` button above the sidebar's glooms: one project's glooms, for when
+the sidebar's list is not enough. Search over the name, the tags and the prose
+(`list` matches `markdown` too — a gloom is usually remembered by what it says),
+Recent / Name, `↑`/`↓`/`↵`.
 
-**It is the same table home draws**: the name, its tags, then the file count and
-the age in fixed columns at the right so they line up down the list. The origin
-filename went with the redesign — the name identifies a gloom, and in *Folder* mode
-the folder is already the group header.
+**Deleting reports back.** The sidebar is a cached query and nothing it reads
+changes when a row goes away, so `ondelete` refreshes it — and closes the gloom if
+it is the one on screen, or the next autosave writes to a row that no longer
+exists. Pinned by `saving_to_a_deleted_doc_is_an_error_not_a_silent_no_op`.
 
-**Deleting reports back.** `Library` refreshes its own list, but the welcome
-screen's recents is a *cached query over the same table* and nothing it reads
-changes when a row goes away — so deleted readings kept appearing under "pick up
-where you left off". The `ondelete` callback exists for that, and it also closes
-the reading if the deleted one is the one on screen: leaving it open means the
-next autosave writes to a row that no longer exists, and the failure surfaces as
-a "not found" banner seconds later with nothing to connect it to. Pinned by
-`saving_to_a_deleted_doc_is_an_error_not_a_silent_no_op` — an UPDATE matching no
-rows must not report success.
-
-**Deleting asks first.** The row turns amber and states exactly what is lost
-(the markdown and the source snapshot), that it cannot be undone, and — in
-green — that the source file on disk is untouched. The `×` only appears on the
-hovered/cursored row, so a destructive control is never sitting under an idle
-cursor. There is no soft delete; if that ever matters, add `deleted_at` rather
-than a confirmation dialog.
+**Deleting asks first**, and says what is lost: the note, and only the note — no
+code is touched, because a gloom never holds any.
 
 ## Known quirks and hard-won lessons
 

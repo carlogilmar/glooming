@@ -7,10 +7,9 @@ pub mod git;
 // `db` is public for its serde models, which the integration tests construct.
 pub mod db;
 
+pub mod index;
 // Public so the integration tests in tests/ can exercise the pipeline directly.
-pub mod import;
 pub mod parse;
-pub mod seed;
 
 use commands::AppState;
 use tauri::Manager;
@@ -31,24 +30,17 @@ pub fn run() {
             commands::files::open_file,
             commands::files::branch_of,
             commands::files::blame_file,
-            commands::docs::seed_doc,
             commands::docs::create_doc,
             commands::docs::save_doc,
             commands::docs::load_doc,
             commands::docs::list_docs,
             commands::docs::delete_doc,
-            commands::docs::block_for,
-            commands::docs::open_reading,
-            commands::docs::add_doc_file,
-            commands::docs::remove_doc_file,
             commands::docs::export_note,
-            commands::docs::gloom_template,
-            commands::docs::preview_import,
-            commands::docs::import_gloom,
             commands::projects::open_project,
             commands::projects::recent_projects,
             commands::projects::forget_project,
             commands::projects::project_files,
+            commands::projects::project_index,
         ])
         .run(tauri::generate_context!())
         .expect("error while running lgtm");

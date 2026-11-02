@@ -6,11 +6,11 @@
   import FontStepper from "$lib/components/FontStepper.svelte";
   import { fontSize } from "$lib/stores/fontSize.svelte";
   import { focus } from "$lib/stores/focus.svelte";
-  import { byPath, hasModules, moduleOf, origin as originOf, vocabulary } from "$lib/fileset";
+  import { byPath, hasModules, moduleOf, vocabulary } from "$lib/fileset";
   import * as ipc from "$lib/ipc";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-  import { blockTargets, stillOpen, type BlockKind } from "$lib/slash";
+  import { stillOpen } from "$lib/slash";
   import { exportFilename } from "$lib/exporting";
   import type { ReadingFile } from "$lib/ipc";
 
@@ -20,20 +20,33 @@
     title = "",
     files = [],
     current = null,
+    known = [],
+    labels = new Map(),
     dirty = false,
     onshowfile,
     onrefs,
     onreading,
     explore,
     opened = 0,
+    gloom = true,
+    viewing = "",
+    onstart,
   }: {
     markdown: string;
     /** Which gloom this is, so the split can be remembered per gloom. */
     docId: number | null;
     /** The gloom's name — what an exported file is called by default. */
     title: string;
-    /** Every file the reading covers — references may point into any of them. */
+    /**
+     * Every file loaded this session. A reference resolves only against a loaded
+     * outline; the shell loads whatever the prose names, and this re-renders
+     * when it lands.
+     */
     files: ReadingFile[];
+    /** Every module in the project — what decides whether a name is a reference. */
+    known: string[];
+    /** How each module is shown: its shortest unique name in the project. */
+    labels: Map<string, string>;
     /** The file on screen in the code pane. */
     current: string | null;
     dirty: boolean;
@@ -42,7 +55,7 @@
      * once the code pane is actually showing the file it refers to.
      */
     onshowfile?: (path: string) => Promise<void> | void;
-    /** Which files the prose references — the file strip's hollow-dot signal. */
+    /** Which files the prose references — the sidebar marks those modules. */
     onrefs?: (paths: Set<string>) => void;
     /**
      * Read mode went on or off.
@@ -78,6 +91,16 @@
      * once per doc, so `.arriving` is on for one beat and then gone.
      */
     opened?: number;
+    /**
+     * A gloom is open. Without one the pane is all views — exploring, nothing
+     * saved — and the place the note would be offers to start one. The pane stays
+     * mounted either way, because it owns the reach diagram's hover and trace.
+     */
+    gloom?: boolean;
+    /** The module on screen, named in the header while exploring. */
+    viewing?: string;
+    /** Start a gloom from here. */
+    onstart?: () => void;
   } = $props();
 
   /**
@@ -107,7 +130,7 @@
    * One ring around the Explain invitation, on a doc nobody has written in.
    *
    * Identified structurally rather than by a marker: the last paragraph of the
-   * doc, containing nothing but emphasis. That is what `seed.rs` writes — and
+   * doc, containing nothing but emphasis. That is what a new gloom starts as — and
    * the moment you type a word it stops matching, which is exactly when the
    * nudge should stop. Nothing has to remember whether the doc is "fresh".
    */
@@ -125,8 +148,7 @@
     setTimeout(() => last.classList.remove("invite-pulse"), 1000);
   }
 
-  const originFile = $derived(originOf(files));
-  const currentFile = $derived(byPath(files, current) ?? originFile);
+  const currentFile = $derived(byPath(files, current) ?? files[0] ?? null);
 
   /** Switch the code pane if a reference points somewhere else. */
   async function switchIfNeeded(path: string | null | undefined) {
@@ -298,8 +320,8 @@
   let reading = $state(false);
 
   /** Explore stands down while you write or read — neither is navigating. */
-  const showExplore = $derived(!!explore && !reading && !editing && split > 0);
-  const showNote = $derived(!exploreOnly || reading || editing);
+  const showExplore = $derived(!!explore && !reading && !editing && (split > 0 || !gloom));
+  const showNote = $derived(gloom && (!exploreOnly || reading || editing));
   /** Paragraphs carrying a reference, in prose order — the steps. */
   let steps = $state<HTMLElement[]>([]);
   /** Every reference the reading walks, in document order. */
@@ -394,9 +416,8 @@
     const caret = editor.selectionStart;
     if (caret <= slashAt) return closeMenu();
     const typed = editor.value.slice(slashAt + 1, caret);
-    // A space normally ends it — `/` in ordinary prose must stay prose. Once a
-    // command name matches, the space becomes an argument separator instead, so
-    // `/surface impact_stage.ex` can be typed. `stillOpen` owns that rule.
+    // A space ends it — `/` in ordinary prose must stay prose. `stillOpen` owns
+    // that rule, so this and the menu cannot disagree.
     if (!stillOpen(typed)) return closeMenu();
     slashQuery = typed;
   }
@@ -450,77 +471,29 @@
     editor?.focus();
     editor?.setSelectionRange(to, to);
 
-    // A block is many lines, so its end can land below the fold — and a browser
-    // does not scroll to a caret it did not move itself. Bouncing focus makes it
-    // do so. Only for multi-line inserts: a reference is a few characters at the
-    // caret you were already looking at, and bouncing focus for that would be a
-    // flicker for nothing.
-    if (text.includes("\n")) {
-      editor?.blur();
-      editor?.focus();
-    }
   }
 
-  // The whole file set goes in: a reference may name a function in any of them,
-  // and each block finds its own file from the `module=` it already carried.
-  /** A short, self-clearing message for something that could not be done. */
-  let note = $state<string | null>(null);
-
-  /**
-   * Replace `/surface` with a generated block for the file on screen.
-   *
-   * A fence has to start on its own line, so a newline goes in when the caret is
-   * mid-line — otherwise the block lands inside a paragraph and markdown renders
-   * it as inline code, which is a confusing way to find that out.
-   */
-  async function insertBlock(kind: BlockKind, path: string | null) {
-    // A named file wins; without one it is the file on screen, which is what a
-    // bare `/surface` means.
-    const file = path ? (byPath(files, path) ?? currentFile) : currentFile;
-    if (!editor || slashAt === null || !file?.outline) return closeMenu();
-    try {
-      // The path goes along because `stats` re-reads the source and the git log;
-            // the others need only the outline.
-      const body = await ipc.blockFor(kind, file.path, file.outline);
-      const before = editor.value.slice(0, slashAt);
-      const lead = before === "" || before.endsWith("\n") ? "" : "\n";
-      await insertRef(`${lead}${body}`);
-    } catch (e) {
-      // A module that reaches nothing has no deps block, and saying so beats
-      // inserting an empty fence that renders as "re-seed this doc".
-      note = String(e).replace(/^Error:\s*/, "");
-      setTimeout(() => (note = null), 3200);
-      closeMenu();
-    }
-  }
-
-  const md = $derived(createMarkdownIt(files, current));
+  const md = $derived(createMarkdownIt(files, current, known, labels));
   const html = $derived(md.render(markdown));
 
   /**
-   * Settings and test rows aren't functions, but they are still *blocks* — a
-   * test, a describe, a setup, a multi-line setting. Clicking one selects its
-   * whole span in the code, the same as clicking a function does, rather than
-   * dropping a cursor on the line it happens to start at.
+   * A reference: its span was already computed when it was resolved — every
+   * clause, plus the @spec and @doc above, or the lines inside a function — so
+   * it is used as it is rather than looked up again.
    */
   async function selectBlock(target: HTMLElement): Promise<boolean> {
-    // Inline references are here too: their span was already computed when the
-    // reference was resolved (clauses, plus the @spec and @doc above), and an
-    // `L30-34` reference has no function name to look up at all.
-    const row = target.closest<HTMLElement>(
-      ".lgtm-settings [data-line], .lgtm-tests [data-line], .doc code.ref[data-line]",
-    );
+    const row = target.closest<HTMLElement>(".doc code.ref[data-line]");
     if (!row) return false;
 
     const start = parseInt(row.dataset.line ?? "0", 10);
     if (start <= 0) return true;
     const end = parseInt(row.dataset.end ?? String(start), 10) || start;
     // A reference with no arity selects every arity, so a chip may carry several
-    // spans. Anything without `data-ranges` — a settings or test row — is one.
+    // spans.
     const spans = rangesOf(row) ?? [{ start, end }];
 
-    // A reference can point into any file of the reading, so the pane has to be
-    // showing the right one before the span means anything.
+    // A reference can point into any module of the project, so the pane has to
+    // be showing the right file before the span means anything.
     const path = ownerOf(row);
     const crossed = !!path && path !== current;
     await switchIfNeeded(path);
@@ -549,12 +522,8 @@
   }
 
   async function select(target: HTMLElement) {
-    // Table rows, treemap tiles and the reach block's own functions are all the
-    // same gesture — every one of them carries data-sig.
-    const row = target.closest<HTMLElement>(
-      ".fnrow[data-line], .tm-tile[data-sig], .lgtm-deps .fn[data-sig], " +
-        ".lgtm-surface .row[data-sig]",
-    );
+    // The reach diagram's own functions carry data-sig.
+    const row = target.closest<HTMLElement>(".lgtm-deps .fn[data-sig]");
     if (!row) return false;
     const sig = row.dataset.sig ?? "";
     // A block belongs to the file whose module it names, which may not be the
@@ -565,7 +534,7 @@
     if (at) {
       const crossed = !!path && path !== current;
       await switchIfNeeded(path);
-      // Clicked a table row or a tile, so there is no particular chip in mind —
+      // Clicked the diagram, so there is no particular chip in mind —
       // the first mention of that name is the reasonable one to light.
       const chip = container?.querySelector<HTMLElement>(
         `.doc code.ref[data-sig="${CSS.escape(sig)}"]`,
@@ -582,12 +551,62 @@
   // per-row handlers.
   async function onClick(e: MouseEvent) {
     const target = e.target as HTMLElement;
+    const amb = target.closest<HTMLElement>(".doc code.ref.ambiguous");
+    if (amb) return chooseFor(amb);
     if ((await selectBlock(target)) || (await select(target))) alignReading(target);
   }
 
+  // ---- an ambiguous reference ----------------------------------------------
+  // `Pipeline.run` with two Pipelines in the project is not wrong, it is
+  // underspecified — so the click offers the candidates instead of guessing,
+  // and the choice rewrites the TEXT to the full name. The note becomes exact,
+  // which is the only fix that survives the next module called Pipeline.
+
+  let choosing = $state<{
+    text: string;
+    written: string;
+    candidates: string[];
+    x: number;
+    y: number;
+  } | null>(null);
+
+  function chooseFor(chip: HTMLElement) {
+    const host = body?.getBoundingClientRect();
+    const at = chip.getBoundingClientRect();
+    choosing = {
+      text: chip.dataset.text ?? "",
+      written: chip.dataset.written ?? "",
+      candidates: (chip.dataset.candidates ?? "").split(",").filter(Boolean),
+      x: at.left - (host?.left ?? 0),
+      y: at.bottom - (host?.top ?? 0) + (body?.scrollTop ?? 0) + 4,
+    };
+  }
+
+  /**
+   * Every occurrence of the same ambiguous text means the same thing, so all of
+   * them are rewritten — leaving the second `Pipeline.run` dashed after you have
+   * just said which Pipeline you meant would be asking the same question twice.
+   */
+  function choose(module: string) {
+    if (!choosing) return;
+    const { text, written } = choosing;
+    const exact = module + text.slice(written.length);
+    markdown = markdown.split("`" + text + "`").join("`" + exact + "`");
+    choosing = null;
+  }
+
   async function onKey(e: KeyboardEvent) {
+    if (e.key === "Escape" && choosing) {
+      choosing = null;
+      return;
+    }
     if (e.key !== "Enter" && e.key !== " ") return;
     const target = e.target as HTMLElement;
+    const amb = target.closest<HTMLElement>(".doc code.ref.ambiguous");
+    if (amb) {
+      e.preventDefault();
+      return chooseFor(amb);
+    }
     // Prevented up front: the switch is awaited, and by the time it resolves the
     // default scroll a space bar causes has already happened.
     e.preventDefault();
@@ -1118,26 +1137,8 @@
     focus.reading = false;
   });
 
-  // ---- treemap tooltip ----------------------------------------------------
-  // Native <title> is slow to appear and unstyleable, and the tiles need a
-  // label the moment the pointer lands on them.
-  let tip = $state<{ text: string; sub: string; x: number; y: number } | null>(null);
-
   function onMove(e: MouseEvent) {
     for (const reach of reachHosts()) litReach(reach, e.target as HTMLElement);
-
-    const tile = (e.target as HTMLElement).closest<HTMLElement>(".tm-tile[data-tip]");
-    if (!tile) {
-      tip = null;
-      return;
-    }
-    const host = container?.getBoundingClientRect();
-    tip = {
-      text: tile.dataset.tip ?? "",
-      sub: `${tile.dataset.lines} lines · ${tile.dataset.pct}%`,
-      x: e.clientX - (host?.left ?? 0),
-      y: e.clientY - (host?.top ?? 0),
-    };
   }
 
   /**
@@ -1240,10 +1241,8 @@
       markHere();
     });
 
-    // Which files the prose actually reaches. The file strip draws a hollow dot
-    // for the others: opening a file to check something and never referring to
-    // it again is the normal accident of a review, and the dot is the same nudge
-    // an empty explanation slot is, one level up.
+    // Which files the prose actually reaches — the sidebar marks their modules,
+    // which is what the file set used to be, now derived from what you wrote.
     const reached = new Set<string>();
     for (const r of container.querySelectorAll<HTMLElement>(".doc code.ref[data-path]")) {
       if (r.dataset.path) reached.add(r.dataset.path);
@@ -1260,11 +1259,8 @@
     activeRef;
     if (!container) return;
 
-    // Blocks are one row per signature, so matching by name is right there.
-    for (const el of container.querySelectorAll(
-      ".fnrow, .tm-tile, .lgtm-deps .fn, .lgtm-surface .row, " +
-        ".lgtm-tests [data-sig], .lgtm-settings [data-sig]",
-    )) {
+    // The diagram has one row per signature, so matching by name is right there.
+    for (const el of container.querySelectorAll(".lgtm-deps .fn")) {
       el.classList.toggle("active", focus.active && (el as HTMLElement).dataset.sig === sig);
     }
     // Chips are not: the same name can appear in five paragraphs, and only the
@@ -1297,6 +1293,11 @@
        beside it, so the only thing this row was adding was a third name for the
        same reading. -->
   <div class="panehead">
+    {#if !gloom}
+      <span class="viewing">Views of <b>{viewing || "—"}</b> · live from disk</span>
+      <span class="spacer"></span>
+      <FontStepper {font} label="text" />
+    {:else}
     {#if dirty}<span class="dot" title="unsaved"></span>{/if}
     <!-- Read is on the left, where the row starts. It is the one control here
          that changes what the whole window does, and among four right-aligned
@@ -1311,7 +1312,6 @@
         {reading ? "▶ LGTM" : "▷ LGTM"}
       </button>
     {/if}
-    {#if note}<span class="note">{note}</span>{/if}
     <span class="spacer"></span>
     <!-- The note is markdown, so it can just leave. Copy is the 90% case — a
          notes app, a PR comment — and Save… is for keeping it. Both hand over
@@ -1340,6 +1340,7 @@
     <!-- Last, as in the code pane's header: the same control in the same place on
          both sides of the window. -->
     <FontStepper {font} label="text" />
+    {/if}
   </div>
 
   <!-- Two regions and a grip. `body` — what read mode measures and what the
@@ -1352,17 +1353,32 @@
     bind:this={stack}
     onmousemove={onMove}
     onmouseleave={() => {
-      tip = null;
       for (const reach of reachHosts()) litReach(reach, null);
     }}
   >
     {#if showExplore}
-      <div class="exploreregion" style:height="{exploreOnly ? maxSplit() : split}px">
+      <div
+        class="exploreregion"
+        class:full={!gloom}
+        style:height={gloom ? `${exploreOnly ? maxSplit() : split}px` : null}
+      >
         {@render explore?.()}
       </div>
     {/if}
 
-    {#if !reading && !editing && explore}
+    {#if !gloom}
+      <!-- Exploring: the grip's place is where a gloom starts. Nothing above it
+           is saved, and saying so is what makes wandering feel free. -->
+      <div class="start">
+        <p>
+          Exploring — nothing is saved. Start a gloom when there is something worth
+          writing down; it can reference any module in this project.
+        </p>
+        <button onclick={() => onstart?.()}>Start a gloom</button>
+      </div>
+    {/if}
+
+    {#if gloom && !reading && !editing && explore}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="grip"
@@ -1396,15 +1412,12 @@
         {#if slashAt !== null && canRead}
           <RefMenu
             bind:this={menu}
-            entries={vocabulary(files, current)}
-            currentFile={currentFile?.filename ?? ""}
-            targets={blockTargets(files)}
+            entries={vocabulary(files, current, labels)}
             query={slashQuery}
             x={menuX}
             y={menuY}
             flip={menuFlip}
             onpick={insertRef}
-            oncommand={insertBlock}
             onclose={closeMenu}
           />
         {/if}
@@ -1421,13 +1434,18 @@
         onkeydown={onKey}
       >
         {@html html}
-        {#if tip}
-          <div class="tmtip" style:left="{tip.x}px" style:top="{tip.y}px">
-            <b>{tip.text}</b>
-            <span>{tip.sub}</span>
-          </div>
-        {/if}
       </div>
+      {#if choosing}
+        <div class="choose" style:left="{choosing.x}px" style:top="{choosing.y}px">
+          <p>
+            <code>{choosing.written}</code> is {choosing.candidates.length} modules. Pick one —
+            the note will store its full name.
+          </p>
+          {#each choosing.candidates as c (c)}
+            <button onclick={() => choose(c)}>{c}{choosing.text.slice(choosing.written.length)}</button>
+          {/each}
+        </div>
+      {/if}
     {/if}
     </div>
   </div>
@@ -1442,12 +1460,45 @@
     height: 100%;
     position: relative;
   }
-  .note {
-    font-size: 10.5px;
+  /* The candidates for an ambiguous reference. Anchored under the chip, inside
+     the note's own scroller, so it scrolls with the sentence it is about. */
+  .choose {
+    position: absolute;
+    z-index: 30;
+    min-width: 240px;
+    max-width: 360px;
+    padding: 5px;
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: 0 12px 32px rgba(10, 12, 16, 0.24);
+  }
+  .choose p {
+    margin: 2px 6px 6px;
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--fg-dim);
+  }
+  .choose code {
+    font-family: var(--mono);
     color: var(--priv);
-    background: color-mix(in srgb, var(--priv) 12%, transparent);
+  }
+  .choose button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--fg);
+    background: transparent;
+    border: 0;
     border-radius: 5px;
-    padding: 1px 7px;
+    padding: 5px 8px;
+    cursor: pointer;
+  }
+  .choose button:hover {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
   }
   .band {
     position: absolute;
@@ -1614,10 +1665,61 @@
     overscroll-behavior: contain;
     background: color-mix(in srgb, var(--read) 9%, var(--doc-bg));
   }
+  .exploreregion.full {
+    flex: 1;
+  }
+  .viewing {
+    font-size: 11px;
+    color: var(--fg-faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .viewing b {
+    font-family: var(--mono);
+    font-weight: 600;
+    color: var(--fg-dim);
+  }
+  .start {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 11px 22px;
+    background: color-mix(in srgb, var(--read) 15%, var(--doc-bg));
+    border-top: 1px solid var(--doc-line);
+  }
+  .start p {
+    flex: 1;
+    margin: 0;
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--fg-dim);
+  }
+  .start button {
+    flex: none;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+    background: var(--gloom-deep);
+    border: 0;
+    border-radius: 6px;
+    padding: 6px 13px;
+    cursor: pointer;
+  }
+  :global(.dark) .start button {
+    color: var(--gloom-bg);
+  }
+  .start button:hover {
+    filter: brightness(1.1);
+  }
   .noteregion {
     flex: 1;
     min-height: 0;
     overflow: auto;
+    /* The ambiguity chooser is anchored inside it, so it scrolls with the text. */
+    position: relative;
     background: var(--doc-bg);
     color: var(--doc-fg);
     transition:
@@ -1787,34 +1889,6 @@
     max-width: 760px;
   }
 
-  /* Treemap tooltip: follows the pointer, names the function, and gets out of
-     the way. Offset up-left so it never sits under the cursor. */
-  .tmtip {
-    position: absolute;
-    z-index: 5;
-    transform: translate(12px, -34px);
-    pointer-events: none;
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 4px 9px;
-    border-radius: 6px;
-    background: var(--fg);
-    color: var(--bg);
-    font-size: 11.5px;
-    white-space: nowrap;
-    box-shadow: 0 6px 20px rgba(10, 12, 16, 0.28);
-  }
-  .tmtip b {
-    font-family: var(--mono);
-    font-weight: 600;
-  }
-  .tmtip span {
-    opacity: 0.7;
-    font-family: var(--mono);
-    font-size: 10.5px;
-  }
-
   /* The rendered doc is injected HTML, so these rules are global. */
   :global(.doc h1) {
     font-size: 1.43em;
@@ -1942,282 +2016,8 @@
     color: var(--fg-dim);
   }
 
-  /* ---- the lgtm:functions block ---- */
-  :global(.lgtm-block) {
-    border: 1px solid var(--doc-line);
-    border-radius: 8px;
-    background: var(--code-bg);
-    overflow: hidden;
-    margin: 0 0 22px;
-    box-shadow: var(--shadow);
-  }
-  :global(.lgtm-block > header) {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 7px 12px;
-    border-bottom: 1px solid var(--line-soft);
-    background: var(--bg-inset);
-    font-size: 10.5px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--fg-faint);
-  }
-  :global(.lgtm-block > header .tag) {
-    font-family: var(--mono);
-    color: var(--mark);
-    text-transform: none;
-    letter-spacing: 0;
-  }
-  :global(.lgtm-block > header .count) {
-    margin-left: auto;
-    font-family: var(--mono);
-  }
-  :global(.lgtm-block .grp) {
-    padding: 4px 0;
-  }
-  :global(.lgtm-block .grp + .grp) {
-    border-top: 1px solid var(--line-soft);
-  }
-  :global(.lgtm-block .grp > .label) {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 8px 12px 4px;
-    font-size: 10.5px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-  }
-  :global(.lgtm-block .grp.public > .label) {
-    color: var(--pub);
-  }
-  :global(.lgtm-block .grp.private > .label) {
-    color: var(--priv);
-  }
-  :global(.lgtm-block .grp > .label .bar) {
-    width: 3px;
-    height: 11px;
-    border-radius: 2px;
-    background: currentColor;
-  }
-
-  /* One row per function: signature line, explanation beneath. Long names get
-     the full width instead of being squeezed into a first column. */
-  :global(.fnrow) {
-    position: relative;
-    display: block;
-    padding: 8px 12px;
-    cursor: pointer;
-    border-left: 2px solid transparent;
-    transition:
-      background 0.14s ease,
-      border-color 0.14s ease;
-  }
-  :global(.fnrow .sigline) {
-    display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  :global(.fnrow .badge) {
-    font-size: 9.5px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--fg-faint);
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    padding: 1px 7px;
-    white-space: nowrap;
-  }
-  :global(.fnrow .badge.gone) {
-    color: var(--priv);
-    border-color: color-mix(in srgb, var(--priv) 35%, transparent);
-  }
-  :global(.fnrow.static) {
-    cursor: default;
-  }
-  :global(.fnrow:not(.static):hover) {
-    background: var(--bg-inset);
-    border-left-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  }
-  :global(.fnrow .sig) {
-    font-family: var(--mono);
-    font-size: 12.5px;
-    color: var(--fg);
-    word-break: break-word;
-  }
-  :global(.fnrow .sig .ar) {
-    color: var(--fg-faint);
-  }
-  :global(.fnrow .why) {
-    color: var(--fg-dim);
-    font-size: 12.5px;
-    line-height: 1.55;
-    margin-top: 3px;
-    padding-left: 1px;
-  }
-  :global(.fnrow .why.empty) {
-    color: var(--fg-faint);
-    font-style: italic;
-    opacity: 0.7;
-  }
-  :global(.fnrow .why.empty::before) {
-    content: "explain…";
-  }
-  :global(.fnrow.removed .sig) {
-    color: var(--fg-faint);
-  }
-
-  /* Selected: breathes on the same 2.1s cycle as the code pane, glows, and
-     grows a caret pointing at the code. */
-  :global(.fnrow.active) {
-    background: var(--sel);
-    border-left-color: var(--accent);
-    animation: fnPulse var(--slow) ease-in-out infinite;
-  }
-  :global(.fnrow.active .sig) {
-    color: var(--accent);
-    font-weight: 600;
-  }
-  :global(.fnrow.active .why.empty) {
-    opacity: 1;
-  }
-  :global(.fnrow.active::after) {
-    content: "◂";
-    position: absolute;
-    right: 8px;
-    top: 9px;
-    color: var(--accent);
-    font-size: 11px;
-    animation: caretNudge var(--slow) ease-in-out infinite;
-  }
-  @keyframes fnPulse {
-    0%,
-    100% {
-      box-shadow:
-        inset 3px 0 0 -1px var(--accent),
-        0 0 0 0 color-mix(in srgb, var(--accent) 22%, transparent);
-    }
-    50% {
-      box-shadow:
-        inset 3px 0 0 0 var(--accent),
-        0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
-    }
-  }
-  @keyframes caretNudge {
-    0%,
-    100% {
-      opacity: 0.35;
-      transform: translateX(2px);
-    }
-    50% {
-      opacity: 1;
-      transform: translateX(-2px);
-    }
-  }
-
-  /* ---- the lgtm:treemap block ----
-     Function sizes as area. No header, no legend, no footer: the chart IS the
-     information, and chrome was eating the space it needed. Anything a cell
-     can't label is one hover away in its tooltip. */
-  :global(.lgtm-treemap) {
-    border: 1px solid var(--doc-line);
-    border-radius: 8px;
-    background: var(--code-bg);
-    overflow: hidden;
-    margin: 0 0 22px;
-    box-shadow: var(--shadow);
-  }
-  :global(.lgtm-treemap.empty) {
-    padding: 18px;
-    color: var(--fg-faint);
-    font-size: 12.5px;
-  }
-  /* Uniform scaling (xMidYMid meet) — stretching the viewBox to a fixed height
-     would squash the labels. Height follows from the 1000x700 viewBox, which is
-     tall enough to read at the doc pane's width. */
-  :global(.lgtm-treemap svg) {
-    display: block;
-    width: 100%;
-    height: auto;
-  }
-
-  :global(.tm-tile) {
-    cursor: pointer;
-  }
-  :global(.tm-cell) {
-    transition:
-      opacity 0.14s ease,
-      stroke 0.14s ease;
-    stroke: transparent;
-    stroke-width: 2;
-  }
-  /* Public and private are different colors — the split you most want to see
-     at a glance is what's exposed versus what's internal. */
-  :global(.tm-public) {
-    fill: var(--pub);
-  }
-  :global(.tm-private) {
-    fill: var(--priv);
-  }
-  :global(.tm-tile:hover .tm-cell) {
-    stroke: var(--fg);
-    opacity: 0.9;
-  }
-  :global(.tm-tile.active .tm-cell) {
-    stroke: var(--accent);
-    stroke-width: 3;
-  }
-  :global(.tm-num) {
-    fill: #fff;
-    font-family: var(--mono);
-    font-weight: 700;
-    pointer-events: none;
-  }
-  :global(.tm-name) {
-    fill: rgba(255, 255, 255, 0.85);
-    font-family: var(--mono);
-    pointer-events: none;
-  }
-
-  /* The three biggest functions breathe. A pulsing outline was invisible at
-     this size — the fill is what the eye actually catches. Staggered so they
-     read as three things, not one flashing block. */
-  :global(.tm-top) {
-    animation: tmBreathe var(--calm) ease-in-out infinite;
-  }
-  :global(.tm-tile:nth-of-type(2) .tm-top) {
-    animation-delay: 0.25s;
-  }
-  :global(.tm-tile:nth-of-type(3) .tm-top) {
-    animation-delay: 0.5s;
-  }
-  @keyframes tmBreathe {
-    0%,
-    100% {
-      filter: brightness(1) saturate(1);
-    }
-    50% {
-      filter: brightness(1.55) saturate(1.35);
-    }
-  }
   @media (prefers-reduced-motion: reduce) {
-    :global(.tm-top) {
-      animation: none;
-      filter: brightness(1.3);
-    }
-    /* The two that ran forever and ignored the setting entirely. Same rule as
-       everywhere else: keep the bright end of the pulse, drop the pulse. */
-    :global(.fnrow.active) {
-      animation: none;
-      box-shadow:
-        inset 3px 0 0 0 var(--accent),
-        0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
-    }
-    :global(.fnrow.active::after) {
-      animation: none;
-      opacity: 0.75;
-    }
+
     /* And the transient ones: each keeps its END state, so the ring still says
        "here", the underline is still drawn, and a step still marks its band. */
     :global(.doc p.invite-pulse::after) {
@@ -2227,9 +2027,6 @@
     :global(.doc code.ref.active::after) {
       animation: none;
       transform: scaleX(1);
-    }
-    :global(.doc.arriving .lgtm-surface .row) {
-      animation: none;
     }
     .band::after,
     .band:global(.fire)::after {
@@ -2242,61 +2039,6 @@
     :global(.lgtm-deps .arrival.hit) {
       animation: none;
     }
-  }
-
-  /* ---- the lgtm:stats block ----
-     The facts you'd otherwise go and look up, in one line of eye movement. */
-  :global(.lgtm-stats) {
-    border: 1px solid var(--doc-line);
-    border-radius: 8px;
-    background: var(--bg-raised);
-    margin: 0 0 22px;
-    box-shadow: var(--shadow);
-    overflow: hidden;
-  }
-  :global(.lgtm-stats .grid) {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
-  }
-  :global(.lgtm-stats .stat) {
-    padding: 10px 12px;
-    border-right: 1px solid var(--line-soft);
-    min-width: 0;
-  }
-  :global(.lgtm-stats .stat:last-child) {
-    border-right: 0;
-  }
-  :global(.lgtm-stats .stat b) {
-    display: block;
-    font-size: 19px;
-    font-weight: 600;
-    line-height: 1.15;
-    color: var(--fg);
-    font-variant-numeric: tabular-nums;
-  }
-  :global(.lgtm-stats .stat .lbl) {
-    display: block;
-    font-size: 9.5px;
-    letter-spacing: 0.09em;
-    text-transform: uppercase;
-    color: var(--fg-faint);
-    margin-top: 3px;
-  }
-  :global(.lgtm-stats .stat .sub) {
-    display: block;
-    font-size: 10.5px;
-    color: var(--fg-dim);
-    margin-top: 2px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  :global(.lgtm-stats .who) {
-    border-top: 1px solid var(--line-soft);
-    padding: 7px 12px;
-    font-size: 11px;
-    color: var(--fg-dim);
-    background: var(--bg-inset);
   }
 
   /* ---- the lgtm:deps block ----
@@ -2532,577 +2274,6 @@
     color: var(--fg-faint);
   }
 
-  /* ---- the lgtm:surface block ----
-     The directory. Ported from mockup/surface.html. Public left, private right,
-     each sorted by name and scrolling on its own. */
-  :global(.lgtm-surface) {
-    border: 1px solid var(--doc-line);
-    border-radius: 8px;
-    background: var(--code-bg);
-    box-shadow: var(--shadow);
-    overflow: hidden;
-    margin: 0 0 22px;
-  }
-  :global(.lgtm-surface.empty) {
-    padding: 18px;
-    color: var(--fg-faint);
-    font-size: 12.5px;
-  }
-  :global(.lgtm-surface > header) {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 7px 12px;
-    border-bottom: 1px solid var(--line-soft);
-    background: var(--bg-inset);
-    font-size: 10.5px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--fg-faint);
-  }
-  :global(.lgtm-surface > header .tag) {
-    font-family: var(--mono);
-    color: var(--mark);
-    text-transform: none;
-    letter-spacing: 0;
-  }
-  :global(.lgtm-surface > header .count) {
-    margin-left: auto;
-    font-family: var(--mono);
-  }
-
-  :global(.lgtm-surface .cols) {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-  }
-  :global(.lgtm-surface .col) {
-    min-width: 0;
-  }
-  :global(.lgtm-surface .col + .col) {
-    border-left: 1px solid var(--line-soft);
-  }
-  /* Sticky, so scrolling one column never loses which side you are on. */
-  :global(.lgtm-surface .col > .label) {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 8px 12px;
-    background: var(--code-bg);
-    border-bottom: 1px solid var(--line-soft);
-    font-size: 10.5px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-  }
-  :global(.lgtm-surface .col.public > .label) {
-    color: var(--pub);
-  }
-  :global(.lgtm-surface .col.private > .label) {
-    color: var(--priv);
-  }
-  :global(.lgtm-surface .col > .label .bar) {
-    width: 3px;
-    height: 11px;
-    border-radius: 2px;
-    background: currentColor;
-  }
-  :global(.lgtm-surface .col > .label .n) {
-    margin-left: auto;
-    font-family: var(--mono);
-    color: var(--fg-faint);
-  }
-
-  :global(.lgtm-surface .list) {
-    height: 300px;
-    overflow-y: auto;
-    /* Don't hand the scroll to the doc pane when a column bottoms out. */
-    overscroll-behavior: contain;
-  }
-  :global(.lgtm-surface .row) {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 5px 12px;
-    cursor: pointer;
-    border-left: 2px solid transparent;
-  }
-  :global(.lgtm-surface .row:hover) {
-    background: var(--bg-inset);
-    border-left-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  }
-  :global(.lgtm-surface .row.active) {
-    background: var(--sel);
-    border-left-color: var(--accent);
-  }
-  :global(.lgtm-surface .row .sig) {
-    font-family: var(--mono);
-    font-size: 12px;
-    color: var(--fg);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  :global(.lgtm-surface .row.active .sig) {
-    color: var(--accent);
-    font-weight: 600;
-  }
-  :global(.lgtm-surface .row .sig .ar) {
-    color: var(--fg-faint);
-  }
-  :global(.lgtm-surface .row .badge) {
-    font-size: 9px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--fg-faint);
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    padding: 0 5px;
-    white-space: nowrap;
-    flex: none;
-  }
-  :global(.lgtm-surface .row .spacer) {
-    flex: 1;
-  }
-  :global(.lgtm-surface .row .ln) {
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--fg-faint);
-    flex: none;
-    font-variant-numeric: tabular-nums;
-  }
-  :global(.lgtm-surface .list .none) {
-    padding: 14px 12px;
-    color: var(--fg-faint);
-    font-size: 12px;
-    font-style: italic;
-    margin: 0;
-  }
-
-  /* ---- the lgtm:settings block ----
-     A config has no functions, so no chart — the value is the grouping plus one
-     marking: which values come from the environment. Ported from
-     mockup/kinds.html. */
-  :global(.lgtm-settings) {
-    border: 1px solid var(--doc-line);
-    border-radius: 8px;
-    background: var(--code-bg);
-    box-shadow: var(--shadow);
-    overflow: hidden;
-    margin: 0 0 22px;
-  }
-  :global(.lgtm-settings.empty),
-  :global(.lgtm-tests.empty) {
-    padding: 18px;
-    color: var(--fg-faint);
-    font-size: 12.5px;
-  }
-  :global(.lgtm-settings > header),
-  :global(.lgtm-tests > header) {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 7px 12px;
-    border-bottom: 1px solid var(--line-soft);
-    background: var(--bg-inset);
-    font-size: 10.5px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--fg-faint);
-  }
-  :global(.lgtm-settings > header .tag),
-  :global(.lgtm-tests > header .tag) {
-    font-family: var(--mono);
-    color: var(--mark);
-    text-transform: none;
-    letter-spacing: 0;
-  }
-  :global(.lgtm-settings > header .count),
-  :global(.lgtm-tests > header .count) {
-    margin-left: auto;
-    font-family: var(--mono);
-  }
-  :global(.lgtm-settings > footer) {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 7px 12px;
-    border-top: 1px solid var(--line-soft);
-    background: var(--bg-inset);
-    font-size: 11px;
-    color: var(--fg-dim);
-  }
-  :global(.lgtm-settings > footer .lbl) {
-    color: var(--fg-faint);
-  }
-  :global(.lgtm-settings > footer .path) {
-    font-family: var(--mono);
-  }
-  :global(.lgtm-settings > footer .path b) {
-    color: var(--fg);
-  }
-  :global(.lgtm-settings > footer .wins) {
-    margin-left: auto;
-    color: var(--fg-faint);
-  }
-
-  :global(.lgtm-settings .grp) {
-    border-bottom: 1px solid var(--line-soft);
-  }
-  :global(.lgtm-settings .grp:last-child) {
-    border-bottom: 0;
-  }
-  :global(.lgtm-settings .grp > .head) {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 8px 12px 6px;
-    background: var(--bg-raised);
-    cursor: pointer;
-  }
-  :global(.lgtm-settings .grp > .head .app) {
-    font-family: var(--mono);
-    font-size: 12.5px;
-    color: var(--accent);
-    font-weight: 600;
-  }
-  :global(.lgtm-settings .grp > .head .target) {
-    font-family: var(--mono);
-    font-size: 12px;
-    color: var(--fg);
-  }
-  :global(.lgtm-settings .grp > .head .sep) {
-    color: var(--fg-faint);
-  }
-  :global(.lgtm-settings .grp > .head .envn) {
-    font-family: var(--mono);
-    font-size: 10.5px;
-    color: var(--priv);
-  }
-  :global(.lgtm-settings .grp > .head .n) {
-    margin-left: auto;
-    font-family: var(--mono);
-    font-size: 10.5px;
-    color: var(--fg-faint);
-  }
-
-  :global(.lgtm-settings .kv) {
-    display: grid;
-    grid-template-columns: minmax(140px, 34%) 1fr;
-    gap: 10px;
-    padding: 4px 12px 4px 22px;
-    align-items: baseline;
-    cursor: pointer;
-    border-left: 2px solid transparent;
-  }
-  :global(.lgtm-settings .kv:hover) {
-    background: var(--bg-inset);
-    border-left-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  }
-  :global(.lgtm-settings .kv .k) {
-    font-family: var(--mono);
-    font-size: 12px;
-    color: var(--fg-dim);
-  }
-  :global(.lgtm-settings .kv .v) {
-    font-family: var(--mono);
-    font-size: 12px;
-    color: var(--fg);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  /* The finding: deploy-time values stand out from baked-in ones. */
-  :global(.lgtm-settings .kv.fromenv .v) {
-    color: var(--priv);
-  }
-  :global(.lgtm-settings .kv .from) {
-    font-size: 9px;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--priv);
-    margin-right: 5px;
-  }
-  :global(.lgtm-settings .kv.secret .v) {
-    color: var(--fg-faint);
-    font-style: italic;
-  }
-
-  /* ---- the lgtm:tests block ---- */
-  :global(.lgtm-tests) {
-    border: 1px solid var(--doc-line);
-    border-radius: 8px;
-    background: var(--code-bg);
-    box-shadow: var(--shadow);
-    overflow: hidden;
-    margin: 0 0 22px;
-  }
-
-  /* setup is infrastructure, not a test — violet, like every other meta thing */
-  :global(.lgtm-tests .modsetup) {
-    border-bottom: 1px solid var(--line);
-    background: var(--bg-inset);
-    padding-bottom: 4px;
-  }
-  :global(.lgtm-tests .scopelbl) {
-    padding: 7px 12px 4px;
-    font-size: 9.5px;
-    letter-spacing: 0.09em;
-    text-transform: uppercase;
-    color: var(--fg-faint);
-  }
-  :global(.lgtm-tests .su) {
-    display: flex;
-    align-items: baseline;
-    gap: 7px;
-    padding: 3px 12px;
-    cursor: pointer;
-    border-left: 2px solid transparent;
-  }
-  :global(.lgtm-tests .su.desc) {
-    padding-left: 24px;
-  }
-  :global(.lgtm-tests .su:hover) {
-    background: var(--bg-raised);
-    border-left-color: color-mix(in srgb, var(--mark) 55%, transparent);
-  }
-  :global(.lgtm-tests .su .gear),
-  :global(.lgtm-tests .ctx .gear) {
-    color: var(--mark);
-    font-size: 11px;
-  }
-  :global(.lgtm-tests .su .kind) {
-    font-family: var(--mono);
-    font-size: 11.5px;
-    color: var(--mark);
-  }
-  :global(.lgtm-tests .su .lbl) {
-    font-size: 10px;
-    color: var(--fg-faint);
-  }
-  :global(.lgtm-tests .key) {
-    font-family: var(--mono);
-    font-size: 10.5px;
-    color: var(--fg);
-    background: color-mix(in srgb, var(--mark) 12%, transparent);
-    border-radius: 3px;
-    padding: 0 4px;
-    margin-right: 3px;
-  }
-  :global(.lgtm-tests .named) {
-    font-family: var(--mono);
-    font-size: 10.5px;
-    color: var(--fg-dim);
-  }
-  :global(.lgtm-tests .unknown) {
-    font-size: 10.5px;
-    color: var(--fg-faint);
-    font-style: italic;
-  }
-  :global(.lgtm-tests .su .spacer) {
-    flex: 1;
-  }
-  :global(.lgtm-tests .su .ln),
-  :global(.lgtm-tests .t .ln) {
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--fg-faint);
-    flex: none;
-  }
-
-  /* what a describe's tests actually start with */
-  :global(.lgtm-tests .ctx) {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 4px;
-    flex: none;
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--fg-faint);
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    padding: 1px 7px;
-  }
-
-  :global(.lgtm-tests .desc) {
-    border-bottom: 1px solid var(--line-soft);
-  }
-  :global(.lgtm-tests .desc:last-child) {
-    border-bottom: 0;
-  }
-  :global(.lgtm-tests .desc > .head) {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 9px 12px;
-    cursor: pointer;
-    background: var(--bg-raised);
-  }
-  :global(.lgtm-tests .desc > .head:hover) {
-    background: var(--bg-inset);
-  }
-  :global(.lgtm-tests .desc > .head .name) {
-    font-family: var(--mono);
-    font-size: 12.5px;
-    color: var(--fg);
-  }
-  :global(.lgtm-tests .desc > .head .name.loose) {
-    color: var(--fg-faint);
-  }
-  :global(.lgtm-tests .desc > .head .name .q) {
-    color: var(--fg-faint);
-  }
-  :global(.lgtm-tests .desc > .head .n) {
-    margin-left: auto;
-    font-family: var(--mono);
-    font-size: 10.5px;
-    color: var(--fg-faint);
-  }
-
-  /* One square per test, marked by what its assertions CHECK — not shaded by
-     how many there are. The shade said more about the author's style than the
-     test: one `assert {:ok, %User{email: ^e}} = …` checks four things and drew
-     palest. The three colours are the tokens that already mean these things
-     elsewhere in the app. */
-  :global(.lgtm-tests .strip) {
-    display: flex;
-    gap: 3px;
-    flex: none;
-  }
-  :global(.lgtm-tests .strip i) {
-    width: 11px;
-    height: 11px;
-    border-radius: 2px;
-    display: block;
-    background: var(--pub);
-  }
-  :global(.lgtm-tests .strip i.error) {
-    background: var(--priv);
-  }
-  :global(.lgtm-tests .strip i.message) {
-    background: var(--mark);
-  }
-  /* A block written before the kinds existed carries only a count, so its
-     squares say "an assertion, of some sort" and nothing more. */
-  :global(.lgtm-tests .strip i.unknown) {
-    background: var(--fg-faint);
-    opacity: 0.5;
-  }
-  /* A test that asserts nothing. Hollow, like the file dot that means "your
-     prose has not mentioned this" — a gap you can see rather than a pale fill
-     that reads as merely thin. */
-  :global(.lgtm-tests .strip i.bare) {
-    background: transparent;
-    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--priv) 60%, transparent);
-  }
-  :global(.lgtm-tests .strip i.skipped) {
-    background: var(--fg-faint);
-    opacity: 0.35;
-  }
-
-  /* One bar per assertion on the test's own row. */
-  :global(.lgtm-tests .spine) {
-    display: flex;
-    gap: 2px;
-    flex: none;
-    align-items: center;
-  }
-  :global(.lgtm-tests .spine i) {
-    width: 3px;
-    height: 12px;
-    border-radius: 1.5px;
-    display: block;
-    background: var(--pub);
-  }
-  :global(.lgtm-tests .spine i.error) {
-    background: var(--priv);
-  }
-  :global(.lgtm-tests .spine i.message) {
-    background: var(--mark);
-  }
-  :global(.lgtm-tests .spine i.unknown) {
-    background: var(--fg-faint);
-    opacity: 0.5;
-  }
-  :global(.lgtm-tests .spine.none)::after {
-    content: "no assertions";
-    font-family: var(--sans);
-    font-size: 9px;
-    color: var(--fg-faint);
-    border: 1px dashed var(--doc-line);
-    padding: 0 4px;
-    border-radius: 3px;
-  }
-
-  :global(.lgtm-tests .tests) {
-    padding: 2px 0 6px;
-  }
-  :global(.lgtm-tests .t) {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 4px 12px 4px 24px;
-    cursor: pointer;
-    border-left: 2px solid transparent;
-  }
-  :global(.lgtm-tests .t:hover) {
-    background: var(--bg-inset);
-    border-left-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  }
-  :global(.lgtm-tests .t .dot) {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--pub);
-    flex: none;
-    align-self: center;
-  }
-  :global(.lgtm-tests .t.skipped .dot) {
-    background: var(--fg-faint);
-  }
-  :global(.lgtm-tests .t .name) {
-    font-size: 12px;
-    color: var(--fg-dim);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  :global(.lgtm-tests .t .badge) {
-    font-size: 9px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--priv);
-    border: 1px solid color-mix(in srgb, var(--priv) 40%, transparent);
-    border-radius: 999px;
-    padding: 0 5px;
-    white-space: nowrap;
-    flex: none;
-  }
-  :global(.lgtm-tests .t .spacer) {
-    flex: 1;
-  }
-  :global(.lgtm-tests .t .as) {
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--fg-faint);
-    flex: none;
-  }
-
-  /* A selected test / describe / setup / setting, marked the same way a
-     selected function row is. */
-  :global(.lgtm-tests [data-sig].active),
-  :global(.lgtm-settings [data-sig].active) {
-    background: var(--sel);
-    border-left-color: var(--accent);
-  }
-  :global(.lgtm-tests .t.active .name),
-  :global(.lgtm-tests .desc > .head.active .name),
-  :global(.lgtm-settings .kv.active .k) {
-    color: var(--accent);
-    font-weight: 600;
-  }
-
   /* ---- arrival: the invitation ----
      A doc you have not written in has an empty Explain section, and that
      emptiness is the whole nudge of the tool — so the ring expands from the
@@ -3135,29 +2306,6 @@
     100% {
       opacity: 0;
       transform: scale(1.03);
-    }
-  }
-
-  /* ---- arrival: the directory ----
-     Forty names appearing at once reads as a wall; cascading reads as arriving,
-     and the eye follows the first column down — which is the order the block
-     wants to be read in anyway.
-
-     The stagger is CAPPED. A 200-function module would otherwise cascade for
-     four seconds, and waiting on an animation to look a name up is worse than
-     no animation at all. Both columns share the index so they arrive together. */
-  :global(.doc.arriving .lgtm-surface .row) {
-    animation: rowin var(--fast) var(--ease-out) both;
-    animation-delay: calc(min(var(--i, 0), 12) * 16ms);
-  }
-  @keyframes rowin {
-    from {
-      opacity: 0;
-      transform: translateY(3px);
-    }
-    to {
-      opacity: 1;
-      transform: none;
     }
   }
 
@@ -3236,6 +2384,24 @@
     color: var(--priv);
     text-decoration: line-through;
     cursor: not-allowed;
+  }
+  /* Underspecified, not wrong: `Pipeline.run` with two Pipelines in the project.
+     Dashed in the private amber — the colour that already means "look again" —
+     and clickable, because the fix is one choice away. */
+  :global(.doc code.ref.ambiguous) {
+    background: transparent;
+    color: var(--priv);
+    border: 1px dashed color-mix(in srgb, var(--priv) 60%, transparent);
+    cursor: pointer;
+  }
+  :global(.doc code.ref.ambiguous::after) {
+    display: none;
+  }
+  /* A module, not a function in one: the step opens the file and names it. In
+     the gloom's teal, which is the hue of "the shape of the codebase". */
+  :global(.doc code.ref.mod:not(.active)) {
+    color: var(--gloom-deep);
+    background: color-mix(in srgb, var(--gloom-deep) 10%, transparent);
   }
 
   /* Read mode sets the type, not just the colours.

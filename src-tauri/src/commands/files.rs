@@ -1,21 +1,11 @@
 //! Reading, parsing and blaming a file on disk. No writes ever happen here —
 //! lgtm reads code, it does not edit it.
 
-use crate::commands::AppState;
 use crate::db::models::{BlameLine, OpenedFile};
-use crate::db::{docs as docs_db, models::DocSummary};
 use crate::error::{AppError, AppResult};
 use crate::git;
 use crate::parse;
-use sha2::{Digest, Sha256};
 use std::path::Path;
-use tauri::State;
-
-pub fn sha256(text: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(text.as_bytes());
-    format!("{:x}", hasher.finalize())
-}
 
 /// Clean up a pasted path.
 ///
@@ -58,10 +48,12 @@ fn filename_of(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
-/// Read a file, parse it if we know the language, and report any docs already
-/// written about this path. One round trip — the UI renders from one payload.
+/// Read a file as it is on disk right now, and parse it if we know the language.
+///
+/// Always live: a gloom holds no copy of the code, so this is the only version
+/// there is. One round trip — the UI renders from one payload.
 #[tauri::command]
-pub async fn open_file(state: State<'_, AppState>, path: String) -> AppResult<OpenedFile> {
+pub async fn open_file(path: String) -> AppResult<OpenedFile> {
     let path = normalize_path(&path);
     let p = Path::new(&path);
     if !p.is_file() {
@@ -73,17 +65,14 @@ pub async fn open_file(state: State<'_, AppState>, path: String) -> AppResult<Op
         return Err(AppError::NotFound(format!("no file at {path}")));
     }
     let source = std::fs::read_to_string(p)?;
-    let source_sha = sha256(&source);
     let lang = parse::lang_for_path(&path).map(str::to_string);
 
     // A parse failure must not stop you reading the file — you just get no
-    // outline to seed from.
+    // outline to navigate by.
     let outline = match &lang {
         Some(l) => parse::parse(&source, l).ok(),
         None => None,
     };
-
-    let existing: Vec<DocSummary> = docs_db::for_path(&state.pool, &path).await?;
 
     Ok(OpenedFile {
         filename: filename_of(&path),
@@ -91,26 +80,22 @@ pub async fn open_file(state: State<'_, AppState>, path: String) -> AppResult<Op
         has_git: git::repo_root(p).is_some(),
         path,
         source,
-        source_sha,
         lang,
         outline,
-        existing,
     })
 }
 
-
-/// Lazy: only invoked when the Blame button is pressed.
-/// The branch a path is on, right now.
+/// The branch a path is on, right now — the label in the app header.
 ///
-/// A gloom's own branch is recorded once; this is the other half of the
-/// comparison, and it has to be asked for rather than remembered — you check out
-/// another branch in a terminal, and nothing in the app has any reason to notice.
-/// Cheap: one read of `.git/HEAD`.
+/// Asked for rather than remembered: you check out another branch in a
+/// terminal, and nothing in the app has any reason to notice. One read of
+/// `.git/HEAD`. Nothing is pinned to it; it is a fact about where you are.
 #[tauri::command]
 pub fn branch_of(path: String) -> Option<String> {
     crate::git::current_branch(Path::new(&normalize_path(&path)))
 }
 
+/// Lazy: only invoked when the Blame button is pressed.
 #[tauri::command]
 pub async fn blame_file(path: String) -> AppResult<Vec<BlameLine>> {
     git::blame(Path::new(&path))
@@ -119,12 +104,6 @@ pub async fn blame_file(path: String) -> AppResult<Vec<BlameLine>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn sha_is_stable_and_content_sensitive() {
-        assert_eq!(sha256("def x"), sha256("def x"));
-        assert_ne!(sha256("def x"), sha256("def y"));
-    }
 
     #[test]
     fn normalizes_the_ways_a_path_arrives_pasted() {

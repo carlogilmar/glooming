@@ -1,4 +1,3 @@
-pub mod doc_files;
 pub mod docs;
 pub mod models;
 pub mod projects;

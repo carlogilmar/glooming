@@ -8,6 +8,7 @@ use crate::commands::AppState;
 use crate::db::models::{Project, ProjectFile};
 use crate::db::projects as db;
 use crate::error::{AppError, AppResult};
+use crate::index::IndexedModule;
 use ignore::WalkBuilder;
 use std::path::Path;
 use tauri::State;
@@ -49,15 +50,8 @@ pub async fn forget_project(state: State<'_, AppState>, id: i64) -> AppResult<()
     db::forget(&state.pool, id).await
 }
 
-/// Every Elixir file under the project, as absolute path plus the relative one
-/// you actually read and search.
-#[tauri::command]
-pub async fn project_files(path: String) -> AppResult<Vec<ProjectFile>> {
-    let root = Path::new(&path);
-    if !root.is_dir() {
-        return Err(AppError::NotFound(format!("no folder at {path}")));
-    }
-
+/// Every Elixir file under a folder, sorted by relative path.
+fn walk(root: &Path) -> Vec<ProjectFile> {
     let mut out = Vec::new();
     let walk = WalkBuilder::new(root)
         // Honour .gitignore, which is what keeps build output out without a
@@ -88,7 +82,45 @@ pub async fn project_files(path: String) -> AppResult<Vec<ProjectFile>> {
     }
 
     out.sort_by(|a, b| a.rel.cmp(&b.rel));
-    Ok(out)
+    out
+}
+
+/// Every Elixir file under the project, as absolute path plus the relative one
+/// you actually read and search.
+#[tauri::command]
+pub async fn project_files(path: String) -> AppResult<Vec<ProjectFile>> {
+    let root = Path::new(&path);
+    if !root.is_dir() {
+        return Err(AppError::NotFound(format!("no folder at {path}")));
+    }
+    Ok(walk(root))
+}
+
+/// Every module in the project and the file it lives in — see `index.rs`.
+///
+/// What lets a reference name any module in the codebase, and what the sidebar's
+/// namespace tree is drawn from. Rebuilt on every call: derived, never stored.
+#[tauri::command]
+pub async fn project_index(path: String) -> AppResult<Vec<IndexedModule>> {
+    let root = Path::new(&path);
+    if !root.is_dir() {
+        return Err(AppError::NotFound(format!("no folder at {path}")));
+    }
+    Ok(index_of(root))
+}
+
+pub fn index_of(root: &Path) -> Vec<IndexedModule> {
+    let mut out = Vec::new();
+    for f in walk(root) {
+        // An unreadable file is one fewer entry, never a failed index.
+        let Ok(src) = std::fs::read_to_string(&f.path) else { continue };
+        let test = crate::index::is_test(&f.rel);
+        for module in crate::index::module_names(&src) {
+            out.push(IndexedModule { module, path: f.path.clone(), rel: f.rel.clone(), test });
+        }
+    }
+    out.sort_by(|a, b| a.module.cmp(&b.module));
+    out
 }
 
 #[cfg(test)]
@@ -131,6 +163,32 @@ mod tests {
         assert!(!rels.contains(&"README.md"), "{rels:?}");
         // Relative paths, since that is what you search on.
         assert!(files.iter().all(|f| !f.rel.starts_with('/')), "{rels:?}");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_index_maps_every_module_to_its_file() {
+        let root = std::env::temp_dir().join(format!("lgtm-index-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for dir in ["lib/weather", "lib/ai", "test", "config"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        std::fs::write(root.join("lib/weather/pipeline.ex"), "defmodule Weather.Pipeline do\nend\n").unwrap();
+        std::fs::write(root.join("lib/ai/pipeline.ex"), "defmodule Ai.Pipeline do\n  defmodule Chunk do\n  end\nend\n").unwrap();
+        std::fs::write(root.join("test/pipeline_test.exs"), "defmodule Weather.PipelineTest do\nend\n").unwrap();
+        std::fs::write(root.join("config/config.exs"), "import Config\n").unwrap();
+
+        let idx = index_of(&root);
+        let names: Vec<&str> = idx.iter().map(|m| m.module.as_str()).collect();
+        assert_eq!(names, ["Ai.Pipeline", "Ai.Pipeline.Chunk", "Weather.Pipeline", "Weather.PipelineTest"]);
+
+        // Two modules called Pipeline, each knowing its own file.
+        let at = |m: &str| idx.iter().find(|e| e.module == m).unwrap();
+        assert_eq!(at("Weather.Pipeline").rel, "lib/weather/pipeline.ex");
+        assert_eq!(at("Ai.Pipeline.Chunk").rel, "lib/ai/pipeline.ex");
+        assert!(at("Weather.PipelineTest").test);
+        assert!(!at("Weather.Pipeline").test);
 
         std::fs::remove_dir_all(&root).ok();
     }
