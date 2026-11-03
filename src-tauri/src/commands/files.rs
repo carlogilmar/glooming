@@ -48,6 +48,33 @@ fn filename_of(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
+/// Larger than this is a generated file or a data dump, not something to read
+/// line by line — and highlighting it would stall the pane.
+const MAX_BYTES: u64 = 2 * 1024 * 1024;
+
+/// A file's text, or a sentence saying why it has none.
+///
+/// The tree lists every file in the project, so a click can land on a PNG, a
+/// `.beam` or a 40MB fixture. `read_to_string` reports those as `stream did not
+/// contain valid UTF-8`, which is true and says nothing to someone who clicked a
+/// logo. A NUL byte in the first 8KB is how git itself decides a file is binary.
+fn read_text(p: &Path) -> AppResult<String> {
+    let name = filename_of(&p.to_string_lossy());
+    let size = std::fs::metadata(p)?.len();
+    if size > MAX_BYTES {
+        return Err(AppError::BadInput(format!(
+            "{name} is {:.1} MB — too large to read here",
+            size as f64 / 1_048_576.0
+        )));
+    }
+    let bytes = std::fs::read(p)?;
+    let binary = || AppError::BadInput(format!("{name} is a binary file — there is no text to show"));
+    if bytes.iter().take(8192).any(|b| *b == 0) {
+        return Err(binary());
+    }
+    String::from_utf8(bytes).map_err(|_| binary())
+}
+
 /// Read a file as it is on disk right now, and parse it if we know the language.
 ///
 /// Always live: a gloom holds no copy of the code, so this is the only version
@@ -64,7 +91,7 @@ pub async fn open_file(path: String) -> AppResult<OpenedFile> {
         }
         return Err(AppError::NotFound(format!("no file at {path}")));
     }
-    let source = std::fs::read_to_string(p)?;
+    let source = read_text(p)?;
     let lang = parse::lang_for_path(&path).map(str::to_string);
 
     // A parse failure must not stop you reading the file — you just get no
@@ -127,6 +154,21 @@ mod tests {
         assert_eq!(normalize_path("~/code/a.ex"), expected);
         // A tilde anywhere else is a legitimate filename character.
         assert_eq!(normalize_path("/a/~b.ex"), "/a/~b.ex");
+    }
+
+    #[test]
+    fn a_binary_file_says_so_rather_than_failing_on_utf8() {
+        let dir = std::env::temp_dir().join(format!("lgtm-bin-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = dir.join("logo.png");
+        std::fs::write(&png, [0x89, b'P', b'N', b'G', 0, 0, 0, 13]).unwrap();
+        let err = read_text(&png).expect_err("refuses").to_string();
+        assert!(err.contains("logo.png is a binary file"), "got: {err}");
+
+        let md = dir.join("README.md");
+        std::fs::write(&md, "# hi\n").unwrap();
+        assert_eq!(read_text(&md).unwrap(), "# hi\n");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

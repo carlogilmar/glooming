@@ -244,6 +244,7 @@ src/
       ExploreSections.svelte   the live views: surface table + the boundary, per file kind
       Sky.svelte               the masthead's weather: bloom, cosmos or aurora, rolled per visit
       FilePalette.svelte       ⌘T — find a file in the project, or paste a path
+      FileIcon.svelte          the tree's icons: folder, the Elixir drop, a page per kind
       FnPalette.svelte         ⌘P — jump to a function by name
       RefMenu.svelte           / — insert a reference to any loaded function
       HelpModal.svelte         ? — what everything does
@@ -255,6 +256,7 @@ src/
       fontSize.svelte.ts       a remembered, clamped font size; one per pane
     explore.ts                 what the views show: surface rows, reach lines
     fileset.ts                 the index + loaded files: which module means what, and how it is shown
+    filetree.ts                the sidebar's file tree: rows, folding, mentioned files
     markdownit.ts              markdown-it + references (no blocks)
     refs.ts                    references in prose, resolved by name across the project
     slash.ts                   when the `/` menu is still a live query
@@ -275,7 +277,7 @@ src-tauri/
     db/projects.rs             remembered folders and their gloom counts
     commands/files.rs          open a file (always live), branch, blame
     commands/docs.rs           gloom CRUD, export
-    commands/projects.rs       open a folder, walk it, index it
+    commands/projects.rs       open a folder, walk every file in it, index its modules
   migrations/0001…0003         history
   migrations/0004_glooms_in_a_project.sql   drops snapshots and file sets; glooms belong to a project
   tests/pipeline.rs            end-to-end parse checks, pinned to the mockup
@@ -332,13 +334,34 @@ field focused, and starts as the invitation (`INVITATION` in `commands/docs.rs`)
 Opening a gloom lands the code pane on the first module its prose names; closing
 one (`close ×` in the band) returns to exploring and keeps your place.
 
-**The sidebar** (`⌘\`, hidden in read mode) is the project's glooms above its
-module tree. Test modules are left out of the tree and counted at the foot — a
-suite is something you open with `⌘T`, not a part of the app you navigate by.
-The path to the module on screen is always unfolded. A teal dot marks a module
-the open gloom names — the old hollow-dot signal inverted, because the set is now
-derived from what you wrote. It fills with one ring the moment your prose first
-names it.
+**The sidebar** (`⌘\`, hidden in read mode) is the project's glooms above a
+**file tree, the way an editor shows one** — every file, not only Elixir. It was a
+namespace tree of modules first, and that was a partial map that looked complete:
+reading a codebase means `mix.exs`, the config, the migrations and the README as
+much as the modules. Folders first, then files, case-insensitive (`filetree.ts`,
+pure and probed); the path to the file on screen is always unfolded.
+
+`project_files` walks with `.gitignore` honoured even outside a git checkout
+(`require_git(false)`), dotfiles shown (`.formatter.exs` is part of a project) and
+`SKIP` on top for build output, dependencies and OS litter. `⌘T` reads the same
+list. The module index still scans only `.ex`/`.exs`.
+
+**A file with no parser opens as plain text, read-only,** and the views say *File
+not supported* rather than drawing an empty panel. `open_file` refuses a binary
+file (a NUL in the first 8KB — git's own test) or anything over 2MB with a sentence
+naming the file, because `stream did not contain valid UTF-8` says nothing to
+someone who clicked a logo.
+
+Icons (`FileIcon.svelte`) are deliberately few: a folder, the Elixir drop (solid
+for a module, hollow for a script, with a check for a test), and a page carrying a
+mark for config, docs, data, web, images and locks. What you scan a tree for is
+*Elixir or not, test or not, config, docs or data* — an icon theme's hundred kinds
+at 14px is colour noise. Hues come from existing tokens, never new ones.
+
+A teal dot marks a file the open gloom names, and a hollow one a folded folder
+with such a file inside — the old hollow-dot signal inverted, because the set is
+now derived from what you wrote. A file's dot fills with one ring the moment your
+prose first names it.
 
 **The trail** is every module you opened, as back/forward (`⌘[` / `⌘]`, and ← →
 in the code pane header). Read mode's file crossings do not add to it — scrolling

@@ -263,7 +263,18 @@
     <span class="nums">{nums}</span>
   </div>
 
-  {#if kind === "config"}
+  {#if file && !file.lang}
+    <!-- Every file is in the tree now, and most of a project is not Elixir. It is
+         shown as text and read like any other; there is just nothing structural
+         for these views to draw, and saying so beats an empty panel. -->
+    <div class="unsupported">
+      <b>File not supported</b>
+      <span>
+        {file.filename} is shown as plain text, read-only. Surface, reach and the other
+        views are for Elixir — the code is on the left, and the note is still yours.
+      </span>
+    </div>
+  {:else if kind === "config"}
     <p class="sec">Settings</p>
     {#each settings as g (g.app + (g.target ?? "") + g.line)}
       <div class="grp">
@@ -597,6 +608,25 @@
   }
   .sec:not(:first-of-type) {
     margin-top: 26px;
+  }
+  .unsupported {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-width: 760px;
+    padding: 10px 12px;
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--fg-dim);
+    border: 1px dashed var(--doc-line);
+    border-radius: 7px;
+  }
+  .unsupported b {
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
   }
   .quiet {
     max-width: 760px;

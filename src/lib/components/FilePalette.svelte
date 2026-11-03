@@ -155,7 +155,7 @@
       {:else if failed}
         <p class="empty bad">{failed}</p>
       {:else if !files.length}
-        <p class="empty">No Elixir files under {project.name}.</p>
+        <p class="empty">No files under {project.name}.</p>
       {:else if !hits.length}
         <p class="empty">
           Nothing matches “{query}”.

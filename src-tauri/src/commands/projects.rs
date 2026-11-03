@@ -13,12 +13,18 @@ use ignore::WalkBuilder;
 use std::path::Path;
 use tauri::State;
 
-/// Directories that are never worth walking, on top of whatever `.gitignore`
-/// already excludes — `_build` and `deps` in particular are usually ignored
-/// anyway, but a fresh checkout may not have them ignored yet.
-const SKIP: [&str; 6] = ["_build", "deps", "node_modules", ".git", ".elixir_ls", "cover"];
+/// Never worth showing, on top of whatever `.gitignore` already excludes —
+/// `_build` and `deps` in particular are usually ignored anyway, but a fresh
+/// checkout may not have them ignored yet. Editor and OS litter too: it is in
+/// the folder, but nobody browsing a codebase means it.
+const SKIP: [&str; 11] = [
+    "_build", "deps", "node_modules", ".git", ".elixir_ls", ".lexical", "cover",
+    ".DS_Store", ".hex", ".mix", "erl_crash.dump",
+];
 
-fn is_readable(path: &Path) -> bool {
+/// The files the module index scans: the ones with Elixir in them. Every other
+/// file is listed and readable as text; only these can define a module.
+fn is_elixir(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|e| e.to_str()),
         Some("ex") | Some("exs")
@@ -50,13 +56,25 @@ pub async fn forget_project(state: State<'_, AppState>, id: i64) -> AppResult<()
     db::forget(&state.pool, id).await
 }
 
-/// Every Elixir file under a folder, sorted by relative path.
+/// Every file under a folder, as an editor's file tree would show it, sorted by
+/// relative path.
+///
+/// **Every file, not only Elixir.** Reading a codebase means `mix.exs`, the
+/// config, the migrations, the assets and the README as much as the modules; a
+/// tree that shows only what lgtm can parse is a partial map that looks complete.
+/// Anything without a parser opens as plain text, read-only.
+///
+/// Dotfiles are shown — `.formatter.exs` and `.gitignore` are part of a project —
+/// while `.gitignore` itself, and `SKIP`, keep out what is not.
 fn walk(root: &Path) -> Vec<ProjectFile> {
     let mut out = Vec::new();
     let walk = WalkBuilder::new(root)
         // Honour .gitignore, which is what keeps build output out without a
-        // hand-maintained list.
+        // hand-maintained list — and do so even in a folder that is not a git
+        // checkout, where its .gitignore still says what the author meant.
         .standard_filters(true)
+        .hidden(false)
+        .require_git(false)
         .filter_entry(|e| {
             !e.file_name()
                 .to_str()
@@ -67,7 +85,7 @@ fn walk(root: &Path) -> Vec<ProjectFile> {
 
     for entry in walk.flatten() {
         let p = entry.path();
-        if !p.is_file() || !is_readable(p) {
+        if !p.is_file() {
             continue;
         }
         let rel = p.strip_prefix(root).unwrap_or(p).to_string_lossy().to_string();
@@ -85,8 +103,8 @@ fn walk(root: &Path) -> Vec<ProjectFile> {
     out
 }
 
-/// Every Elixir file under the project, as absolute path plus the relative one
-/// you actually read and search.
+/// Every file under the project, as absolute path plus the relative one you
+/// actually read and search — the sidebar's tree and `⌘T` both read this.
 #[tauri::command]
 pub async fn project_files(path: String) -> AppResult<Vec<ProjectFile>> {
     let root = Path::new(&path);
@@ -111,7 +129,7 @@ pub async fn project_index(path: String) -> AppResult<Vec<IndexedModule>> {
 
 pub fn index_of(root: &Path) -> Vec<IndexedModule> {
     let mut out = Vec::new();
-    for f in walk(root) {
+    for f in walk(root).into_iter().filter(|f| is_elixir(Path::new(&f.path))) {
         // An unreadable file is one fewer entry, never a failed index.
         let Ok(src) = std::fs::read_to_string(&f.path) else { continue };
         let test = crate::index::is_test(&f.rel);
@@ -128,14 +146,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_elixir_files_are_offered() {
-        assert!(is_readable(Path::new("/a/accounts.ex")));
-        assert!(is_readable(Path::new("/a/seeds.exs")));
-        // lgtm can open anything, but the picker lists what it actually reads.
-        assert!(!is_readable(Path::new("/a/README.md")));
-        assert!(!is_readable(Path::new("/a/mix.lock")));
-        assert!(!is_readable(Path::new("/a/logo.png")));
-        assert!(!is_readable(Path::new("/a/Makefile")));
+    fn only_elixir_files_are_indexed() {
+        assert!(is_elixir(Path::new("/a/accounts.ex")));
+        assert!(is_elixir(Path::new("/a/seeds.exs")));
+        assert!(!is_elixir(Path::new("/a/README.md")));
+        assert!(!is_elixir(Path::new("/a/mix.lock")));
+        assert!(!is_elixir(Path::new("/a/Makefile")));
     }
 
     #[tokio::test]
@@ -150,6 +166,11 @@ mod tests {
         std::fs::write(root.join("_build/dev/generated.ex"), "x").unwrap();
         std::fs::write(root.join("deps/ecto/ecto.ex"), "x").unwrap();
         std::fs::write(root.join("README.md"), "hi").unwrap();
+        std::fs::write(root.join(".formatter.exs"), "[]").unwrap();
+        std::fs::write(root.join(".DS_Store"), "x").unwrap();
+        std::fs::write(root.join(".gitignore"), "/secret/\n").unwrap();
+        std::fs::create_dir_all(root.join("secret")).unwrap();
+        std::fs::write(root.join("secret/key.txt"), "x").unwrap();
 
         let files = project_files(root.to_string_lossy().to_string()).await.unwrap();
         let rels: Vec<&str> = files.iter().map(|f| f.rel.as_str()).collect();
@@ -159,8 +180,13 @@ mod tests {
         // Build output and dependencies are somebody else's code.
         assert!(!rels.iter().any(|r| r.starts_with("_build")), "{rels:?}");
         assert!(!rels.iter().any(|r| r.starts_with("deps")), "{rels:?}");
-        // Non-Elixir files are not offered.
-        assert!(!rels.contains(&"README.md"), "{rels:?}");
+        // Every file is in the tree, not only what lgtm can parse.
+        assert!(rels.contains(&"README.md"), "{rels:?}");
+        // Dotfiles are part of a project; OS litter is not.
+        assert!(rels.contains(&".formatter.exs"), "{rels:?}");
+        assert!(!rels.contains(&".DS_Store"), "{rels:?}");
+        // .gitignore is honoured even outside a git checkout.
+        assert!(!rels.iter().any(|r| r.starts_with("secret")), "{rels:?}");
         // Relative paths, since that is what you search on.
         assert!(files.iter().all(|f| !f.rel.starts_with('/')), "{rels:?}");
 

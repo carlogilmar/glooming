@@ -12,7 +12,9 @@
   import FilePalette from "$lib/components/FilePalette.svelte";
   import ExploreSections from "$lib/components/ExploreSections.svelte";
   import Sky from "$lib/components/Sky.svelte";
+  import FileIcon, { iconFor } from "$lib/components/FileIcon.svelte";
   import { byPath, knownModules, moduleLabels, moduleOf, namedPaths } from "$lib/fileset";
+  import { fileTree, mentionedIn } from "$lib/filetree";
   import { displaySig, locate } from "$lib/select";
   import { theme } from "$lib/stores/theme.svelte";
   import { focus } from "$lib/stores/focus.svelte";
@@ -37,6 +39,8 @@
   let project = $state<ipc.Project | null>(null);
   let projects = $state<ipc.Project[]>([]);
   let index = $state<IndexedModule[]>([]);
+  /** Every file in the project, for the sidebar's tree — any kind, not just Elixir. */
+  let tree = $state<ipc.ProjectFile[]>([]);
   let files = $state<ReadingFile[]>([]);
   let currentPath = $state<string | null>(null);
   let doc = $state<Doc | null>(null);
@@ -98,61 +102,23 @@
   }
 
   /**
-   * The codebase as a namespace tree, for browsing rather than searching.
+   * The project as a file tree, the way an editor shows it.
    *
-   * Onboarding is the case this exists for: ⌘T assumes you know what to type,
-   * and someone new to a codebase does not know what exists. Test modules are
-   * left out — a suite is something you open from ⌘T, not a part of the app you
-   * navigate by — and counted at the foot instead.
+   * Every file, not only Elixir: reading a codebase means `mix.exs`, the config,
+   * the migrations and the README as much as the modules, and a tree of only what
+   * lgtm can parse is a partial map that looks complete. Anything without a
+   * parser opens as plain text, read-only, and the views say so. Folders first,
+   * then files, each sorted case-insensitively — what every editor does, so
+   * nobody has to learn it.
    */
   let treeOpen = $state<Set<string>>(new Set());
 
-  interface TreeNode {
-    key: string;
-    seg: string;
-    depth: number;
-    module: IndexedModule | null;
-    kids: number;
-  }
-
-  const appModules = $derived(index.filter((m) => !m.test));
-  const testCount = $derived(index.length - appModules.length);
-
-  /** The module on screen, so the tree can open the way to it. */
+  /** The file on screen, relative, so the tree can open the way to it. */
+  const currentRel = $derived(tree.find((f) => f.path === currentPath)?.rel ?? null);
+  /** The module on screen — named in the views' header. */
   const currentModule = $derived(moduleOf(file)?.name ?? null);
 
-  const treeRows = $derived.by(() => {
-    // Children by parent key, from every prefix of every module name.
-    const kids = new Map<string, Set<string>>();
-    const byName = new Map(appModules.map((m) => [m.module, m]));
-    for (const m of appModules) {
-      const parts = m.module.split(".");
-      for (let i = 0; i < parts.length; i++) {
-        const parent = parts.slice(0, i).join(".");
-        const key = parts.slice(0, i + 1).join(".");
-        if (!kids.has(parent)) kids.set(parent, new Set());
-        kids.get(parent)!.add(key);
-      }
-    }
-    // The way to the module on screen is always open — arriving in a module from
-    // a reference or the reach diagram should show you where it lives.
-    const open = new Set(treeOpen);
-    if (currentModule) {
-      const parts = currentModule.split(".");
-      for (let i = 1; i < parts.length; i++) open.add(parts.slice(0, i).join("."));
-    }
-    const out: TreeNode[] = [];
-    const walk = (parent: string, depth: number) => {
-      const here = [...(kids.get(parent) ?? [])].sort((a, b) => a.localeCompare(b));
-      for (const key of here) {
-        const n = kids.get(key)?.size ?? 0;
-        out.push({ key, seg: key.split(".").pop() ?? key, depth, module: byName.get(key) ?? null, kids: n });
-        if (n && open.has(key)) walk(key, depth + 1);
-      }
-    };
-    walk("", 0);
-    return { rows: out, open };
-  });
+  const treeRows = $derived(fileTree(tree, treeOpen, currentRel));
 
   function toggleNode(key: string) {
     const next = new Set(treeRows.open);
@@ -161,12 +127,12 @@
     treeOpen = next;
   }
 
-  /** Modules the open gloom's prose names — what the file set used to be. */
-  const mentioned = $derived.by(() => {
-    const out = new Set<string>();
-    for (const m of index) if (referenced.has(m.path)) out.add(m.module);
-    return out;
-  });
+  /**
+   * What the open gloom's prose names: the files themselves, and the folders
+   * they sit in — so a reference is findable in a collapsed tree too. What the
+   * file set used to be, now derived from what you wrote.
+   */
+  const mentioned = $derived(mentionedIn(tree, referenced));
 
   // ---- the gloom's name and tags -------------------------------------------
 
@@ -411,7 +377,7 @@
     if (!project) return;
     const p = project;
     try {
-      index = await ipc.projectIndex(p.path);
+      [index, tree] = await Promise.all([ipc.projectIndex(p.path), ipc.projectFiles(p.path)]);
       liveBranch = await ipc.branchOf(p.path);
     } catch {
       /* a project folder that vanished is reported when you next act in it */
@@ -462,7 +428,7 @@
       const p = await ipc.openProject(path);
       await leaveProject();
       project = p;
-      index = await ipc.projectIndex(p.path);
+      [index, tree] = await Promise.all([ipc.projectIndex(p.path), ipc.projectFiles(p.path)]);
       liveBranch = await ipc.branchOf(p.path).catch(() => null);
       await loadGlooms();
     } catch (e) {
@@ -490,6 +456,8 @@
     files = [];
     currentPath = null;
     index = [];
+    tree = [];
+    treeOpen = new Set();
     glooms = [];
     back = [];
     fwd = [];
@@ -1004,39 +972,37 @@
             {/each}
           </div>
 
-          <div class="slabel">Modules <span class="spacer"></span><span class="scount">{appModules.length}</span></div>
+          <div class="slabel">Files <span class="spacer"></span><span class="scount">{tree.length}</span></div>
           <div class="tree">
             {#each treeRows.rows as n (n.key)}
-              <div class="tnode" class:on={currentModule === n.key} class:ns={!n.module} style:padding-left="{4 + n.depth * 12}px">
-                {#if n.kids}
-                  <button class="chev" onclick={() => toggleNode(n.key)} aria-label="Fold">
-                    {treeRows.open.has(n.key) ? "▾" : "▸"}
-                  </button>
-                {:else}
-                  <span class="chev"></span>
-                {/if}
-                <button
-                  class="nm"
-                  title={n.module ? n.module.rel : n.key}
-                  onclick={() => (n.module ? openPath(n.module.path) : toggleNode(n.key))}
-                >
-                  {n.seg}
-                </button>
-                {#if mentioned.has(n.key)}
+              {@const isOpen = !n.file && treeRows.open.has(n.key)}
+              <!-- One button per row: a folder folds, a file opens. The chevron is
+                   part of the folder's button, so the whole row is the target. -->
+              <button
+                class="tnode"
+                class:dir={!n.file}
+                class:on={!!n.file && n.file.path === currentPath}
+                style:padding-left="{4 + n.depth * 12}px"
+                title={n.key}
+                onclick={() => (n.file ? openPath(n.file.path) : toggleNode(n.key))}
+              >
+                <span class="chev">{n.file ? "" : isOpen ? "▾" : "▸"}</span>
+                <FileIcon kind={n.file ? iconFor(n.name) : "folder"} open={isOpen} />
+                <span class="nm">{n.name}</span>
+                {#if n.file ? mentioned.files.has(n.key) : !isOpen && mentioned.dirs.has(n.key)}
                   <i
                     class="said"
-                    class:earned={!!n.module && earnedPath === n.module.path}
-                    title="Your note mentions this module"
+                    class:inside={!n.file}
+                    class:earned={!!n.file && earnedPath === n.file.path}
+                    title={n.file ? "Your note mentions this file" : "Your note mentions something in here"}
                   ></i>
                 {/if}
-              </div>
+              </button>
             {:else}
-              <p class="sempty">No Elixir modules under {project.name}.</p>
+              <p class="sempty">Nothing to show under {project.name}.</p>
             {/each}
           </div>
-          <div class="sfoot">
-            {testCount ? `${testCount} test ${testCount === 1 ? "module" : "modules"} — ⌘T to open one` : "Live from disk · nothing is copied"}
-          </div>
+          <div class="sfoot">Live from disk · nothing is copied out of it</div>
         </aside>
       {/if}
 
@@ -1118,7 +1084,7 @@
         {:else if outline}
           tree-sitter-{file.lang} · no module, config or test suite here
         {:else}
-          no outline for this file type
+          {file.filename} · plain text, read-only — not an Elixir file
         {/if}
       </span>
       {#if outline?.kind === "module" && moduleCount > 1}
@@ -2184,10 +2150,18 @@
   .tnode {
     display: flex;
     align-items: center;
+    gap: 5px;
+    width: 100%;
     height: 23px;
+    font: inherit;
+    text-align: left;
+    color: var(--fg);
+    background: transparent;
+    border: 0;
     border-radius: 5px;
     padding-right: 6px;
     white-space: nowrap;
+    cursor: pointer;
   }
   .tnode:hover {
     background: var(--bg-inset);
@@ -2197,30 +2171,16 @@
   }
   .tnode .chev {
     flex: none;
-    width: 14px;
-    font: inherit;
+    width: 10px;
+    margin-right: -2px;
     font-size: 9px;
     text-align: center;
     color: var(--fg-faint);
-    background: transparent;
-    border: 0;
-    padding: 0;
-    cursor: pointer;
   }
   .tnode .nm {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-    font: inherit;
-    text-align: left;
-    color: var(--fg);
-    background: transparent;
-    border: 0;
-    padding: 0 2px;
-    cursor: pointer;
-  }
-  .tnode.ns .nm {
-    color: var(--fg-dim);
   }
   .tnode.on .nm {
     color: var(--accent);
@@ -2237,6 +2197,12 @@
     margin-left: 6px;
     border-radius: 50%;
     background: var(--gloom-deep);
+  }
+  /* On a folded folder: something in here is mentioned. Hollow, because the
+     folder itself is not what the prose names. */
+  .said.inside {
+    background: transparent;
+    box-shadow: inset 0 0 0 1.5px var(--gloom-deep);
   }
   .said.earned {
     animation: fill var(--ring) var(--ease-out) both;
