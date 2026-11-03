@@ -10,7 +10,7 @@ walkable with `⌘[` / `⌘]`.
 Writing is optional. When there is something worth keeping you start a
 **gloom** — a note in the project's knowledge base, in your own words, whose
 references can name any function in the codebase. Clicking a reference focuses
-it in the code, and with `▷ LGTM` on, **scrolling the note walks the code in the
+it in the code, and with `▷ Gloom` on, **scrolling the note walks the code in the
 order your prose takes it**, across modules. A project collects glooms, one per
 thing you worked out.
 
@@ -210,7 +210,7 @@ rm -rf src-tauri/target      # then build as usual; ~2 min from cold
 ## Repo layout
 
 ```
-mockup/workspace.html          THE CONTRACT for the project model: home, exploring, writing, LGTM
+mockup/workspace.html          THE CONTRACT for the project model: home, exploring, writing, glooming
 mockup/index.html              the original single-file contract — parser line numbers are pinned to it
 mockup/deps.html               the reach diagram's visual contract
 mockup/surface.html            the surface's visual contract
@@ -683,7 +683,7 @@ was mocked as its own arrangement and folded in here instead of shipped alone.
 
 **The navigation half is warm, and it took two wrong answers to get there.** A grey
 mix (`--doc-raised` toward `--doc-line`) read as *dirty paper*. A teal wash read as a
-green panel dropped into a warm room, arguing with the gold `▷ LGTM` sits in and with
+green panel dropped into a warm room, arguing with the gold `▷ Gloom` sits in and with
 the pane header above it. Both failed the same way: they made it a different **hue**
 where what it needed was a different **level**.
 
@@ -1463,6 +1463,12 @@ row with a highlight on it, which is how the bug was spotted. `markSteps` now
 restores both marks after every render, and it never showed up on a same-file
 reference, because that is the only case that does not re-render.
 
+**The current chip went the same way, for longer.** The render effect reset
+`activeRef` to null, so a reference into another file lost its colour the moment it
+became current — in a list naming one module per line, every step. It is now
+restored from `activeStop` after each render while reading, and the chip is marked
+there directly, since the selection effect may already have run for that render.
+
 **The highlight follows the reading line; the step follows the references.** Two
 rates, because they answer two questions — *where am I reading* and *what should
 the code be showing*. A step only changes where a reference is, so between two
@@ -1495,17 +1501,18 @@ disagree — puts `.now` on the block and on its row. Dimming then lives on the 
 with `li.steprow .step { opacity: 1 }` beside it, or the two multiply to 0.2 and
 the text nearly vanishes.
 
-### The app is Glooming; the button is LGTM
+### The app is Glooming; to gloom is to read
 
 The window title and the brand in the title strip say **Glooming**, set in
-`--display` — the same wordmark home carries, so the two agree. `lgtm` survives
-where it always meant the most: as the *phrase*, on the button that ends a reading.
+`--display` — the same wordmark home carries, so the two agree.
 
-`▷ Read` is now **`▷ LGTM`**, and the rename is not decoration. That button starts
-the pass where you scroll your own note and watch the code follow it — which is
-exactly the pass at the end of which you either understand the change or find the
-sentence where you stopped understanding it. Naming it for the verdict names the
-thing it is for. The repo, the crate and the bundle id are untouched.
+**The read-mode button is `▷ Gloom`**, and *gloom* is the verb: to explore a
+codebase by walking your own prose through it. It was `▷ LGTM` while a gloom was
+a review of one change, named for the verdict at the end of the pass; once the
+project became the unit there is no change to approve, and the verb that names
+what the pass *does* replaced the one that named what it concluded. `lgtm`
+survives in the repo, the crate, the bundle id and the internals (`reading`,
+`toggleRead`), which were not renamed — churn, not clarity.
 
 ### Reading: the doc drives the code
 
@@ -1543,6 +1550,18 @@ Four rules, each of which replaced something that read worse:
   innermost block, which is where the old innermost-owner rule now lives: a loose
   list's `<li><p>ref</p></li>` still resolves to the `p`, so a three-item list is
   three rows and not six.
+
+  **A stop fires at its own position, not its chip's.** Two references on one
+  line of text cross the trigger in the same frame, so the later one won and the
+  first was never shown — even on entry, where `startAtFirstStop` selected it and
+  the very next scroll event skipped past. `stopPositions` pushes the chips' tops
+  apart to at least `STOP_GAP` (24px, under one line of read-mode prose, so
+  references on successive lines fire where they sit), and the tail grows by the
+  drift that leaves at the end. Entering, clicking and `↓`/`↑` all go through
+  `goToStop`, which **steers** for 700ms: a smooth scroll passes over every stop
+  between start and landing, and letting those fire swapped files on the way.
+  `↓`/`↑` (and `j`/`k`) step exactly one reference — the guarantee scrolling can
+  only approximate — and the code pane's own cursor keys stand down meanwhile.
 
   A click still lands on the chip that was clicked (`stops.indexOf(chip)`) rather
   than the first one carrying that signature, and still scrolls the *block* to the
@@ -1958,6 +1977,17 @@ learn to ignore:
 ```bash
 python3 scripts/effect-audit.py    # exits non-zero on a read-write loop
 ```
+
+**A sole `{@html}` owns its parent's children.** Svelte 5 updates an `{@html}`
+that is an element's only child with `parent.innerHTML = …`, which deletes
+anything else put in that element by hand. Read mode's lead-in and tail spacers
+were inserted into `.doc` that way, so every re-render — and a reference into
+another file re-renders the note — wiped them: the page jumped by the lead's
+height, the scroll clamped, and the reading fell back to the paragraph's first
+reference, so a second reference in a paragraph was never reached. They are
+Svelte-owned siblings of `.doc` now. Measuring them by collapsing to zero had the
+same effect on its own (a shorter document clamps `scrollTop`), so `sizeLead`
+subtracts the lead's height instead.
 
 **`db` is `pub`** solely so `tests/pipeline.rs` can construct `FileHistory`.
 

@@ -699,6 +699,18 @@
 
     if (!project) return;
 
+    // While glooming, the arrows walk the note one reference at a time. The code
+    // pane's own ↑/↓ cursor stands down for it (see `CodePane`): the code is
+    // being driven, and a second thing moving it would argue with the prose.
+    if (readingNow && !meta && !e.altKey && !isTyping(e.target)) {
+      const step = { ArrowDown: 1, j: 1, ArrowUp: -1, k: -1 }[e.key];
+      if (step) {
+        e.preventDefault();
+        docPane?.stepRead(step);
+        return;
+      }
+    }
+
     // ⌘O and ⌘T both search the project: ⌘T is what the status bar advertises,
     // ⌘O is what fingers reach for. The system picker keeps ⇧. Every key is
     // compared LOWERCASED — `⇧O` arrives as "O".
@@ -1185,7 +1197,7 @@
       <span class="spacer"></span>
       <span class="keys">
         <kbd>⌘T</kbd> find · <kbd>⌘[</kbd><kbd>⌘]</kbd> trail · <kbd>⌘\</kbd> sidebar ·
-        <kbd>⌘R</kbd> lgtm · <kbd>⌘E</kbd> edit · <kbd>?</kbd> help
+        <kbd>⌘R</kbd> gloom · <kbd>⌘E</kbd> edit · <kbd>?</kbd> help
       </span>
       {#if doc}
         <span>gloom #{doc.id} → sqlite</span>

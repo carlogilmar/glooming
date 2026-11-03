@@ -593,6 +593,9 @@
 
   function onVimKey(e: KeyboardEvent) {
     if (!keysEnabled || e.metaKey || e.altKey) return;
+    // While glooming these walk the note's references instead (the shell's
+    // handler); moving a cursor in code that the prose is driving would fight it.
+    if (focus.reading && ["j", "k", "ArrowDown", "ArrowUp"].includes(e.key)) return;
     const el = e.target as HTMLElement | null;
     if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
 

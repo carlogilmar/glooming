@@ -325,6 +325,16 @@
   let stops = $state<HTMLElement[]>([]);
   /** Which block each stop lives in — what gets `.now` and the row tint. */
   let stopOwner = new Map<HTMLElement, HTMLElement>();
+  /**
+   * Read mode's spacers. **Siblings of `.doc`, never children.** `{@html}` is
+   * that element's only child, and Svelte updates a sole `{@html}` with
+   * `innerHTML =` — so spacers inserted into it were deleted by every
+   * re-render, and a reference into another file re-renders the note. The page
+   * jumped, the scroll clamped, and the reading fell back to the paragraph's
+   * first reference: the second one in a paragraph could never be reached.
+   */
+  let leadEl = $state<HTMLElement | null>(null);
+  let tailEl = $state<HTMLElement | null>(null);
   let activeStop = $state(-1);
   /**
    * Index of the chip that is current, not its signature.
@@ -782,20 +792,9 @@
    * the page, which is what it always was.
    */
   function sizeLead() {
-    if (!container || !body || !stops.length) return;
-
-    let lead = container.querySelector<HTMLElement>(".reading-lead");
-    let tail = container.querySelector<HTMLElement>(".reading-tail");
-    if (!lead) {
-      lead = document.createElement("div");
-      lead.className = "reading-lead";
-      container.insertBefore(lead, container.firstChild);
-    }
-    if (!tail) {
-      tail = document.createElement("div");
-      tail.className = "reading-tail";
-      container.appendChild(tail);
-    }
+    const lead = leadEl;
+    const tail = tailEl;
+    if (!container || !body || !lead || !tail || !stops.length) return;
 
     if (!reading) {
       lead.style.height = "0px";
@@ -806,11 +805,17 @@
     const H = body.clientHeight;
     const paneTop = body.getBoundingClientRect().top;
 
-    // Offset of the first step within the scrollable content — measured with
-    // the lead collapsed, and independent of where the reader currently is.
-    lead.style.height = "0px";
+    // Offset of the first step within the scrollable content, as if the lead
+    // were not there — and independent of where the reader currently is.
+    //
+    // **Measured by subtracting the lead, never by collapsing it.** This used to
+    // set the lead to 0, read, and set it back. Collapsing it (and the tail) for
+    // that one read shrinks the content, the browser clamps `scrollTop` to the
+    // shorter document, and restoring the heights does not restore the scroll —
+    // on a note shorter than a pane, the clamp is all the way to 0. Every
+    // re-measure threw the reader back towards the first reference.
     const firstOffset =
-      stops[0].getBoundingClientRect().top - paneTop + body.scrollTop;
+      stops[0].getBoundingClientRect().top - paneTop + body.scrollTop - lead.offsetHeight;
     lead.style.height = Math.max(0, H * TRIGGER + 16 - firstOffset) + "px";
 
     // The last stop has to be able to reach the trigger too. At the bottom of the
@@ -823,13 +828,15 @@
     // reference is the first thing in the last block; when a final paragraph
     // names two functions, the second sits near the bottom of it, so the block's
     // height wildly overstates what is below the chip and the tail comes out
-    // short by the difference. The symptom is precise and easy to misread: every
-    // reference works except the last one, and adding any paragraph after it
-    // fixes it.
-    tail.style.height = "0px";
+    // short by the difference. The tail sits outside `container`, so its
+    // bottom is the content's end without it.
     const lastTop = stops[stops.length - 1].getBoundingClientRect().top;
     const below = container.getBoundingClientRect().bottom - lastTop;
-    tail.style.height = Math.max(0, H * (1 - TRIGGER) - below) + "px";
+    // Spreading stops apart can push the last one past its chip; the tail has to
+    // cover that too, or the last reference on a crowded line never fires.
+    const naturalLast = lastTop - paneTop + body.scrollTop;
+    const drift = Math.max(0, (positionOf(stops.length - 1) ?? naturalLast) - naturalLast);
+    tail.style.height = Math.max(0, H * (1 - TRIGGER) - below + drift) + "px";
 
     placeBand();
   }
@@ -917,15 +924,92 @@
    * just no longer the unit of advance.
    */
   function stopAt(): number {
-    const line = triggerY();
+    if (!body) return -1;
+    const line = body.scrollTop + body.clientHeight * TRIGGER;
     let hit = -1;
-    for (let i = 0; i < stops.length; i++) {
-      // The chip's own top, so the code changes as you reach the *sentence* that
-      // names it rather than when the paragraph began.
-      if (stops[i].getBoundingClientRect().top > line) break;
+    stopPositions((i, pos) => {
+      // Positions only grow, so the first one past the line ends the walk —
+      // without the break this reads every chip's geometry on every frame.
+      if (pos > line) return false;
       hit = i;
-    }
+      return true;
+    });
     return hit;
+  }
+
+  /**
+   * The least scroll between two stops. Smaller than a line of read-mode prose
+   * (16px × 1.75), so references on successive lines keep firing exactly where
+   * they sit; only references that share a line are spread out.
+   */
+  const STOP_GAP = 24;
+
+  /**
+   * Where each stop fires, in scroll-content pixels, in document order.
+   *
+   * A stop fired when its chip's top crossed the line, which is right until two
+   * references share a line of text: they cross in the same frame, the later one
+   * wins, and the first is never shown — `startAtFirstStop` would select it and
+   * the very next scroll event would skip past it. So positions are the chips'
+   * own tops pushed apart to at least `STOP_GAP`: every reference gets its own
+   * slice of scroll, in the order you read them, and a run of them on one line
+   * is walked one by one. The drift that adds is absorbed again by the first
+   * natural gap wider than the step, and the tail grows by whatever is left at
+   * the end, so the last stop is still reachable.
+   *
+   * `visit` returns false to stop early.
+   */
+  function stopPositions(visit: (i: number, pos: number) => boolean) {
+    if (!body) return;
+    const top = body.getBoundingClientRect().top;
+    const st = body.scrollTop;
+    let prev = -Infinity;
+    for (let i = 0; i < stops.length; i++) {
+      const natural = stops[i].getBoundingClientRect().top - top + st;
+      const pos = Math.max(natural, prev + STOP_GAP);
+      if (!visit(i, pos)) return;
+      prev = pos;
+    }
+  }
+
+  function positionOf(i: number): number | null {
+    let out: number | null = null;
+    stopPositions((j, pos) => {
+      if (j === i) out = pos;
+      return j < i;
+    });
+    return out;
+  }
+
+  /**
+   * Programmatic scrolls — entering, clicking, stepping — choose their stop
+   * outright. A smooth scroll passes over every stop between where it starts and
+   * where it lands, and letting each one fire would swap files under you on the
+   * way; worse, the one it lands on would be decided by a rounding pixel rather
+   * than by what was asked for. Until the scroll has settled, it steers.
+   */
+  let steerUntil = 0;
+
+  /** Scroll so stop `i` sits on the line, and make it current. */
+  function goToStop(i: number) {
+    if (!body || i < 0 || i >= stops.length) return;
+    const pos = positionOf(i);
+    if (pos === null) return;
+    steerUntil = performance.now() + 700;
+    // +1, so the stop lands just past the line and the scroll agrees with it.
+    body.scrollTo({ top: pos - body.clientHeight * TRIGGER + 1, behavior: "smooth" });
+    applyStop(i);
+  }
+
+  /**
+   * One reference forward or back — `↓`/`↑` or `j`/`k` while glooming. The
+   * reading in the order you wrote it, one stop per key, whatever the layout:
+   * the guarantee scrolling can only approximate.
+   */
+  export function stepRead(delta: number) {
+    if (!reading || !stops.length) return;
+    const from = activeStop < 0 ? (delta > 0 ? -1 : 0) : activeStop;
+    goToStop(Math.min(stops.length - 1, Math.max(0, from + delta)));
   }
 
   let ticking = false;
@@ -939,6 +1023,7 @@
       // "where am I reading" and "what should the code be showing".
       placeBand();
       markHere();
+      if (performance.now() < steerUntil) return;
       const i = stopAt();
       if (i === activeStop) return;
       applyStop(i);
@@ -1024,15 +1109,11 @@
       : stops.findIndex((r) => r.dataset.sig === focus.sig);
     if (i < 0) return; // selected something the prose never mentions
 
-    // Scroll the *block* to the line — a chip alone would put one sentence at the
-    // trigger and leave the paragraph it belongs to half off the top.
-    const block = stopOwner.get(stops[i]) ?? stops[i];
-    const delta = block.getBoundingClientRect().top - triggerY();
-    // +2 so the paragraph lands just *past* the line and the stop registers.
-    body.scrollTo({ top: body.scrollTop + delta + 2, behavior: "smooth" });
-
-    activeStop = i;
-    markNow(stops[i]);
+    // To the stop's own position, which is what the scroll handler will test it
+    // against once the scroll settles. Scrolling the *block* to the line used to
+    // put every chip on its first line past it at once, so the click and the
+    // next scroll frame disagreed about which reference was current.
+    goToStop(i);
   }
 
   /**
@@ -1099,15 +1180,10 @@
    * paragraph half off the top is the same mistake `alignReading` already avoids.
    */
   function startAtFirstStop() {
-    if (!body || !stops.length) return;
-    const block = stopOwner.get(stops[0]) ?? stops[0];
-    const delta = block.getBoundingClientRect().top - triggerY();
-    // +2, so it lands just *past* the line and the stop registers.
-    body.scrollTo({ top: body.scrollTop + delta + 2, behavior: "smooth" });
-    // And select it outright rather than waiting for the scroll to say so: a
-    // smooth scroll of nearly zero fires no event at all, and the reading would
-    // open with the band in place and the code pane still at rest.
-    applyStop(0);
+    // Through `goToStop`, so the first reference is selected and *stays*
+    // selected: scrolling the block to the line put a second reference on the
+    // same line past it too, and the next scroll event jumped straight there.
+    goToStop(0);
   }
 
   // Re-measure whenever the content, the mode or the window changes.
@@ -1210,7 +1286,6 @@
       if (row && row !== b) row.classList.add("steprow");
     }
     steps = found;
-    activeRef = null;
 
     // Re-render wipes the marks — put them back.
     //
@@ -1229,7 +1304,18 @@
     // it (the read and the write are different `$state`s) and the symptom is a
     // pinned main thread: read mode that will not exit, because nothing responds.
     untrack(() => {
+      // Which chip is current survives a re-render while reading. This used to be
+      // reset to null on every render, and a step into another file IS a render
+      // (`md` depends on `current`) — so the current chip lost its colour exactly
+      // when it pointed elsewhere, which in a list of one module per line was
+      // every step. Indices are per render but in document order, and a
+      // re-render while reading changes no text, so stop `i` is still chip `i`.
+      activeRef = reading && activeStop >= 0 ? activeStop : null;
       if (!reading) return;
+      // Marked here as well as by the selection effect: that one may already
+      // have run for this render, before these chips had their `data-ref`, and
+      // an unchanged `activeRef` will not run it again.
+      allRefs.forEach((r, i) => r.classList.toggle("active", i === activeStop));
       placeBand();
       // `allRefs`, not `stops` — the same array, but reading the local keeps this
       // effect free of a read of the state it just wrote, which is the shape the
@@ -1304,9 +1390,9 @@
         class="btn icon read"
         class:on={reading}
         onclick={toggleReading}
-        title="Walk the code in the order your prose takes it — the pass at the end of which you say looks good to me (⌘R)"
+        title="Gloom: walk the code in the order your prose takes it (⌘R)"
       >
-        {reading ? "▶ LGTM" : "▷ LGTM"}
+        {reading ? "▶ Gloom" : "▷ Gloom"}
       </button>
     {/if}
     <span class="spacer"></span>
@@ -1411,6 +1497,7 @@
       <!-- The sections are rendered ONCE, in the region above the grip. This
            branch used to render them too, from when the pane was one column. -->
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <div class="reading-lead" bind:this={leadEl}></div>
       <div
         class="doc"
         class:reading
@@ -1420,6 +1507,7 @@
       >
         {@html html}
       </div>
+      <div class="reading-tail" bind:this={tailEl}></div>
       {#if choosing}
         <div class="choose" style:left="{choosing.x}px" style:top="{choosing.y}px">
           <p>
@@ -1635,7 +1723,7 @@
      Two tries failed here and both failed the same way — by being a different
      *hue* rather than a different level. A grey mix read as dirty paper; a teal
      wash read as a green panel dropped into a warm room, arguing with the gold
-     `▷ LGTM` sits in and with the header above it. This pane is warm paper and
+     `▷ Gloom` sits in and with the header above it. This pane is warm paper and
      warm chrome; the navigation half is simply more of the chrome, one step
      deeper than the header so the two are distinguishable but related.
 
@@ -2453,8 +2541,9 @@
      the last one room to reach it. Nothing should ever see them move, so
      animating a layout property here bought nothing and cost a reflow of the
      whole doc every time read mode was toggled. */
-  :global(.reading-lead),
-  :global(.reading-tail) {
+  .reading-lead,
+  .reading-tail {
+    flex: none;
     height: 0;
   }
 </style>

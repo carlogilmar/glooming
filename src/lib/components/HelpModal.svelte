@@ -57,8 +57,8 @@
             "Remembered per gloom, since a config script and a forty-function module want " +
             "different balances",
         },
-        { keys: ["⌘R"], what: "LGTM: walk the code in the order your prose takes it. The pass you finish a gloom with — `esc` also leaves it" },
-        { keys: ["⌘E"], what: "Edit / preview the note. Entering edit leaves LGTM mode; typing under a scroll-driven selection is chaos" },
+        { keys: ["⌘R"], what: "Gloom: walk the code in the order your prose takes it — every reference, across modules. `esc` also leaves it" },
+        { keys: ["⌘E"], what: "Edit / preview the note. Entering edit stops glooming; typing under a scroll-driven selection is chaos" },
         {
           action: "the views",
           what:
@@ -241,11 +241,18 @@
       title: "Reading",
       rows: [
         {
-          action: "▷ LGTM",
+          action: "▷ Gloom",
           what:
             "Scroll the note and the code follows your prose order — not the file's — crossing " +
-            "into whichever module the next reference names. Named for what it is for: the pass " +
-            "at the end of which you can say looks good to me",
+            "into whichever module the next reference names. Every reference is a step, in the " +
+            "order you wrote them — several on one line are walked one by one. To gloom is to " +
+            "read a codebase this way",
+        },
+        {
+          keys: ["↓", "↑"],
+          what:
+            "While glooming: the next or previous reference, exactly one at a time (`j`/`k` too). " +
+            "The code pane's line cursor stands down while the prose is driving it",
         },
         {
           action: "one step per reference",
