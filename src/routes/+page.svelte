@@ -13,7 +13,7 @@
   import ExploreSections from "$lib/components/ExploreSections.svelte";
   import Sky from "$lib/components/Sky.svelte";
   import FileIcon, { iconFor } from "$lib/components/FileIcon.svelte";
-  import { byPath, knownModules, moduleLabels, moduleOf, namedPaths } from "$lib/fileset";
+  import { byPath, knownModules, moduleLabels, namedPaths } from "$lib/fileset";
   import { fileTree, mentionedIn, reveal } from "$lib/filetree";
   import { displaySig, locate } from "$lib/select";
   import { theme } from "$lib/stores/theme.svelte";
@@ -89,10 +89,10 @@
   // ---- the sidebar ---------------------------------------------------------
 
   /**
-   * Shown by default, collapsed with ⌘\ and always in read mode. Remembered,
+   * Collapsed by default, opened with ⌘\ or the Files rail, always hidden in read mode. Remembered,
    * because a narrow window wants it gone and asking twice is once too many.
    */
-  let side = $state(true);
+  let side = $state(false);
   /**
    * The sidebar's width, dragged from its right edge and remembered. A deep
    * project wants room for its names and a laptop wants the code pane back, so
@@ -102,7 +102,10 @@
   let sideW = $state(SIDE_W);
   $effect(() => {
     try {
-      side = localStorage.getItem("sidebar") !== "hidden";
+      // Collapsed unless you opened it: the Hub and ⌘T are how most files are
+      // reached, and the code pane is the reason the tool exists. The Files rail
+      // or ⌘\ opens it, and that choice is remembered.
+      side = localStorage.getItem("sidebar") === "shown";
       const w = Number(localStorage.getItem("sidebarWidth"));
       if (w) sideW = clampSide(w);
     } catch {
@@ -162,8 +165,6 @@
    */
   let treeOpen = $state<Set<string>>(new Set());
 
-  /** The module on screen — named in the views' header. */
-  const currentModule = $derived(moduleOf(file)?.name ?? null);
 
   const treeRows = $derived(fileTree(tree, treeOpen));
 
@@ -825,14 +826,23 @@
       docPane?.toggleRead();
       return;
     }
-    if (e.altKey && (e.key === "1" || e.code === "Digit1") && doc) {
+    // Woop and Gloom: ⌘1 / ⌘2 go to each, ⌘J flips between them — all on ⌘,
+    // like every other shortcut here. They were ⌥1 / ⌥2 while they collapsed the
+    // ends of a split. `e.code` as well as `e.key`, so a layout whose 1 and 2 are
+    // shifted still works.
+    if (meta && !e.shiftKey && (e.key === "1" || e.code === "Digit1") && doc) {
       e.preventDefault();
-      docPane?.toggleExplore();
+      docPane?.show("woop");
       return;
     }
-    if (e.altKey && (e.key === "2" || e.code === "Digit2") && doc) {
+    if (meta && !e.shiftKey && (e.key === "2" || e.code === "Digit2") && doc) {
       e.preventDefault();
-      docPane?.toggleNote();
+      docPane?.show("gloom");
+      return;
+    }
+    if (meta && key === "j" && doc) {
+      e.preventDefault();
+      docPane?.flip();
       return;
     }
     if (meta && key === "e") {
@@ -1246,7 +1256,6 @@
             {dirty}
             {opened}
             gloom={!!doc}
-            viewing={currentModule ? (labels.get(currentModule) ?? currentModule) : (file?.filename ?? "")}
             onshowfile={(p) => openPath(p, !readingNow)}
             onrefs={(paths) => (referenced = paths)}
             onreading={(on) => (readingNow = on)}
@@ -1277,12 +1286,12 @@
         {/if}
       </span>
       {#if outline?.kind === "module" && moduleCount > 1}
-        <span class="warn">{moduleCount} modules in this file — the views show the first</span>
+        <span class="warn">{moduleCount} modules in this file — the Woop shows the first</span>
       {/if}
       <span class="spacer"></span>
       <span class="keys">
         <kbd>⌘T</kbd> find · <kbd>⌘[</kbd><kbd>⌘]</kbd> trail · <kbd>⌘\</kbd> sidebar ·
-        <kbd>⌘R</kbd> gloom · <kbd>⌘E</kbd> edit · <kbd>?</kbd> help
+        <kbd>⌘J</kbd> woop/gloom · <kbd>⌘R</kbd> gloom · <kbd>⌘E</kbd> edit · <kbd>?</kbd> help
       </span>
       {#if doc}
         <span>gloom #{doc.id} → sqlite</span>

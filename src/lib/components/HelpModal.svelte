@@ -50,13 +50,12 @@
         },
         { keys: ["⌘P"], what: "Jump to a function by name. Type a prefix, or an abbreviation like cu" },
         {
-          keys: ["⌥1", "⌥2"],
+          keys: ["⌘1", "⌘2"],
           what:
-            "The right pane's split: navigation only, note only, the same key again to come " +
-            "back. Or drag the grip between them to any height — double-click resets it. " +
-            "Remembered per gloom, since a config script and a forty-function module want " +
-            "different balances",
+            "The right pane: ⌘1 the Woop (the views of the code on screen), ⌘2 the Gloom " +
+            "(your note). Remembered per gloom",
         },
+        { keys: ["⌘J"], what: "Flip between the Woop and the Gloom" },
         { keys: ["⌘R"], what: "Gloom: walk the code in the order your prose takes it — every reference, across modules. `esc` also leaves it" },
         { keys: ["⌘E"], what: "Edit / preview the note. Entering edit stops glooming; typing under a scroll-driven selection is chaos" },
         {
@@ -160,17 +159,20 @@
             "understanding of it starts. To move to another, go through the Hub (`⌂ Hub` at the " +
             "start of the band, or ⌘K)",
         },
-        { action: "Preview / Edit", what: "The rendered note, or its raw markdown" },
         {
-          action: "Copy / Save…",
+          action: "Woop | Gloom",
           what:
-            "The note's markdown, exactly as written — every reference carries its full module " +
-            "name, so it reads correctly pasted into a PR comment or opened on another machine. " +
-            "Your source files are never touched",
+            "The right pane shows one at a time: the Woop — the surface, the reach and the " +
+            "other views of the code on screen, always live — or the Gloom, your note. ⌘1 / ⌘2, " +
+            "⌘J flips. Edit and ▷ Gloom bring you to the Gloom",
+        },
+        {
+          action: "Preview / Edit",
+          what: "On the note's own bar, above the note: the rendered note, or its raw markdown",
         },
         {
           action: "A− / A+",
-          what: "Text size for both Preview and Edit, kept separately from the code pane's",
+          what: "On the note's bar too: text size for Preview and Edit, separate from the code pane's",
         },
         {
           keys: ["/"],

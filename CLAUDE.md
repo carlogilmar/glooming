@@ -354,7 +354,9 @@ then a hairline and the name. They are the same in every gloom, so they get a
 fixed place instead of drifting after a name of any length.
 
 **The sidebar** (`⌘\`, or `‹` in its own header; hidden in read mode) is a **file
-tree, the way an editor shows one**. Its right edge resizes it (160–520px,
+tree, the way an editor shows one**. It starts **collapsed** — the Hub and `⌘T` are
+how most files are reached — and stays open once you open it (`sidebar` =
+`shown`). Its right edge resizes it (160–520px,
 remembered as `sidebarWidth`, double-click resets), and hiding it leaves a 30px
 rail with a **Files** button (icon, the word set vertically) that brings it back —
 it was a bare 14px strip with a ›, which read as the pane's border — the toggle used to be a word in the header, nowhere near
@@ -665,7 +667,7 @@ destructure. `provides` is a best-effort read of the block's *last expression*
 lives elsewhere in the file, so its keys are `None` — **unknown, which is not
 the same as "provides nothing"** — and the UI shows `+?` rather than guessing.
 
-### The right pane is a split you own
+### The right pane was a split you own (superseded — see *Woop and Gloom*)
 
 The pane has two jobs that want the same height, and for a while it was one
 column — surface, boundary, then your note — so you could scroll up to look
@@ -1372,6 +1374,42 @@ and the doc pane treat it as one thing. Dragging is in the gutter on purpose: th
 source is selectable text — deliberately, you copy from it — so a drag across the
 glyphs has to keep meaning "select this text", and the line numbers are the one
 column nobody copies.
+
+### Woop and Gloom: the right pane shows one at a time
+
+**The names.** The note is a **Gloom**; the live views of the code on screen —
+surface, reach, settings, suite — are its **Woop**, after Wooper. One syllable
+each, a pair of Pokémon-ish words: the Woop is what the code shows you, the Gloom
+is what you make of it. (It was *Blossoom* — Gloom evolves into Bellossom — for
+one change.) UI words only — the code still says `explore`,
+`ExploreSections`, `doc`, as `reading` survived the first rename.
+
+**One at a time, not a split.** `Woop | Gloom` sits first in the pane's
+header; `⌘1` / `⌘2` go to each and `⌘J` flips — all on ⌘ like every other
+shortcut (they were ⌥1 / ⌥2 while they collapsed a split's ends) (`show`, `flip` in `DocPane`,
+called by the shell, which owns the window keys). The choice is remembered per
+gloom (`gloomSide:<id>`). Edit and read mode always land on the Gloom; picking
+the Woop while reading leaves read mode. Exploring with no gloom open, there
+is only a Woop and no switch.
+
+This replaced **the split you own** (below), and then a short-lived
+`Views | Both | Note` control on top of it. In use the two halves were each too
+short to do their job and the grip was one more thing to manage; two names made
+the choice clearer than a seam did. The grip, its per-gloom height and ⌥1/⌥2 as
+"collapse an end" are gone.
+
+**The header belongs to the side on screen.** On the Gloom: `▷ Gloom`, Edit /
+Preview, A−/A+. On the Woop, nothing but the switch: it said "of PipelineSelector ·
+live from disk" for a while, which repeated the code pane's own header. The note's
+controls never sit over the views — above the reach diagram they read as acting
+on the diagram.
+
+**Copy and Save… are gone for now**, ahead of export/import being designed as one
+thing. `export_note`, `ipc.exportNote` and `exporting.ts` stay: they are what the
+export will be built on.
+
+The active half of the switch carries its side's hue pulled 20% toward the ink —
+the pure tokens on their own tint were 3.9:1 and 4.3:1 on light paper.
 
 ### The note's header is controls, nothing else
 

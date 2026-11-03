@@ -7,11 +7,7 @@
   import { fontSize } from "$lib/stores/fontSize.svelte";
   import { focus } from "$lib/stores/focus.svelte";
   import { byPath, hasModules, moduleOf, vocabulary } from "$lib/fileset";
-  import * as ipc from "$lib/ipc";
-  import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-  import { save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { stillOpen } from "$lib/slash";
-  import { exportFilename } from "$lib/exporting";
   import type { ReadingFile } from "$lib/ipc";
 
   let {
@@ -29,7 +25,6 @@
     explore,
     opened = 0,
     gloom = true,
-    viewing = "",
   }: {
     markdown: string;
     /** Which gloom this is, so the split can be remembered per gloom. */
@@ -96,8 +91,6 @@
      * mounted either way, because it owns the reach diagram's hover and trace.
      */
     gloom?: boolean;
-    /** The module on screen, named in the header while exploring. */
-    viewing?: string;
   } = $props();
 
   /**
@@ -157,49 +150,6 @@
     return el.closest<HTMLElement>("[data-path]")?.dataset.path ?? current;
   }
 
-  // ---- taking the note elsewhere ------------------------------------------
-  //
-  // The note is markdown and nothing else, which was always the point: it is
-  // readable as plain text anywhere, and it survives being pasted into a PR
-  // comment. Both of these hand over exactly what is in the editor — no front
-  // matter, no generated title, nothing added on the way out. What you would
-  // have copied by hand is what you get.
-
-  let took = $state("");
-  let tookTimer: ReturnType<typeof setTimeout> | null = null;
-
-  /** Confirm on the control itself. A toast for "copied" is louder than the
-   *  thing it confirms — the same call the branch chip already made. */
-  function confirmTook(msg: string) {
-    took = msg;
-    if (tookTimer) clearTimeout(tookTimer);
-    tookTimer = setTimeout(() => (took = ""), 1600);
-  }
-
-  async function copyNote() {
-    try {
-      await writeText(markdown);
-      confirmTook("copied ✓");
-    } catch {
-      /* no clipboard in a plain browser — nothing worth interrupting for */
-    }
-  }
-
-  async function exportNote() {
-    try {
-      const path = await saveDialog({
-        defaultPath: exportFilename(title),
-        filters: [{ name: "Markdown", extensions: ["md"] }],
-      });
-      // Cancelling a save dialog is an answer, not a failure.
-      if (!path) return;
-      const written = await ipc.exportNote(path, markdown);
-      confirmTook(`saved ${written.split("/").pop()} ✓`);
-    } catch (e) {
-      confirmTook(String(e));
-    }
-  }
-
   // Scales the prose only — the blocks are data displays, not text, and keep
   // their own sizes so a table doesn't reflow when you nudge the reading size.
   const font = fontSize("docFontSize", 14);
@@ -209,100 +159,48 @@
   let container = $state<HTMLDivElement | null>(null);
 
   /**
-   * The split between what you navigate by and what you write.
+   * Woop or Gloom: the pane shows the views or the note, one at a time.
    *
-   * The pane has two jobs that want the same height. One column optimised for
-   * looking things up, which is what this was, made *writing* the thing you have
-   * to travel to — on a long surface the note started a screen and a half down.
+   * It was a split for a while — views above, note below, a grip between them,
+   * the height remembered per gloom — on the argument that writing *"…then it
+   * hands off to `changeset/2`"* is the moment you want the surface in view. In
+   * use the two halves were each too short to do their job, and the grip was one
+   * more thing to manage. Two names made the choice clearer than a seam did: the
+   * **Woop** is what the code shows you, the **Gloom** is what you make of it,
+   * and you are in one or the other. ⌘1 / ⌘2 go to each, ⌘J flips.
    *
-   * So the height is yours: drag the grip, collapse either side to nothing,
-   * double-click to reset. A fixed 270px drawer with a collapse toggle was cut
-   * from this app once and the toggle was the tell — but it was cut for being
-   * **fixed**. A band you can abolish costs you nothing, and its two ends are
-   * exactly the two tabs the alternative design would have given you (⌥1 / ⌥2),
-   * with every position in between that tabs cannot express.
-   *
-   * Remembered per gloom: a config script and a forty-function module want
-   * different balances, and a split you re-make every time is one you stop using.
+   * Remembered per gloom, because what you were doing in one — reading its
+   * Woop, writing its Gloom — is where you want to be when you come back.
+   * Exploring with no gloom open there is only a Woop.
    */
-  const SPLIT_DEFAULT = 300;
-  /** Must match `.grip`'s height, or the drag clamps against the wrong maximum. */
-  const GRIP_H = 16;
-  let split = $state(SPLIT_DEFAULT);
-  let exploreOnly = $state(false);
-  let stack = $state<HTMLDivElement | null>(null);
-
-  const splitKey = $derived(docId ? `gloomSplit:${docId}` : "");
+  type Side = "woop" | "gloom";
+  let side = $state<Side>("gloom");
+  const sideKey = $derived(docId ? `gloomSide:${docId}` : "");
   $effect(() => {
-    const key = splitKey;
+    const key = sideKey;
     if (!key) return;
-    const raw = localStorage.getItem(key);
-    const n = raw === null ? NaN : Number(raw);
-    // `-1` is the explore-only end; anything else is a height in px.
-    exploreOnly = n === -1;
-    split = Number.isFinite(n) && n >= 0 ? n : SPLIT_DEFAULT;
+    try {
+      side = localStorage.getItem(key) === "woop" ? "woop" : "gloom";
+    } catch {
+      /* no storage — the default */
+    }
   });
 
-  function remember() {
-    if (splitKey) localStorage.setItem(splitKey, String(exploreOnly ? -1 : split));
-  }
-
-  function maxSplit(): number {
-    return Math.max(0, (stack?.getBoundingClientRect().height ?? 600) - GRIP_H);
-  }
-
-  /**
-   * Clamped, and it SNAPS at both ends: six pixels of surface is never what you
-   * meant, and neither is a note you cannot see a line of.
-   */
-  function setSplit(px: number) {
-    const max = maxSplit();
-    let h = Math.min(Math.max(px, 0), max);
-    if (h < 40) h = 0;
-    if (h > max - 90) h = max;
-    exploreOnly = h >= max;
-    split = h;
-  }
-
-  function onGripDown(e: PointerEvent) {
-    if ((e.target as HTMLElement).closest("button")) return;
-    e.preventDefault();
-    const grip = e.currentTarget as HTMLElement;
-    grip.setPointerCapture(e.pointerId);
-    const startY = e.clientY;
-    const startH = exploreOnly ? maxSplit() : split;
-    const move = (ev: PointerEvent) => setSplit(startH + (ev.clientY - startY));
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      remember();
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  }
-
-  /** ⌥1 — the navigation end. Exported, because the shell owns the window keys. */
-  export function toggleExplore() {
-    if (exploreOnly) {
-      exploreOnly = false;
-      split = SPLIT_DEFAULT;
-    } else {
-      exploreOnly = true;
+  /** Show one side. Exported: the shell owns ⌘1, ⌘2 and ⌘J. */
+  export function show(to: Side) {
+    if (!gloom) return;
+    // Read mode walks the note; looking at the Woop is leaving it.
+    if (to === "woop" && reading) toggleReading();
+    side = to;
+    try {
+      if (sideKey) localStorage.setItem(sideKey, to);
+    } catch {
+      /* not worth interrupting for */
     }
-    remember();
   }
 
-  /** ⌥2 — the note end. */
-  export function toggleNote() {
-    exploreOnly = false;
-    split = split === 0 ? SPLIT_DEFAULT : 0;
-    remember();
-  }
-
-  function resetSplit() {
-    exploreOnly = false;
-    split = SPLIT_DEFAULT;
-    remember();
+  export function flip() {
+    show(side === "gloom" ? "woop" : "gloom");
   }
 
   let body = $state<HTMLDivElement | null>(null);
@@ -317,8 +215,8 @@
   let reading = $state(false);
 
   /** Explore stands down while you write or read — neither is navigating. */
-  const showExplore = $derived(!!explore && !reading && !editing && (split > 0 || !gloom));
-  const showNote = $derived(gloom && (!exploreOnly || reading || editing));
+  const showExplore = $derived(!!explore && !reading && (!gloom || side === "woop"));
+  const showNote = $derived(gloom && (side === "gloom" || reading));
   /** Paragraphs carrying a reference, in prose order — the steps. */
   let steps = $state<HTMLElement[]>([]);
   /** Every reference the reading walks, in document order. */
@@ -1141,11 +1039,15 @@
     }
     // Scroll-driven state while typing is chaos, so entering edit leaves read.
     editing = true;
+    show("gloom");
     if (reading) toggleReading();
   }
 
   function toggleReading() {
     reading = !reading;
+    // Reading walks the Gloom, so it is what the pane shows — from the Hub's
+    // ▷ Gloom or ⌘R alike, wherever the pane was.
+    if (reading) side = "gloom";
     focus.reading = reading;
     onreading?.(reading);
     if (!reading) {
@@ -1377,93 +1279,75 @@
        gloom's name is in the band above and the source file's name is on the pane
        beside it, so the only thing this row was adding was a third name for the
        same reading. -->
+  <!-- One header. Woop | Gloom first, where the row starts: it decides what
+       everything after it is about. On the Gloom the note's controls follow;
+       on the Woop nothing does. The note's controls never sit over the views.
+       With no gloom open it is an empty strip, kept so this pane's content
+       starts level with the code pane's. -->
   <div class="panehead">
-    {#if !gloom}
-      <span class="viewing">Views of <b>{viewing || "—"}</b> · live from disk</span>
+    {#if gloom}
+      <div class="sides" role="tablist" aria-label="What this pane shows">
+        <button
+          role="tab"
+          aria-selected={side === "woop" && !reading}
+          class:on={side === "woop" && !reading}
+          onclick={() => show("woop")}
+          title="Woop — what the code shows you (⌘1 · ⌘J flips)"
+        >
+          Woop
+        </button>
+        <button
+          role="tab"
+          aria-selected={side === "gloom" || reading}
+          class:on={side === "gloom" || reading}
+          onclick={() => show("gloom")}
+          title="Gloom — what you make of it (⌘2 · ⌘J flips)"
+        >
+          Gloom
+        </button>
+      </div>
+    {/if}
+    {#if showNote}
+      {#if dirty}<span class="dot" title="unsaved"></span>{/if}
+      {#if reading || (canRead && !editing && stops.length)}
+        <button
+          class="btn icon read"
+          class:on={reading}
+          onclick={toggleReading}
+          title="Gloom: walk the code in the order your prose takes it (⌘R)"
+        >
+          {reading ? "▶ Gloom" : "▷ Gloom"}
+        </button>
+      {/if}
       <span class="spacer"></span>
+      <!-- One button, not two: the label is what the click DOES. -->
+      <button class="btn icon" onclick={toggleEdit} title="⌘E">
+        {editing ? "Preview" : "Edit"}
+      </button>
+      <!-- Last, as in the code pane's header: the same control in the same place
+           on both sides of the window. -->
       <FontStepper {font} label="text" />
-    {:else}
-    {#if dirty}<span class="dot" title="unsaved"></span>{/if}
-    <!-- Read is on the left, where the row starts. It is the one control here
-         that changes what the whole window does, and among four right-aligned
-         buttons it read as the third of them. -->
-    {#if reading || (canRead && !editing && stops.length)}
-      <button
-        class="btn icon read"
-        class:on={reading}
-        onclick={toggleReading}
-        title="Gloom: walk the code in the order your prose takes it (⌘R)"
-      >
-        {reading ? "▶ Gloom" : "▷ Gloom"}
-      </button>
     {/if}
-    <span class="spacer"></span>
-    <!-- The note is markdown, so it can just leave. Copy is the 90% case — a
-         notes app, a PR comment — and Save… is for keeping it. Both hand over
-         exactly what is in the editor.
-
-         They sit before the mode toggle rather than after it: Preview/Edit and
-         the stepper are about looking at the note, these two are about taking it
-         somewhere, and the confirmation reads left-to-right into the gap the
-         spacer leaves. -->
-    {#if took}
-      <span class="took">{took}</span>
-    {:else}
-      <button class="btn icon" onclick={copyNote} title="Copy this note's markdown">
-        Copy
-      </button>
-      <button class="btn icon" onclick={exportNote} title="Save this note as a .md file">
-        Save…
-      </button>
-    {/if}
-    <!-- One button, not two. You are always in exactly one of the two modes, so a
-         segmented control spent half its width telling you where you already are.
-         The label is what the click DOES. -->
-    <button class="btn icon" onclick={toggleEdit} title="⌘E">
-      {editing ? "Preview" : "Edit"}
-    </button>
-    <!-- Last, as in the code pane's header: the same control in the same place on
-         both sides of the window. -->
-    <FontStepper {font} label="text" />
-    {/if}
+    <!-- On the Woop the header is the switch and nothing else. It used to add
+         "of PipelineSelector · live from disk" — the module's name is already on
+         the code pane beside it, and "live" is true of everything here. -->
   </div>
 
-  <!-- Two regions and a grip. `body` — what read mode measures and what the
-       scroll handler listens to — is the NOTE's scroller, so every measurement in
-       here still describes the thing being read. -->
+  <!-- Two regions, one shown at a time. `body` — what read mode measures and
+       what the scroll handler listens to — is the NOTE's scroller, so every
+       measurement in here still describes the thing being read. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="panebody"
     style:--doc-font="{font.value}px"
-    bind:this={stack}
     onmousemove={onMove}
     onmouseleave={() => {
       for (const reach of reachHosts()) litReach(reach, null);
     }}
   >
     {#if showExplore}
-      <div
-        class="exploreregion"
-        class:full={!gloom}
-        style:height={gloom ? `${exploreOnly ? maxSplit() : split}px` : null}
-      >
+      <div class="exploreregion">
         {@render explore?.()}
-      </div>
-    {/if}
-
-    {#if gloom && !reading && !editing && explore}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div
-        class="grip"
-        onpointerdown={onGripDown}
-        ondblclick={resetSplit}
-        title="Drag to resize · double-click to reset · ⌥1 navigation only · ⌥2 note only"
-      >
-        <span class="bars" aria-hidden="true"><i></i><i></i></span>
-        <span class="side">
-          <button class:on={exploreOnly} onclick={toggleExplore} title="Navigation only (⌥1)">▲</button>
-          <button class:on={split === 0 && !exploreOnly} onclick={toggleNote} title="Note only (⌥2)">▼</button>
-        </span>
       </div>
     {/if}
 
@@ -1687,22 +1571,6 @@
   }
   /* The only control here that reports a *problem*, so it is filled: the others
      are things you may do, this is a thing you should. */
-  /* The confirmation replaces the two buttons rather than sitting beside them:
-     it is the answer to the thing you just clicked, and a row that grows by a
-     word every time you copy would shift the controls beside it. */
-  .took {
-    font-size: 11px;
-    color: var(--read);
-    font-weight: 600;
-    white-space: nowrap;
-    animation: tookIn var(--fast) var(--ease-out) both;
-  }
-  @keyframes tookIn {
-    from {
-      opacity: 0;
-    }
-  }
-
   .panehead .spacer + * {
     margin-left: 2px;
   }
@@ -1734,26 +1602,54 @@
      see and one you can only measure. Teal stays where it means something — the
      boundary's outside, the gloom band, the file button. */
   .exploreregion {
-    flex: none;
+    flex: 1;
     min-height: 0;
     overflow: auto;
     overscroll-behavior: contain;
     background: color-mix(in srgb, var(--read) 9%, var(--doc-bg));
   }
-  .exploreregion.full {
-    flex: 1;
-  }
-  .viewing {
-    font-size: 11px;
-    color: var(--fg-faint);
-    white-space: nowrap;
+  /* Woop | Gloom. Not uppercase like the rest of the header: these are two
+     names, and the names are the point. The active one takes the side's own
+     colour — the Woop's warm navigation tint, the Gloom's teal — so the
+     switch says which of the two you are in before you read the word. */
+  .sides {
+    flex: none;
+    display: flex;
+    border: 1px solid var(--doc-line);
+    border-radius: 6px;
     overflow: hidden;
-    text-overflow: ellipsis;
+    background: var(--doc-bg);
+    text-transform: none;
+    letter-spacing: 0;
   }
-  .viewing b {
-    font-family: var(--mono);
-    font-weight: 600;
+  .sides button {
+    font: inherit;
+    font-family: var(--serif);
+    font-size: 12.5px;
     color: var(--fg-dim);
+    background: transparent;
+    border: 0;
+    padding: 2px 11px;
+    cursor: pointer;
+  }
+  .sides button + button {
+    border-left: 1px solid var(--doc-line);
+  }
+  .sides button:hover {
+    color: var(--fg);
+  }
+  /* The hue pulled 20% toward the ink: the pure tokens on their own tint were
+     3.9:1 and 4.3:1 on light paper — under 4.5 for 12px text. Mixed, they are
+     5.6 and 5.9 light, 7.8 and 9.3 dark. */
+  .sides button:first-child.on {
+    color: color-mix(in srgb, var(--read) 80%, var(--fg));
+    background: color-mix(in srgb, var(--read) 10%, var(--doc-bg));
+    font-weight: 600;
+  }
+  .sides button:last-child.on {
+    color: color-mix(in srgb, var(--gloom-deep) 80%, var(--fg));
+    background: color-mix(in srgb, var(--gloom-deep) 10%, var(--doc-bg));
+    font-weight: 600;
   }
   .noteregion {
     flex: 1;
@@ -1769,68 +1665,6 @@
   }
   .noteregion.hidden {
     display: none;
-  }
-
-  /* The handle is a SEAM, not a header.
-     At 28px with a label it was a third band between two others, in a tone close
-     enough to the navigation half that the eye could not tell which side it was
-     on. Thin and deeper than both halves, it reads as the join — and the label
-     went with the height, because a divider that has to be captioned is not
-     dividing anything.
-
-     `--read` at 26%: 1.29:1 against the navigation half above it, 1.45:1 against
-     the paper below. Deeper than both, which is what a seam is. */
-  .grip {
-    flex: none;
-    position: relative;
-    height: 16px;
-    display: flex;
-    align-items: center;
-    padding: 0 8px;
-    background: color-mix(in srgb, var(--read) 26%, var(--doc-bg));
-    cursor: ns-resize;
-    user-select: none;
-  }
-  .grip .bars {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 3px;
-    pointer-events: none;
-  }
-  .grip .bars i {
-    width: 18px;
-    height: 2px;
-    border-radius: 1px;
-    background: color-mix(in srgb, var(--read) 62%, transparent);
-    transition: background 0.15s ease;
-  }
-  .grip:hover .bars i {
-    background: var(--read);
-  }
-  .grip .side {
-    margin-left: auto;
-    display: flex;
-    gap: 1px;
-    z-index: 1;
-  }
-  .grip .side button {
-    font: inherit;
-    font-size: 8px;
-    line-height: 1;
-    color: color-mix(in srgb, var(--read) 75%, transparent);
-    background: transparent;
-    border: 0;
-    border-radius: 3px;
-    padding: 3px 5px;
-    cursor: pointer;
-  }
-  .grip .side button:hover,
-  .grip .side button.on {
-    color: var(--read-ink);
-    background: var(--read);
   }
 
   .dot {
