@@ -507,7 +507,11 @@
       <div class="topics" bind:this={topicsEl}>
         {#each groups as grp (grp.topic?.id ?? "unsorted")}
           {@const visible = grp.ids.filter(shown)}
-          {#if !(query || tag) || visible.length}
+          <!-- Unsorted only while something is in it: an empty "Everything has a
+               topic." column is a heading over nothing, taking a column from the
+               topics that have something to say. It comes back the moment a new
+               gloom lands there or a topic is removed. -->
+          {#if (grp.topic || grp.ids.length) && (!(query || tag) || visible.length)}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <section
               class="topic"
@@ -571,7 +575,7 @@
                     {@render row(g, grp.topic ? String(numbers.get(id) ?? "") : "·", null)}
                   {/if}
                 {:else}
-                  <p class="none">{grp.topic ? "Drag a gloom here." : "Everything has a topic."}</p>
+                  <p class="none">Drag a gloom here.</p>
                 {/each}
               </div>
             </section>

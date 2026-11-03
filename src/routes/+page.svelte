@@ -1158,7 +1158,19 @@
           ></div>
         </aside>
       {:else if !readingNow}
-        <button class="srail" onclick={toggleSide} title="Show the sidebar (⌘\)">›</button>
+        <!-- The hidden sidebar's way back: a rail that says what it opens. It was a
+             bare 14px strip with a ›, which read as the pane's border — something
+             you had to know was clickable. -->
+        <div class="srail">
+          <button onclick={toggleSide} title="Show the files (⌘\)">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.2" />
+              <path d="M6 2.5v11" stroke="currentColor" stroke-width="1.2" />
+              <path d="M3 5.5h1.5M3 7.5h1.5M3 9.5h1.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" />
+            </svg>
+            <span>Files</span>
+          </button>
+        </div>
       {/if}
 
       {#if hubFull && project}
@@ -2303,18 +2315,39 @@
      where the sidebar was — not a word in the header. */
   .srail {
     flex: none;
-    width: 14px;
-    font: inherit;
-    font-size: 11px;
-    color: var(--fg-faint);
+    width: 30px;
+    padding-top: 8px;
+    display: flex;
+    justify-content: center;
     background: var(--bg-raised);
-    border: 0;
     border-right: 1px solid var(--line);
-    padding: 0;
+  }
+  /* A real button at the top of the rail — where the sidebar's own header and
+     its ‹ were — with the word on it, set vertically to fit the rail. */
+  .srail button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 7px;
+    font: inherit;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 7px 0 9px;
+    width: 22px;
     cursor: pointer;
   }
-  .srail:hover {
-    color: var(--accent);
+  .srail button span {
+    writing-mode: vertical-rl;
+  }
+  .srail button:hover {
+    color: var(--gloom-deep);
+    border-color: var(--gloom-deep);
     background: var(--bg-inset);
   }
   .work {

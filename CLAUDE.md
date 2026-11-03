@@ -355,8 +355,9 @@ fixed place instead of drifting after a name of any length.
 
 **The sidebar** (`⌘\`, or `‹` in its own header; hidden in read mode) is a **file
 tree, the way an editor shows one**. Its right edge resizes it (160–520px,
-remembered as `sidebarWidth`, double-click resets), and hiding it leaves a 14px
-rail that brings it back — the toggle used to be a word in the header, nowhere near
+remembered as `sidebarWidth`, double-click resets), and hiding it leaves a 30px
+rail with a **Files** button (icon, the word set vertically) that brings it back —
+it was a bare 14px strip with a ›, which read as the pane's border — the toggle used to be a word in the header, nowhere near
 the panel it acted on. The tree shows every file, not only Elixir. It was a
 namespace tree of modules first, and that was a partial map that looked complete:
 reading a codebase means `mix.exs`, the config, the migrations and the README as
@@ -1822,7 +1823,9 @@ you were is lost by going.
 (`topic_id` NULL), at a `position` within it. One place per gloom because a table
 of contents needs one place and an order per entry — tags already cover "belongs
 to several", and a gloom under three topics would be read three times by the
-newcomer the order is for. New glooms land at the top of Unsorted. Removing a
+newcomer the order is for. New glooms land at the top of Unsorted. Unsorted is
+shown only while it holds something; with every gloom filed it would be a
+heading over nothing. Removing a
 topic moves its glooms to Unsorted in the same transaction; it never deletes one.
 `forget_project` takes a project's (necessarily empty) topics with it.
 

@@ -72,7 +72,7 @@
           what:
             "Every file in the project as a tree. A teal dot marks a file the open gloom mentions. " +
             "Drag its right edge to resize it (double-click resets); `‹` or `⌘\\` hides it, and the " +
-            "strip left behind brings it back. Read mode always hides it",
+            "Files button left in its place brings it back. Read mode always hides it",
         },
         {
           keys: ["⌘[", "⌘]"],
