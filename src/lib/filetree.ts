@@ -20,16 +20,12 @@ export interface TreeNode {
 /**
  * The visible rows, given which folders are open.
  *
- * The way to the file on screen is always open — arriving somewhere from a
- * reference or the reach diagram should show you where it lives — and `open` is
- * returned with those folders added, so folding one of them starts from what is
- * actually on screen.
+ * `opened` is the whole truth about folding. Revealing the file on screen is
+ * `reveal`'s job, done once when you arrive at a file — it used to happen here,
+ * on every render, which meant a folder on the way to the open file could never
+ * be folded: the click removed it and the next render put it straight back.
  */
-export function fileTree(
-  files: ProjectFile[],
-  opened: Set<string>,
-  currentRel: string | null,
-): { rows: TreeNode[]; open: Set<string> } {
+export function fileTree(files: ProjectFile[], opened: Set<string>): TreeNode[] {
   const dirs = new Map<string, Set<string>>();
   const leaves = new Map<string, ProjectFile[]>();
   for (const f of files) {
@@ -45,26 +41,36 @@ export function fileTree(
     leaves.get(parent)!.push(f);
   }
 
-  const open = new Set(opened);
-  if (currentRel) {
-    const parts = currentRel.split("/");
-    for (let i = 1; i < parts.length; i++) open.add(parts.slice(0, i).join("/"));
-  }
-
   const byName = (a: string, b: string) => a.toLowerCase().localeCompare(b.toLowerCase());
   const leaf = (k: string) => k.split("/").pop() ?? k;
   const rows: TreeNode[] = [];
   const walk = (parent: string, depth: number) => {
     for (const key of [...(dirs.get(parent) ?? [])].sort((a, b) => byName(leaf(a), leaf(b)))) {
       rows.push({ key, name: leaf(key), depth, file: null });
-      if (open.has(key)) walk(key, depth + 1);
+      if (opened.has(key)) walk(key, depth + 1);
     }
     for (const f of [...(leaves.get(parent) ?? [])].sort((a, b) => byName(a.name, b.name))) {
       rows.push({ key: f.rel, name: f.name, depth, file: f });
     }
   };
   walk("", 0);
-  return { rows, open };
+  return rows;
+}
+
+/**
+ * `opened` plus every folder on the way to `rel` — arriving at a file from a
+ * reference or the reach diagram should show you where it lives. Returns the
+ * same set when nothing needs opening, so a no-op does not re-render the tree.
+ */
+export function reveal(opened: Set<string>, rel: string | null): Set<string> {
+  if (!rel) return opened;
+  const parts = rel.split("/");
+  const missing: string[] = [];
+  for (let i = 1; i < parts.length; i++) {
+    const k = parts.slice(0, i).join("/");
+    if (!opened.has(k)) missing.push(k);
+  }
+  return missing.length ? new Set([...opened, ...missing]) : opened;
 }
 
 /**

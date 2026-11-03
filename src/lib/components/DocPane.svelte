@@ -30,7 +30,6 @@
     opened = 0,
     gloom = true,
     viewing = "",
-    onstart,
   }: {
     markdown: string;
     /** Which gloom this is, so the split can be remembered per gloom. */
@@ -99,8 +98,6 @@
     gloom?: boolean;
     /** The module on screen, named in the header while exploring. */
     viewing?: string;
-    /** Start a gloom from here. */
-    onstart?: () => void;
   } = $props();
 
   /**
@@ -1366,18 +1363,6 @@
       </div>
     {/if}
 
-    {#if !gloom}
-      <!-- Exploring: the grip's place is where a gloom starts. Nothing above it
-           is saved, and saying so is what makes wandering feel free. -->
-      <div class="start">
-        <p>
-          Exploring — nothing is saved. Start a gloom when there is something worth
-          writing down; it can reference any module in this project.
-        </p>
-        <button onclick={() => onstart?.()}>Start a gloom</button>
-      </div>
-    {/if}
-
     {#if gloom && !reading && !editing && explore}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
@@ -1679,40 +1664,6 @@
     font-family: var(--mono);
     font-weight: 600;
     color: var(--fg-dim);
-  }
-  .start {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 11px 22px;
-    background: color-mix(in srgb, var(--read) 15%, var(--doc-bg));
-    border-top: 1px solid var(--doc-line);
-  }
-  .start p {
-    flex: 1;
-    margin: 0;
-    font-size: 11.5px;
-    line-height: 1.45;
-    color: var(--fg-dim);
-  }
-  .start button {
-    flex: none;
-    font: inherit;
-    font-size: 12px;
-    font-weight: 600;
-    color: #fff;
-    background: var(--gloom-deep);
-    border: 0;
-    border-radius: 6px;
-    padding: 6px 13px;
-    cursor: pointer;
-  }
-  :global(.dark) .start button {
-    color: var(--gloom-bg);
-  }
-  .start button:hover {
-    filter: brightness(1.1);
   }
   .noteregion {
     flex: 1;

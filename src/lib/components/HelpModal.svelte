@@ -70,9 +70,9 @@
         {
           action: "the sidebar",
           what:
-            "This project's glooms, then its modules as a namespace tree — for browsing when you " +
-            "do not know a name yet. A teal dot marks a module the open gloom mentions. `⌘\\` " +
-            "hides it; read mode always does",
+            "Every file in the project as a tree. A teal dot marks a file the open gloom mentions. " +
+            "Drag its right edge to resize it (double-click resets); `‹` or `⌘\\` hides it, and the " +
+            "strip left behind brings it back. Read mode always hides it",
         },
         {
           keys: ["⌘[", "⌘]"],
@@ -150,8 +150,8 @@
         {
           action: "Start a gloom",
           what:
-            "From the + in the sidebar, or the bar under the views while exploring. It opens with " +
-            "its name selected; exploring without one saves nothing at all",
+            "`+ New` in the band at the top. It opens with its name selected; exploring without " +
+            "one saves nothing at all. `Glooms ▾` beside it lists this project's glooms",
         },
         {
           action: "open a gloom",

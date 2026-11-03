@@ -326,20 +326,32 @@ be the gesture that deletes what you wrote. Home lists projects, with their gloo
 counts; the sidebar lists the open project's glooms; `⌘K` searches them, prose
 included.
 
-**Exploring needs no gloom.** With none open the right pane is all views and the
-grip's place says *Exploring — nothing is saved* with **Start a gloom** beside it.
-`DocPane` stays mounted in that state (`gloom={false}`) because it owns the reach
+**The band is always there.** Inside a project the ink band under the header is
+where you are: a gloom's name and tags, or *Exploring — nothing is saved* — and
+always `Glooms ▾` (this project's glooms, plus a way into `⌘K`) and `+ New`. It
+used to appear only once a gloom was open, so the way in to glooms lived in the
+sidebar, which made the band a surprise rather than a place. The picker renders
+*outside* the band, because the band clips for its opening sweep.
+
+**Exploring needs no gloom.** With none open the right pane is all views; the band
+says so, which is why the views no longer carry a *Start a gloom* bar. `DocPane`
+stays mounted in that state (`gloom={false}`) because it owns the reach
 diagram's hover and trace wiring. A new gloom is unnamed, opens with its name
 field focused, and starts as the invitation (`INVITATION` in `commands/docs.rs`).
 Opening a gloom lands the code pane on the first module its prose names; closing
 one (`close ×` in the band) returns to exploring and keeps your place.
 
-**The sidebar** (`⌘\`, hidden in read mode) is the project's glooms above a
-**file tree, the way an editor shows one** — every file, not only Elixir. It was a
+**The sidebar** (`⌘\`, or `‹` in its own header; hidden in read mode) is a **file
+tree, the way an editor shows one**. Its right edge resizes it (160–520px,
+remembered as `sidebarWidth`, double-click resets), and hiding it leaves a 14px
+rail that brings it back — the toggle used to be a word in the header, nowhere near
+the panel it acted on. The tree shows every file, not only Elixir. It was a
 namespace tree of modules first, and that was a partial map that looked complete:
 reading a codebase means `mix.exs`, the config, the migrations and the README as
 much as the modules. Folders first, then files, case-insensitive (`filetree.ts`,
-pure and probed); the path to the file on screen is always unfolded.
+pure and probed). Arriving at a file unfolds the way to it **once** (`reveal`, in
+`showFile`) — it used to be forced open on every render, so a folder holding the
+open file could not be folded: the click removed it and the next render put it back.
 
 `project_files` walks with `.gitignore` honoured even outside a git checkout
 (`require_git(false)`), dotfiles shown (`.formatter.exs` is part of a project) and

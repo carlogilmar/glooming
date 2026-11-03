@@ -14,7 +14,7 @@
   import Sky from "$lib/components/Sky.svelte";
   import FileIcon, { iconFor } from "$lib/components/FileIcon.svelte";
   import { byPath, knownModules, moduleLabels, moduleOf, namedPaths } from "$lib/fileset";
-  import { fileTree, mentionedIn } from "$lib/filetree";
+  import { fileTree, mentionedIn, reveal } from "$lib/filetree";
   import { displaySig, locate } from "$lib/select";
   import { theme } from "$lib/stores/theme.svelte";
   import { focus } from "$lib/stores/focus.svelte";
@@ -85,13 +85,54 @@
    * because a narrow window wants it gone and asking twice is once too many.
    */
   let side = $state(true);
+  /**
+   * The sidebar's width, dragged from its right edge and remembered. A deep
+   * project wants room for its names and a laptop wants the code pane back, so
+   * no one width is right; double-clicking the edge returns to this.
+   */
+  const SIDE_W = 240;
+  let sideW = $state(SIDE_W);
   $effect(() => {
     try {
       side = localStorage.getItem("sidebar") !== "hidden";
+      const w = Number(localStorage.getItem("sidebarWidth"));
+      if (w) sideW = clampSide(w);
     } catch {
       /* no storage — keep the default */
     }
   });
+  function clampSide(w: number) {
+    return Math.round(Math.min(520, Math.max(160, w)));
+  }
+  function rememberSide() {
+    try {
+      localStorage.setItem("sidebarWidth", String(sideW));
+    } catch {
+      /* not worth interrupting for */
+    }
+  }
+  let sideDragging = $state(false);
+  function startSideDrag(e: PointerEvent) {
+    e.preventDefault();
+    const left = (e.currentTarget as HTMLElement).parentElement!.getBoundingClientRect().left;
+    sideDragging = true;
+    const move = (ev: PointerEvent) => (sideW = clampSide(ev.clientX - left));
+    const up = () => {
+      sideDragging = false;
+      document.body.style.cursor = "";
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      rememberSide();
+    };
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+  function resetSide() {
+    sideW = SIDE_W;
+    rememberSide();
+  }
+
   function toggleSide() {
     side = !side;
     try {
@@ -113,15 +154,13 @@
    */
   let treeOpen = $state<Set<string>>(new Set());
 
-  /** The file on screen, relative, so the tree can open the way to it. */
-  const currentRel = $derived(tree.find((f) => f.path === currentPath)?.rel ?? null);
   /** The module on screen — named in the views' header. */
   const currentModule = $derived(moduleOf(file)?.name ?? null);
 
-  const treeRows = $derived(fileTree(tree, treeOpen, currentRel));
+  const treeRows = $derived(fileTree(tree, treeOpen));
 
   function toggleNode(key: string) {
-    const next = new Set(treeRows.open);
+    const next = new Set(treeOpen);
     if (next.has(key)) next.delete(key);
     else next.add(key);
     treeOpen = next;
@@ -287,6 +326,9 @@
     swapping = !!currentPath;
     if (swapping) await new Promise((r) => setTimeout(r, 130));
     currentPath = path;
+    // Show where it lives, once, on arrival — never on render, or a folder on
+    // the way to this file could not be folded while it is open.
+    treeOpen = reveal(treeOpen, tree.find((f) => f.path === path)?.rel ?? null);
     swapping = false;
   }
 
@@ -477,6 +519,9 @@
 
   // ---- glooms --------------------------------------------------------------
 
+  /** The band's gloom picker — the project's glooms, a click away from anywhere. */
+  let picking = $state(false);
+
   /**
    * Start a gloom. It opens with its name selected, so naming it costs a
    * sentence and skipping it costs one key. The code pane stays where you were:
@@ -634,7 +679,8 @@
     const key = e.key.toLowerCase();
 
     if (e.key === "Escape") {
-      if (showHelp) showHelp = false;
+      if (picking) picking = false;
+      else if (showHelp) showHelp = false;
       else if (showPalette) showPalette = false;
       else if (showFiles) showFiles = false;
       else if (showLibrary) showLibrary = false;
@@ -767,10 +813,6 @@
           </button>
         {/key}
       {/if}
-      <button class="btn icon" onclick={toggleSide} title="Show or hide the sidebar (⌘\)">
-        {side ? "Hide sidebar" : "Show sidebar"}
-      </button>
-
       <span class="spacer"></span>
 
       <span class="save" class:dirty>{saving ? "Saving…" : dirty ? "Unsaved" : doc ? "Saved ✓" : ""}</span>
@@ -864,104 +906,121 @@
       </div>
     </div>
   {:else}
-    {#if doc}
-      <!-- The gloom's own band, only while one is open. Keyed on the id, so
-           opening a gloom replays its arrival and typing in it never does. -->
-      {#key doc.id}
+    <!-- The band is always there inside a project: it is where you are — a gloom,
+         or exploring — and where you go to another one. It used to appear only
+         once a gloom was open, which put the way in to glooms in the sidebar and
+         made the band a surprise rather than a place. -->
+    <div class="bandwrap">
+      <!-- Keyed on the id, so opening a gloom replays its arrival and typing in
+           it never does. -->
+      {#key doc?.id ?? 0}
         <div
-          class="gloombar arriving"
+          class="gloombar"
+          class:arriving={!!doc}
           class:named
-          class:unnamed={!doc.title && renaming === null}
+          class:unnamed={!!doc && !doc.title && renaming === null}
         >
-          {#if renaming !== null}
-            <input
-              class="gname"
-              bind:value={renaming}
-              bind:this={renameEl}
-              spellcheck="false"
-              placeholder="Name this gloom — what are you trying to understand?"
-              onblur={commitRename}
-              onkeydown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  commitRename();
-                } else if (e.key === "Escape") {
-                  e.preventDefault();
-                  renaming = null;
-                }
-                e.stopPropagation();
-              }}
-            />
-          {:else}
-            <button class="gname" onclick={startRename} title="Rename this gloom">
-              {doc.title || "Unnamed gloom"}<i>✎</i>
-            </button>
-          {/if}
-
-          <!-- Tags sit with the name, because they are part of what this gloom is
-               called. Each carries a hue derived from its own text. -->
-          <span class="gtags">
-            {#each tags as t (t)}
-              <button
-                class="gtag"
-                style="--hue:{tagHue(t)}"
-                title="Remove this tag"
-                onclick={() => saveTags(withoutTag(tags, t))}
-              >
-                {t}<i>×</i>
-              </button>
-            {/each}
-            {#if tagging}
+          {#if doc}
+            {#if renaming !== null}
               <input
-                class="gtagin"
-                bind:this={tagInput}
-                bind:value={tagDraft}
-                placeholder="tag…"
+                class="gname"
+                bind:value={renaming}
+                bind:this={renameEl}
                 spellcheck="false"
-                onblur={commitTag}
+                placeholder="Name this gloom — what are you trying to understand?"
+                onblur={commitRename}
                 onkeydown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    commitTag();
+                    commitRename();
                   } else if (e.key === "Escape") {
                     e.preventDefault();
-                    tagDraft = "";
-                    tagging = false;
+                    renaming = null;
                   }
                   e.stopPropagation();
                 }}
               />
             {:else}
-              <button class="gtag add" onclick={() => (tagging = true)} title="Add a tag">+</button>
+              <button class="gname" onclick={startRename} title="Rename this gloom">
+                {doc.title || "Unnamed gloom"}<i>✎</i>
+              </button>
             {/if}
-          </span>
+
+            <!-- Tags sit with the name, because they are part of what this gloom is
+                 called. Each carries a hue derived from its own text. -->
+            <span class="gtags">
+              {#each tags as t (t)}
+                <button
+                  class="gtag"
+                  style="--hue:{tagHue(t)}"
+                  title="Remove this tag"
+                  onclick={() => saveTags(withoutTag(tags, t))}
+                >
+                  {t}<i>×</i>
+                </button>
+              {/each}
+              {#if tagging}
+                <input
+                  class="gtagin"
+                  bind:this={tagInput}
+                  bind:value={tagDraft}
+                  placeholder="tag…"
+                  spellcheck="false"
+                  onblur={commitTag}
+                  onkeydown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      commitTag();
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      tagDraft = "";
+                      tagging = false;
+                    }
+                    e.stopPropagation();
+                  }}
+                />
+              {:else}
+                <button class="gtag add" onclick={() => (tagging = true)} title="Add a tag">+</button>
+              {/if}
+            </span>
+          {:else}
+            <span class="gexplore">Exploring — nothing is saved</span>
+          {/if}
 
           <span class="spacer"></span>
 
-          {#if !doc.title && renaming === null}
+          {#if doc && !doc.title && renaming === null}
             <span class="nudge">say what you are here to find out</span>
           {/if}
-          <button class="gclose" onclick={closeGloom} title="Close the note and keep exploring">
-            close ×
+          <button class="gpick" class:on={picking} onclick={() => (picking = !picking)} title="This project's glooms">
+            Glooms <b>{glooms.length}</b> ▾
           </button>
+          <button class="gnew" onclick={newGloom} title="Start a gloom">+ New</button>
+          {#if doc}
+            <button class="gclose" onclick={closeGloom} title="Close the note and keep exploring">
+              close ×
+            </button>
+          {/if}
           <span class="glabel">Gloom</span>
         </div>
       {/key}
-    {/if}
 
-    <div class="work">
-      {#if side && !readingNow}
-        <!-- Where you go: this project's glooms, then the codebase itself. -->
-        <aside class="side">
-          <div class="slabel">
-            Glooms
-            <span class="spacer"></span>
-            <button class="sbtn" onclick={() => (showLibrary = true)} title="Search every gloom (⌘K)">⌘K</button>
-            <button class="sbtn" onclick={newGloom} title="Start a gloom">+</button>
-          </div>
-          <div class="glooms">
+      {#if picking}
+        <!-- Outside the band, because the band clips (its opening sweep needs
+             `overflow: hidden`), and a menu inside it would render every time and
+             be visible never — the file strip's bug, waiting to repeat. -->
+        <button class="gscrim" aria-label="Close" onclick={() => (picking = false)}></button>
+        <div class="gmenu">
+          <div class="glist">
             {#each glooms as g (g.id)}
-              <button class="gitem" class:on={doc?.id === g.id} onclick={() => openGloom(g.id)}>
+              <button
+                class="gitem"
+                class:on={doc?.id === g.id}
+                onclick={() => {
+                  picking = false;
+                  openGloom(g.id);
+                }}
+              >
                 <span class="gn" class:untitled={!g.title}>
                   {(doc?.id === g.id ? doc.title : g.title) || "Unnamed gloom"}
                 </span>
@@ -971,11 +1030,35 @@
               <p class="sempty">None yet. Start one when you find something worth writing down.</p>
             {/each}
           </div>
+          <button
+            class="gsearch"
+            onclick={() => {
+              picking = false;
+              showLibrary = true;
+            }}
+          >
+            Search names, tags and prose <kbd>⌘K</kbd>
+          </button>
+        </div>
+      {/if}
+    </div>
 
-          <div class="slabel">Files <span class="spacer"></span><span class="scount">{tree.length}</span></div>
+    <div class="work">
+      {#if side && !readingNow}
+        <!-- Where you go: the codebase itself. Its glooms are in the band. -->
+        <aside class="side" style:flex-basis="{sideW}px">
+          <div class="slabel">
+            Files
+            <span class="spacer"></span>
+            <span class="scount">{tree.length}</span>
+            <!-- The way out sits on the thing it hides; the way back is the rail
+                 left in its place. Up in the header it was a word among words,
+                 nowhere near the panel it acted on. -->
+            <button class="sbtn" onclick={toggleSide} title="Hide the sidebar (⌘\)">‹</button>
+          </div>
           <div class="tree">
-            {#each treeRows.rows as n (n.key)}
-              {@const isOpen = !n.file && treeRows.open.has(n.key)}
+            {#each treeRows as n (n.key)}
+              {@const isOpen = !n.file && treeOpen.has(n.key)}
               <!-- One button per row: a folder folds, a file opens. The chevron is
                    part of the folder's button, so the whole row is the target. -->
               <button
@@ -1003,7 +1086,17 @@
             {/each}
           </div>
           <div class="sfoot">Live from disk · nothing is copied out of it</div>
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="sgrip"
+            class:dragging={sideDragging}
+            title="Drag to resize · double-click to reset"
+            onpointerdown={startSideDrag}
+            ondblclick={resetSide}
+          ></div>
         </aside>
+      {:else if !readingNow}
+        <button class="srail" onclick={toggleSide} title="Show the sidebar (⌘\)">›</button>
       {/if}
 
       <div class="split">
@@ -1058,7 +1151,6 @@
             {opened}
             gloom={!!doc}
             viewing={currentModule ? (labels.get(currentModule) ?? currentModule) : (file?.filename ?? "")}
-            onstart={newGloom}
             onshowfile={(p) => openPath(p, !readingNow)}
             onrefs={(paths) => (referenced = paths)}
             onreading={(on) => (readingNow = on)}
@@ -2025,6 +2117,126 @@
     font-size: 10px;
     opacity: 0.8;
   }
+  /* The band's place for a gloom when there is none: said once, here, where the
+     name would be — which is why the views no longer carry a bar saying it. */
+  .gexplore {
+    font-family: var(--serif);
+    font-size: 15px;
+    font-style: italic;
+    color: var(--gloom-dim);
+    white-space: nowrap;
+  }
+  .gpick,
+  .gnew {
+    flex: none;
+    font: inherit;
+    font-size: 11.5px;
+    color: var(--gloom-ink);
+    background: transparent;
+    border: 1px solid color-mix(in srgb, white 18%, transparent);
+    border-radius: 5px;
+    padding: 3px 9px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .gpick b {
+    font-family: var(--mono);
+    font-weight: 500;
+    color: var(--gloom);
+  }
+  .gpick:hover,
+  .gpick.on,
+  .gnew:hover {
+    background: color-mix(in srgb, white 8%, transparent);
+  }
+  .bandwrap {
+    position: relative;
+    flex: none;
+  }
+  /* A transparent sheet behind the menu: the click that closes it is the click
+     anywhere else, and it must not also land on whatever is underneath. */
+  .gscrim {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: transparent;
+    border: 0;
+    cursor: default;
+  }
+  .gmenu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 14px;
+    z-index: 41;
+    width: 340px;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: 0 10px 30px color-mix(in srgb, black 22%, transparent);
+    overflow: hidden;
+  }
+  .glist {
+    max-height: 360px;
+    overflow: auto;
+    padding: 6px;
+  }
+  .gsearch {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font: inherit;
+    font-size: 11.5px;
+    color: var(--fg-dim);
+    background: transparent;
+    border: 0;
+    border-top: 1px solid var(--line);
+    padding: 8px 13px;
+    cursor: pointer;
+  }
+  .gsearch:hover {
+    color: var(--gloom-deep);
+  }
+  /* The sidebar's edge is its resize handle: a hairline that lights when you
+     find it, over a wider invisible target so it does not have to be aimed at. */
+  .sgrip {
+    position: absolute;
+    top: 0;
+    right: -3px;
+    bottom: 0;
+    width: 6px;
+    z-index: 2;
+    cursor: col-resize;
+  }
+  .sgrip:hover,
+  .sgrip.dragging {
+    background: linear-gradient(
+      to right,
+      transparent 2px,
+      var(--accent) 2px,
+      var(--accent) 4px,
+      transparent 4px
+    );
+  }
+  /* What is left of a hidden sidebar: a strip you can click to bring it back,
+     where the sidebar was — not a word in the header. */
+  .srail {
+    flex: none;
+    width: 14px;
+    font: inherit;
+    font-size: 11px;
+    color: var(--fg-faint);
+    background: var(--bg-raised);
+    border: 0;
+    border-right: 1px solid var(--line);
+    padding: 0;
+    cursor: pointer;
+  }
+  .srail:hover {
+    color: var(--accent);
+    background: var(--bg-inset);
+  }
   .gclose {
     font: inherit;
     font-size: 11.5px;
@@ -2045,7 +2257,8 @@
   /* Narrow on purpose: the code pane is the reason the tool exists, and three
      columns on a laptop squeeze it. ⌘\ takes this away entirely. */
   .side {
-    flex: 0 0 224px;
+    position: relative;
+    flex: 0 0 240px;
     min-width: 0;
     display: flex;
     flex-direction: column;
@@ -2083,12 +2296,6 @@
   .scount {
     font-family: var(--mono);
     letter-spacing: 0;
-  }
-  .glooms {
-    flex: none;
-    max-height: 38%;
-    overflow: auto;
-    padding: 0 6px;
   }
   .gitem {
     display: flex;
