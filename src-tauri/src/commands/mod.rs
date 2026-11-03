@@ -1,4 +1,5 @@
 pub mod docs;
+pub mod hub;
 pub mod files;
 pub mod projects;
 

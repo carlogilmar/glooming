@@ -1123,13 +1123,15 @@
    * the rest — so it needs a way in rather than a second listener here that could
    * disagree with the buttons about state.
    */
-  export function toggleRead() {
+  /** Returns whether read mode is on afterwards — the shell retries entering it. */
+  export function toggleRead(): boolean {
     // Leaving is never gated. The conditions decide whether read mode can be
     // *entered* — a note with no references has nothing to walk — and gating the
     // exit on them too meant that anything which emptied `steps` mid-read (a
     // re-render landing between two files, a note edited elsewhere) locked you
     // in: the button vanished and ⌘R was refused by the same test.
     if (reading || (canRead && !editing && stops.length)) toggleReading();
+    return reading;
   }
 
   export function toggleEdit() {

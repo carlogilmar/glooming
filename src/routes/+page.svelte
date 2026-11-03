@@ -6,7 +6,7 @@
   import CodePane from "$lib/components/CodePane.svelte";
   import DocPane from "$lib/components/DocPane.svelte";
   import Divider from "$lib/components/Divider.svelte";
-  import Library from "$lib/components/Library.svelte";
+  import Hub from "$lib/components/Hub.svelte";
   import FnPalette from "$lib/components/FnPalette.svelte";
   import HelpModal from "$lib/components/HelpModal.svelte";
   import FilePalette from "$lib/components/FilePalette.svelte";
@@ -19,7 +19,8 @@
   import { theme } from "$lib/stores/theme.svelte";
   import { focus } from "$lib/stores/focus.svelte";
   import * as ipc from "$lib/ipc";
-  import type { Doc, DocSummary, IndexedModule, Range, ReadingFile } from "$lib/ipc";
+  import type { Doc, Hub as HubData, IndexedModule, Range, ReadingFile } from "$lib/ipc";
+  import { pathsToCheck } from "$lib/hub";
 
   /**
    * The project is what you explore; a gloom is an optional note inside it.
@@ -44,8 +45,8 @@
   let files = $state<ReadingFile[]>([]);
   let currentPath = $state<string | null>(null);
   let doc = $state<Doc | null>(null);
-  /** This project's glooms, most recent first — the sidebar's top half. */
-  let glooms = $state<DocSummary[]>([]);
+  /** This project's glooms and topics — what the Hub draws. */
+  let hubData = $state<HubData>({ topics: [], glooms: [] });
   /** Paths the prose actually references — the tree marks their modules. */
   let referenced = $state<Set<string>>(new Set());
   /** The doc pane instance, so ⌘R and ⌘E can reach its mode toggles. */
@@ -62,7 +63,14 @@
   let saving = $state(false);
   let dirty = $state(false);
   let error = $state<string | null>(null);
-  let showLibrary = $state(false);
+  /**
+   * The Hub asked for with ⌘K or `⌂ Hub` while something is open. It takes the
+   * two panes, exactly as it does when nothing is — the same page, not a modal
+   * over the work. A modal was built first and cut: the index is a place you go
+   * to, and a sheet over the code made it a detour you had to dismiss.
+   */
+  let hubPage = $state(false);
+  let hubRef = $state<ReturnType<typeof Hub> | null>(null);
   /** ⌘T — search the project by name, or paste a path. */
   let showFiles = $state(false);
   /** ⌘P — jump to a function by name. */
@@ -343,6 +351,8 @@
   /** Open a file in the code pane, as a step in the trail. */
   async function openPath(path: string, step = true) {
     error = null;
+    // Opening a file is leaving the Hub, wherever it was opened from.
+    hubPage = false;
     try {
       const f = byPath(files, path) ? (byPath(files, path) as ReadingFile) : await loadFile(path);
       if (step && currentPath && currentPath !== f.path) {
@@ -457,9 +467,68 @@
   async function loadGlooms() {
     if (!project) return;
     try {
-      glooms = await ipc.listDocs(project.id, undefined, 200);
+      hubData = await ipc.hub(project.id);
     } catch {
-      glooms = [];
+      hubData = { topics: [], glooms: [] };
+    }
+  }
+
+  /**
+   * The Hub fills the two panes when nothing is open yet, or when you asked for
+   * it. Opening a gloom or a file from anywhere steps it aside; esc returns to
+   * whatever was open, which is still there — the gloom, the file, the trail.
+   */
+  const hubFull = $derived(!!project && (hubPage || (!doc && !currentPath)));
+  /** There is work behind the Hub to go back to. */
+  const hubOverWork = $derived(hubFull && (!!doc || !!currentPath));
+
+  function toggleHub() {
+    if (!project) return;
+    if (hubFull) {
+      // Back to the work, if there is any; with nothing open the Hub is the page.
+      hubPage = false;
+      return;
+    }
+    // Read mode is a mode over the panes the Hub is about to replace.
+    if (readingNow) docPane?.toggleRead();
+    hubPage = true;
+    void loadGlooms();
+  }
+
+  /**
+   * The Hub says which glooms are broken, which needs the outlines of every file
+   * they name. Read them all at once and adopt them in ONE assignment: a file at
+   * a time would re-render the Hub — and every open pane — once per file.
+   */
+  async function loadForHub() {
+    const want = pathsToCheck(hubData.glooms, index, files);
+    if (!want.length) return;
+    const read = (await Promise.all(want.map((p) => ipc.openFile(p).catch(() => null)))).filter(
+      (f): f is ReadingFile => !!f,
+    );
+    const have = new Set(files.map((f) => f.path));
+    const fresh = read.filter((f) => !have.has(f.path));
+    if (fresh.length) files = [...files, ...fresh];
+  }
+  $effect(() => {
+    if (!hubFull) return;
+    hubData;
+    index;
+    void loadForHub();
+  });
+
+  /**
+   * Open a gloom from the Hub, optionally straight into read mode. Reading needs
+   * the note rendered and its named files loaded before there is anything to
+   * walk, so it is retried for a moment rather than timed once.
+   */
+  async function openFromHub(id: number, read: boolean) {
+    hubPage = false;
+    await openGloom(id);
+    if (!read) return;
+    for (let i = 0; i < 20 && !readingNow; i++) {
+      await new Promise((r) => setTimeout(r, 150));
+      if (docPane?.toggleRead()) return;
     }
   }
 
@@ -500,7 +569,8 @@
     index = [];
     tree = [];
     treeOpen = new Set();
-    glooms = [];
+    hubData = { topics: [], glooms: [] };
+    hubPage = false;
     back = [];
     fwd = [];
     referenced = new Set();
@@ -518,9 +588,6 @@
   }
 
   // ---- glooms --------------------------------------------------------------
-
-  /** The band's gloom picker — the project's glooms, a click away from anywhere. */
-  let picking = $state(false);
 
   /**
    * Start a gloom. It opens with its name selected, so naming it costs a
@@ -576,6 +643,8 @@
     dirty = false;
     renaming = null;
     referenced = new Set();
+    // Its name, tags and prose may have changed since the Hub last read them.
+    void loadGlooms();
   }
 
   /**
@@ -678,12 +747,15 @@
     const meta = e.metaKey || e.ctrlKey;
     const key = e.key.toLowerCase();
 
+    // The Hub answers first while it is on screen — its ↑/↓, Space, ↵ and esc
+    // mean something different there — unless a dialog is over it.
+    if (hubFull && !showHelp && !showFiles && !showPalette && hubRef?.key(e)) return;
+
     if (e.key === "Escape") {
-      if (picking) picking = false;
-      else if (showHelp) showHelp = false;
+      if (showHelp) showHelp = false;
       else if (showPalette) showPalette = false;
       else if (showFiles) showFiles = false;
-      else if (showLibrary) showLibrary = false;
+      else if (hubOverWork) hubPage = false;
       // Read mode is a mode, and every mode needs an escape that does not depend
       // on finding the button that started it.
       else if (readingNow) docPane?.toggleRead();
@@ -727,7 +799,7 @@
     }
     if (meta && key === "k") {
       e.preventDefault();
-      showLibrary = !showLibrary;
+      toggleHub();
       return;
     }
     if (meta && e.key === "\\") {
@@ -932,6 +1004,20 @@
           class:named
           class:unnamed={!!doc && !doc.title && renaming === null}
         >
+          <!-- The ways around the knowledge base come first, where the band starts:
+               they are the same whatever gloom you are in, so they get a fixed
+               place rather than drifting after a name of any length. There is no
+               `close ×` any more — the Hub is how you move between glooms. -->
+          <button
+            class="gpick"
+            class:on={hubFull}
+            onclick={toggleHub}
+            title="This project's glooms, as a table of contents (⌘K)"
+          >
+            ⌂ Hub <kbd>⌘K</kbd>
+          </button>
+          <button class="gnew" onclick={newGloom} title="Start a gloom">+ New</button>
+          <span class="gsep"></span>
           {#if doc}
             {#if renaming !== null}
               <input
@@ -995,6 +1081,15 @@
                 <button class="gtag add" onclick={() => (tagging = true)} title="Add a tag">+</button>
               {/if}
             </span>
+          {:else if hubFull && !currentPath}
+            <span class="ghub">
+              The Hub
+              <small>
+                {hubData.glooms.length}
+                {hubData.glooms.length === 1 ? "gloom" : "glooms"} in {hubData.topics.length}
+                {hubData.topics.length === 1 ? "topic" : "topics"}
+              </small>
+            </span>
           {:else}
             <span class="gexplore">Exploring — nothing is saved</span>
           {/if}
@@ -1004,55 +1099,10 @@
           {#if doc && !doc.title && renaming === null}
             <span class="nudge">say what you are here to find out</span>
           {/if}
-          <button class="gpick" class:on={picking} onclick={() => (picking = !picking)} title="This project's glooms">
-            Glooms <b>{glooms.length}</b> ▾
-          </button>
-          <button class="gnew" onclick={newGloom} title="Start a gloom">+ New</button>
-          {#if doc}
-            <button class="gclose" onclick={closeGloom} title="Close the note and keep exploring">
-              close ×
-            </button>
-          {/if}
           <span class="glabel">Gloom</span>
         </div>
       {/key}
 
-      {#if picking}
-        <!-- Outside the band, because the band clips (its opening sweep needs
-             `overflow: hidden`), and a menu inside it would render every time and
-             be visible never — the file strip's bug, waiting to repeat. -->
-        <button class="gscrim" aria-label="Close" onclick={() => (picking = false)}></button>
-        <div class="gmenu">
-          <div class="glist">
-            {#each glooms as g (g.id)}
-              <button
-                class="gitem"
-                class:on={doc?.id === g.id}
-                onclick={() => {
-                  picking = false;
-                  openGloom(g.id);
-                }}
-              >
-                <span class="gn" class:untitled={!g.title}>
-                  {(doc?.id === g.id ? doc.title : g.title) || "Unnamed gloom"}
-                </span>
-                <span class="gage">{when(g.updatedAt)}</span>
-              </button>
-            {:else}
-              <p class="sempty">None yet. Start one when you find something worth writing down.</p>
-            {/each}
-          </div>
-          <button
-            class="gsearch"
-            onclick={() => {
-              picking = false;
-              showLibrary = true;
-            }}
-          >
-            Search names, tags and prose <kbd>⌘K</kbd>
-          </button>
-        </div>
-      {/if}
     </div>
 
     <div class="work">
@@ -1111,6 +1161,28 @@
         <button class="srail" onclick={toggleSide} title="Show the sidebar (⌘\)">›</button>
       {/if}
 
+      {#if hubFull && project}
+        <!-- Nothing open yet, or asked for: the Hub takes both panes. -->
+        <Hub
+          bind:this={hubRef}
+          {project}
+          data={hubData}
+          {files}
+          {index}
+          {known}
+          {labels}
+          current={doc?.id ?? null}
+          back={hubOverWork}
+          onopen={openFromHub}
+          onnew={() => {
+            hubPage = false;
+            void newGloom();
+          }}
+          onchanged={loadGlooms}
+          ondeleted={onDocDeleted}
+          onback={() => (hubPage = false)}
+        />
+      {:else}
       <div class="split">
         <!-- The code pane joins read mode's theme, so both surfaces agree about
              whether the lights are out. -->
@@ -1135,7 +1207,7 @@
                   trail={{ back: back.length > 0, forward: fwd.length > 0 }}
                   onback={goBack}
                   onforward={goForward}
-                  keysEnabled={!showLibrary && !showFiles && !showPalette && !showHelp}
+                  keysEnabled={!showFiles && !showPalette && !showHelp}
                 />
               {/key}
             {:else}
@@ -1170,6 +1242,7 @@
           />
         </div>
       </div>
+      {/if}
     </div>
 
     <div class="status">
@@ -1242,17 +1315,6 @@
     <HelpModal onclose={() => (showHelp = false)} />
   {/if}
 
-  {#if showLibrary && project}
-    <Library
-      {project}
-      onopen={(d) => {
-        showLibrary = false;
-        openGloom(d.id);
-      }}
-      ondelete={onDocDeleted}
-      onclose={() => (showLibrary = false)}
-    />
-  {/if}
 </div>
 
 <style>
@@ -1318,6 +1380,7 @@
        to be pushed darker. */
     color: var(--gloom);
   }
+
   .gname {
     position: relative;
     font-family: var(--serif);
@@ -1566,6 +1629,7 @@
       animation: bandLift var(--greet) ease 0.18s both;
       width: 100%;
     }
+
     /* The wipe becomes a rule that appears and fades: the *event* survives, only
        the travel is dropped. Deleting it would take the signal with it. */
     .gloombar.named .gname::after {
@@ -2138,78 +2202,82 @@
     color: var(--gloom-dim);
     white-space: nowrap;
   }
+  /* The Hub, filled in the band's own bright teal: the one way around the
+     knowledge base, so it is the strongest thing on the line. Ink on teal, 7.4:1
+     light and 11.1:1 dark. */
   .gpick,
   .gnew {
     flex: none;
     font: inherit;
     font-size: 11.5px;
-    color: var(--gloom-ink);
-    background: transparent;
-    border: 1px solid color-mix(in srgb, white 18%, transparent);
+    font-weight: 600;
     border-radius: 5px;
-    padding: 3px 9px;
+    padding: 3px 10px;
     cursor: pointer;
     white-space: nowrap;
   }
-  .gpick b {
-    font-family: var(--mono);
-    font-weight: 500;
-    color: var(--gloom);
+  .gpick {
+    color: var(--gloom-bg);
+    background: var(--gloom);
+    border: 1px solid var(--gloom);
   }
-  .gpick:hover,
-  .gpick.on,
+  .gpick:hover {
+    filter: brightness(1.08);
+  }
+  /* Already on the Hub: the button stays, hollowed, so it reads as "you are here"
+     and a click goes back to what you had open. */
+  .gpick.on {
+    color: var(--gloom);
+    background: transparent;
+  }
+  /* New, in its own hue — a tint rather than a fill, so it sits one step below
+     the Hub. */
+  .gnew {
+    color: var(--gloom-new);
+    background: color-mix(in srgb, var(--gloom-new) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--gloom-new) 45%, transparent);
+  }
   .gnew:hover {
-    background: color-mix(in srgb, white 8%, transparent);
+    background: color-mix(in srgb, var(--gloom-new) 24%, transparent);
+  }
+  /* Between the actions and the name: a hairline, so the name reads as the
+     start of its own thing rather than a third button. */
+  .gsep {
+    flex: none;
+    width: 1px;
+    height: 18px;
+    margin: 0 2px;
+    background: color-mix(in srgb, white 16%, transparent);
   }
   .bandwrap {
     position: relative;
     flex: none;
   }
-  /* A transparent sheet behind the menu: the click that closes it is the click
-     anywhere else, and it must not also land on whatever is underneath. */
-  .gscrim {
-    position: fixed;
-    inset: 0;
-    z-index: 40;
-    background: transparent;
-    border: 0;
-    cursor: default;
+  /* The Hub names itself where a gloom's name would be: on the Hub, that is
+     where you are. */
+  .ghub {
+    font-family: var(--serif);
+    font-size: 16px;
+    color: var(--gloom-ink);
+    white-space: nowrap;
   }
-  .gmenu {
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 14px;
-    z-index: 41;
-    width: 340px;
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-raised);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    box-shadow: 0 10px 30px color-mix(in srgb, black 22%, transparent);
-    overflow: hidden;
+  .ghub small {
+    margin-left: 8px;
+    font-family: var(--sans);
+    font-size: 11px;
+    color: var(--gloom-dim);
   }
-  .glist {
-    max-height: 360px;
-    overflow: auto;
-    padding: 6px;
+  .gpick kbd {
+    margin-left: 4px;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 400;
+    /* Whatever the button's ink is, a step quieter — it is teal-on-ink when
+       hollow and ink-on-teal when filled, and one fixed grey fails one of them. */
+    color: inherit;
+    opacity: 0.7;
   }
-  .gsearch {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font: inherit;
-    font-size: 11.5px;
-    color: var(--fg-dim);
-    background: transparent;
-    border: 0;
-    border-top: 1px solid var(--line);
-    padding: 8px 13px;
-    cursor: pointer;
-  }
-  .gsearch:hover {
-    color: var(--gloom-deep);
-  }
+
   /* The sidebar's edge is its resize handle: a hairline that lights when you
      find it, over a wider invisible target so it does not have to be aimed at. */
   .sgrip {
@@ -2248,18 +2316,6 @@
   .srail:hover {
     color: var(--accent);
     background: var(--bg-inset);
-  }
-  .gclose {
-    font: inherit;
-    font-size: 11.5px;
-    color: var(--gloom-dim);
-    background: transparent;
-    border: 0;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .gclose:hover {
-    color: var(--gloom-ink);
   }
   .work {
     flex: 1;
@@ -2308,49 +2364,6 @@
   .scount {
     font-family: var(--mono);
     letter-spacing: 0;
-  }
-  .gitem {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    width: 100%;
-    font: inherit;
-    text-align: left;
-    color: var(--fg);
-    background: transparent;
-    border: 0;
-    border-radius: 5px;
-    padding: 5px 7px;
-    cursor: pointer;
-  }
-  .gitem:hover {
-    background: var(--bg-inset);
-  }
-  .gitem.on {
-    background: color-mix(in srgb, var(--gloom-deep) 13%, transparent);
-  }
-  .gn {
-    flex: 1;
-    min-width: 0;
-    font-family: var(--serif);
-    font-size: 13px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .gitem.on .gn {
-    color: var(--gloom-deep);
-    font-weight: 600;
-  }
-  .gn.untitled {
-    font-style: italic;
-    color: var(--fg-faint);
-  }
-  .gage {
-    flex: none;
-    font-size: 10px;
-    color: var(--fg-faint);
-    font-variant-numeric: tabular-nums;
   }
   .sempty {
     margin: 2px 8px 6px;

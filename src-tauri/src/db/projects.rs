@@ -59,10 +59,18 @@ pub async fn forget(pool: &SqlitePool, id: i64) -> AppResult<()> {
             if p.gloom_count == 1 { "it" } else { "them" },
         )));
     }
+    // Empty topics go with it: with no glooms left they are headings over
+    // nothing, and the foreign key would otherwise refuse the delete.
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM topics WHERE project_id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM projects WHERE id = ?")
         .bind(id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(())
 }
 

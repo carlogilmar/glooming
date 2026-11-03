@@ -17,6 +17,40 @@ pub struct Doc {
     pub markdown: String,
     pub created_at: String,
     pub updated_at: String,
+    /// Its topic in the Hub; `None` is Unsorted.
+    pub topic_id: Option<i64>,
+    /// Its place within that topic.
+    pub position: i64,
+}
+
+/// A section of the Hub: a name and a place in the reading order.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct Topic {
+    pub id: i64,
+    pub project_id: i64,
+    pub name: String,
+    pub position: i64,
+    pub created_at: String,
+}
+
+/// Everything the Hub draws, in one payload: the topics in order, and every
+/// gloom with its prose — the Hub reads the prose to say which modules a gloom
+/// walks and whether its references still resolve, so a summary would only mean
+/// a second round trip.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Hub {
+    pub topics: Vec<Topic>,
+    pub glooms: Vec<Doc>,
+}
+
+/// Where one gloom goes when the Hub is rearranged.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Placement {
+    pub id: i64,
+    pub topic_id: Option<i64>,
 }
 
 /// What the sidebar and the library list — deliberately without `markdown`, so

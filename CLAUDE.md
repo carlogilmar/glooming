@@ -211,6 +211,7 @@ rm -rf src-tauri/target      # then build as usual; ~2 min from cold
 
 ```
 mockup/workspace.html          THE CONTRACT for the project model: home, exploring, writing, glooming
+mockup/hub.html                the Hub: topics in columns, Recent, quick look (its modal state was cut)
 mockup/index.html              the original single-file contract — parser line numbers are pinned to it
 mockup/deps.html               the reach diagram's visual contract
 mockup/surface.html            the surface's visual contract
@@ -249,7 +250,7 @@ src/
       RefMenu.svelte           / — insert a reference to any loaded function
       HelpModal.svelte         ? — what everything does
       Divider.svelte           draggable split, double-click reset
-      Library.svelte           ⌘K — one project's glooms: search, sort, keyboard nav, delete
+      Hub.svelte               the project's front page and ⌘K: topics, Recent, filter, quick look, delete
     stores/
       theme.svelte.ts          ported from Alexandria; lgtm defaults to LIGHT
       focus.svelte.ts          which function is selected — shared by BOTH panes
@@ -264,6 +265,7 @@ src/
     when.ts                    relative dates
     deps.ts                    draws the reach diagram (see mockup/deps.html)
     tags.ts                    a gloom's tags, in docs.label
+    hub.ts                     what the Hub says about a gloom (by rendering it), grouping, moves
     exporting.ts               a gloom's name → a filename
     ipc.ts                     typed wrappers over invoke()
 
@@ -275,11 +277,14 @@ src-tauri/
     git.rs                     .git/HEAD read + lazy blame + log
     db/{mod,models,docs}.rs    pool, serde shapes, gloom CRUD
     db/projects.rs             remembered folders and their gloom counts
+    db/topics.rs               the Hub's topics, and arranging glooms in them
     commands/files.rs          open a file (always live), branch, blame
     commands/docs.rs           gloom CRUD, export
+    commands/hub.rs            the Hub's payload, topic CRUD, arrange
     commands/projects.rs       open a folder, walk every file in it, index its modules
   migrations/0001…0003         history
   migrations/0004_glooms_in_a_project.sql   drops snapshots and file sets; glooms belong to a project
+  migrations/0005_topics.sql   topics, and a gloom's topic and place
   tests/pipeline.rs            end-to-end parse checks, pinned to the mockup
 ```
 
@@ -323,8 +328,7 @@ changed are replaced, so unchanged panes do not re-render.
 **Glooms belong to a project.** `docs.project_id` has no `ON DELETE CASCADE`, and
 `forget_project` refuses while glooms exist: tidying the recents list must never
 be the gesture that deletes what you wrote. Home lists projects, with their gloom
-counts; the sidebar lists the open project's glooms; `⌘K` searches them, prose
-included.
+counts; inside one, the Hub lists its glooms (below).
 
 **The band is always there.** Inside a project the ink band under the header is
 where you are: a gloom's name and tags, or *Exploring — nothing is saved* — and
@@ -339,7 +343,15 @@ stays mounted in that state (`gloom={false}`) because it owns the reach
 diagram's hover and trace wiring. A new gloom is unnamed, opens with its name
 field focused, and starts as the invitation (`INVITATION` in `commands/docs.rs`).
 Opening a gloom lands the code pane on the first module its prose names; closing
-one (`close ×` in the band) returns to exploring and keeps your place.
+one is done by opening another from the Hub. `close ×` was cut from the band
+once the Hub became the way between glooms: closing to "no gloom" was a state
+nobody went to on purpose.
+
+**The band starts with its actions**: `⌂ Hub` filled in `--gloom` (hollowed while
+you are on the Hub, so it reads "you are here" and a click goes back), then
+`+ New` tinted in `--gloom-new`, a lilac that means nothing else in the chrome,
+then a hairline and the name. They are the same in every gloom, so they get a
+fixed place instead of drifting after a name of any length.
 
 **The sidebar** (`⌘\`, or `‹` in its own header; hidden in read mode) is a **file
 tree, the way an editor shows one**. Its right edge resizes it (160–520px,
@@ -1791,20 +1803,77 @@ Added and removed in the band, beside the name, because they are part of what th
 gloom is *called*. `parseTags` drops blanks and duplicates and preserves order —
 the order you typed them reads as importance.
 
-### The library
+### The Hub
 
-`⌘K`, or the `⌘K` button above the sidebar's glooms: one project's glooms, for when
-the sidebar's list is not enough. Search over the name, the tags and the prose
-(`list` matches `markdown` too — a gloom is usually remembered by what it says),
-Recent / Name, `↑`/`↓`/`↵`.
+`mockup/hub.html` is the contract. A project's front page and its table of
+contents: **opening a project lands on it**, in the space the two empty panes used
+to take (`hubFull` — no gloom and no file open). Once you are reading, `⌂ Hub` in
+the band or `⌘K` brings the **same page** back in place of the two panes
+(`hubPage`); opening a gloom or any file leaves it, and esc or `← Back` returns
+to what was open, which stayed open behind it. It replaced the library, so it
+also searches prose and deletes.
 
-**Deleting reports back.** The sidebar is a cached query and nothing it reads
-changes when a row goes away, so `ondelete` refreshes it — and closes the gloom if
-it is the one on screen, or the next autosave writes to a row that no longer
-exists. Pinned by `saving_to_a_deleted_doc_is_an_error_not_a_silent_no_op`.
+**It was a modal first, and that was cut.** A sheet over the code made the index
+a detour you had to dismiss, where it is a place you go to — and the sidebar, the
+band and the trail are all still there around the page, so nothing about where
+you were is lost by going.
 
-**Deleting asks first**, and says what is lost: the note, and only the note — no
-code is touched, because a gloom never holds any.
+**Topics are ordered sections; a gloom sits in exactly one**, or in Unsorted
+(`topic_id` NULL), at a `position` within it. One place per gloom because a table
+of contents needs one place and an order per entry — tags already cover "belongs
+to several", and a gloom under three topics would be read three times by the
+newcomer the order is for. New glooms land at the top of Unsorted. Removing a
+topic moves its glooms to Unsorted in the same transaction; it never deletes one.
+`forget_project` takes a project's (necessarily empty) topics with it.
+
+**The order is the reading order**, numbered across the whole Hub, topic to
+topic; Unsorted has no numbers because it is not on the path yet. A drag sends the
+**whole arrangement** (`arrange_hub`) in one transaction rather than a move: a
+drag changes several places at once and the Hub already holds the result. It does
+**not touch `updated_at`** — filing a note is not writing it, and Recent is the
+order you wrote in. Pinned by
+`arranging_orders_topics_and_glooms_without_touching_updated_at`.
+
+**Dragging is pointer events, not HTML5 drag and drop.** DnD was built first and
+did nothing in the app: Tauri's window handles files dropped onto it and takes the
+drag events before the page sees them. Pointer events are the page's own. A press
+becomes a drag after 5px, so a click still opens the row, and the click ending a
+real drag is swallowed; the target is found with `elementFromPoint` against
+`data-gloom` / `data-topic`, and the ghost under the pointer is
+`pointer-events: none` or it would be what that finds. Esc cancels; the index
+scrolls when the pointer nears its top or bottom edge.
+
+**It is an index, so it is dense.** One 26px line per gloom, topics flowing in
+columns (`auto-fill, minmax(330px, 1fr)`), so thirty glooms fit on a screen. The
+first mockup gave each gloom a two-line card and was a scroll at thirty. Tags are
+their **words**, small and grey — they were coloured dots first, and nobody could
+read them without a legend. Health shows **only when something is wrong** (`⚠ 2`);
+a tick on every row would be a wall. The detail — the walk, what is broken, the
+opening paragraph, Open / ▷ Gloom / Delete — is a **quick look** (Space or `i`).
+
+**`Topics | Recent`**, remembered per project (`hubView:<id>`): Recent is every
+gloom newest first, the topic named on the row, no numbers and no dragging.
+
+**What the Hub says is derived by rendering the note** (`factsOf` in `hub.ts`),
+with the note's own markdown-it and resolver: broken = `code.ref.broken`,
+ambiguous = `code.ref.ambiguous`, the walk = the resolved chips' files in order.
+A second parser for "is this broken" would be a second opinion, and the day the two
+disagreed the Hub would call a gloom healthy while the note struck it through. A
+gloom naming a file not yet loaded is **checking**, never healthy — "not read yet"
+is not "fine". The shell reads every named file while the Hub is shown and adopts
+them in **one** assignment; a file at a time re-rendered every pane once per file.
+
+**The Hub's keys are offered by the shell's handler**, not a second listener:
+`hubRef.key(e)` runs first while the Hub is on screen and returns whether it used
+the key, so ↑/↓, Space, ↵, `/` and esc mean the Hub's things there and the code
+pane's elsewhere. `▷ Gloom` from the Hub opens the gloom and *retries* entering read
+mode for up to 3s (`toggleRead` returns whether it is on), because there is nothing
+to walk until the note has rendered and its named files have loaded.
+
+**Deleting asks first** (in the quick look), and says what is lost: the note, and
+only the note — no code is touched, because a gloom never holds any. It closes the
+gloom if it is the one open, or the next autosave would write to a row that no
+longer exists (`saving_to_a_deleted_doc_is_an_error_not_a_silent_no_op`).
 
 ## Known quirks and hard-won lessons
 

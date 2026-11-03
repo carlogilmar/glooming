@@ -137,21 +137,42 @@ export interface Outline {
   tests: TestInfo | null;
 }
 
-/** A gloom, as the sidebar and the library list it — without the prose. */
-export interface DocSummary {
+/** A gloom: prose and nothing else. No snapshot, no file list. */
+export interface Doc {
   id: number;
   projectId: number;
   /** Empty until you name it. */
   title: string;
   /** Tags, comma-separated. */
   label: string | null;
+  markdown: string;
   createdAt: string;
   updatedAt: string;
+  /** Its topic in the Hub; null is Unsorted. */
+  topicId: number | null;
+  /** Its place within that topic. */
+  position: number;
 }
 
-/** A gloom: prose and nothing else. No snapshot, no file list. */
-export interface Doc extends DocSummary {
-  markdown: string;
+/** A section of the Hub: a name and a place in the reading order. */
+export interface Topic {
+  id: number;
+  projectId: number;
+  name: string;
+  position: number;
+  createdAt: string;
+}
+
+/** Everything the Hub draws: topics in order, and every gloom with its prose. */
+export interface Hub {
+  topics: Topic[];
+  glooms: Doc[];
+}
+
+/** Where one gloom goes when the Hub is rearranged. */
+export interface Placement {
+  id: number;
+  topicId: number | null;
 }
 
 /** A file as it is on disk right now. */
@@ -215,10 +236,27 @@ export const saveDoc = (args: {
 
 export const loadDoc = (id: number) => invoke<Doc>("load_doc", { id });
 
-export const listDocs = (projectId: number, query?: string, limit = 200) =>
-  invoke<DocSummary[]>("list_docs", { projectId, query: query ?? null, limit });
-
 export const deleteDoc = (id: number) => invoke<void>("delete_doc", { id });
+
+// ---- the Hub ---------------------------------------------------------------
+
+export const hub = (projectId: number) => invoke<Hub>("hub", { projectId });
+
+export const createTopic = (projectId: number, name: string) =>
+  invoke<Topic>("create_topic", { projectId, name });
+
+export const renameTopic = (id: number, name: string) =>
+  invoke<Topic>("rename_topic", { id, name });
+
+/** Its glooms move to Unsorted; none is deleted. */
+export const deleteTopic = (id: number) => invoke<void>("delete_topic", { id });
+
+/**
+ * The whole arrangement after a drag: topics in order, and every gloom in order
+ * with its topic — its place is its index among the glooms listed for that topic.
+ */
+export const arrangeHub = (projectId: number, topicOrder: number[], glooms: Placement[]) =>
+  invoke<void>("arrange_hub", { projectId, topicOrder, glooms });
 
 /** Write the note to a path the save dialog chose. The only write outside the DB. */
 export const exportNote = (path: string, markdown: string) =>

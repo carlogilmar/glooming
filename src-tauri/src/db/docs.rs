@@ -19,15 +19,20 @@ pub async fn create(
     markdown: &str,
 ) -> AppResult<Doc> {
     let ts = now();
+    // A new gloom lands at the top of Unsorted: it has no place yet, and the
+    // top is where you will look for the one you just started.
     let id = sqlx::query(
-        "INSERT INTO docs (project_id, title, markdown, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO docs (project_id, title, markdown, created_at, updated_at, position)
+         VALUES (?, ?, ?, ?, ?,
+                 (SELECT COALESCE(MIN(position), 0) - 1 FROM docs
+                   WHERE project_id = ? AND topic_id IS NULL))",
     )
     .bind(project_id)
     .bind(title)
     .bind(markdown)
     .bind(&ts)
     .bind(&ts)
+    .bind(project_id)
     .execute(pool)
     .await?
     .last_insert_rowid();
@@ -77,6 +82,17 @@ pub async fn delete(pool: &SqlitePool, id: i64) -> AppResult<()> {
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// Every gloom in a project, in Hub order: by place, then newest first among
+/// equals. The frontend groups them by topic; Recent re-sorts by `updated_at`.
+pub async fn in_project(pool: &SqlitePool, project_id: i64) -> AppResult<Vec<Doc>> {
+    Ok(sqlx::query_as::<_, Doc>(
+        "SELECT * FROM docs WHERE project_id = ? ORDER BY position, updated_at DESC",
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await?)
 }
 
 /// A project's glooms, most recently touched first. `query` matches the name

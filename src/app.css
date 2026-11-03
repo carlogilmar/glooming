@@ -50,6 +50,11 @@
   --head-bg:   #17403d;
   --gloom-ink: #f6faf9;
   --gloom-dim: #9fb8b4;
+  /* The band's second action. Teal is taken by the Hub — the way around the
+     knowledge base — so starting a new gloom gets a hue of its own: a lilac that
+     means nothing elsewhere in the chrome (not the accent, not --read's gold, not
+     the amber that says "look again"). Ink-only, like --gloom: 7.4:1 on the light band, 9.2:1 dark. */
+  --gloom-new: #c9b8ff;
   --sel:       #eaf1fd;
   --shadow:    0 1px 2px rgba(16, 24, 40, .04);
 
@@ -178,6 +183,7 @@
   --head-bg:   #112b29;
   --gloom-ink: #f2f7f6;
   --gloom-dim: #93aeaa;
+  --gloom-new: #c9b8ff;
   --sel:       #232d45;
   --shadow:    none;
 

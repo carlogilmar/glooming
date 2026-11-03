@@ -150,15 +150,15 @@
         {
           action: "Start a gloom",
           what:
-            "`+ New` in the band at the top. It opens with its name selected; exploring without " +
-            "one saves nothing at all. `Glooms ▾` beside it lists this project's glooms",
+            "`+ New` in the band at the top, or in the Hub. It opens with its name selected and " +
+            "lands in Unsorted; exploring without one saves nothing at all",
         },
         {
           action: "open a gloom",
           what:
             "Lands the code pane on the first module its prose names, which is where your " +
-            "understanding of it starts. `close ×` in its band goes back to exploring and keeps " +
-            "your place in the code",
+            "understanding of it starts. To move to another, go through the Hub (`⌂ Hub` at the " +
+            "start of the band, or ⌘K)",
         },
         { action: "Preview / Edit", what: "The rendered note, or its raw markdown" },
         {
@@ -187,7 +187,21 @@
             "the project can be followed",
         },
         { keys: ["⌘S"], what: "Force a save. Autosave already runs 800ms after you stop typing" },
-        { keys: ["⌘K"], what: "Search every gloom in this project — by name, tag or what it says" },
+        {
+          keys: ["⌘K"],
+          what:
+            "The Hub: this project's glooms as a table of contents. Opening a project lands there; " +
+            "once you are reading, ⌘K (or `⌂ Hub`) shows it again in place of the panes, and " +
+            "esc goes back to what you had open",
+        },
+        {
+          action: "the Hub",
+          what:
+            "Topics in reading order, one line per gloom — drag rows and topics, double-click a " +
+            "topic to rename it, `remove` sends its glooms to Unsorted. `Recent` lists everything " +
+            "newest first. `/` filters by name, tag or prose; ↑/↓ and ↵ open; Space looks inside, " +
+            "where Delete is. ⚠ marks a gloom whose references no longer match the code",
+        },
       ],
     },
     {
