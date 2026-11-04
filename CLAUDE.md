@@ -84,8 +84,8 @@ Deliberately identical to Alexandria and Xray, so all three are one stack.
 - **Frontend**: SvelteKit + `adapter-static` (SPA, **no SSR** — enforced by
   `src/routes/+layout.ts`), Svelte 5 runes (`$state` / `$derived` / `$effect`),
   Tailwind 4, TypeScript. `markdown-it` for the Gloom and the moduledoc,
-  `highlight.js` (core build, Elixir only) for code. `d3-hierarchy` is still in
-  `package.json` but unused since the treemap was cut — safe to remove.
+  `highlight.js` (core build, Elixir only) for code. (`d3-hierarchy` drew the
+  treemap and left with it.)
   `ignore` (Rust) walks the project with `.gitignore` honoured.
 - **Backend**: Rust + Tauri 2, `sqlx` against SQLite, `tree-sitter` +
   `tree-sitter-elixir` for parsing. DB at
