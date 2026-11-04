@@ -1,28 +1,37 @@
 # lgtm
 
 A desktop tool for **reading a codebase deeply** — onboarding to one you do not
-know yet is the case it is built for. You open a **project**; a sidebar holds its
-modules as a namespace tree, and opening one splits the window: source on the
-left, the live **views** of that module on the right — its surface, the boundary
-it reaches through. Following a call opens the next module, and your trail is
-walkable with `⌘[` / `⌘]`.
+know yet is the case it is built for. You open a **project** and land on its
+**Hub**: the project's glooms as a table of contents. Open a module — `⌘T`, the
+file tree (`⌘\`), a reference — and the window splits: source on the left,
+read-only and always live; on the right, the **Woop**, what the code shows you
+(its moduledoc, its surface, the boundary it reaches through). Following a call
+opens the next module, and your trail is walkable with `⌘[` / `⌘]`.
 
 Writing is optional. When there is something worth keeping you start a
 **gloom** — a note in the project's knowledge base, in your own words, whose
-references can name any function in the codebase. Clicking a reference focuses
-it in the code, and with `▷ Gloom` on, **scrolling the note walks the code in the
-order your prose takes it**, across modules. A project collects glooms, one per
-thing you worked out.
+references name any function in the codebase by its full module name. The right
+pane flips between the Woop and the Gloom (`⌘1` / `⌘2` / `⌘J`). Clicking a
+reference focuses it in the code, and **glooming** (`▷ Gloom`, `⌘R`) walks the
+code in the order your prose takes it, across modules — including ones nobody
+opened. A project collects glooms, one per thing you worked out, arranged in the
+Hub by topic.
 
 A gloom stores your prose and nothing else. The code is **always read live**, so
 a reference finds its function wherever it has moved, and strikes itself through
 when it is gone.
 
 Not every file is a module: a config script and a test suite get views of their
-own, and anything unrecognised says there is nothing to navigate by rather than
-showing empty boxes.
+own, any other file opens as plain read-only text, and the Woop says *File not
+supported* rather than showing empty boxes.
 
 Elixir is the only language so far. The architecture assumes more will follow.
+
+**The vocabulary** (UI words; the code keeps its older names): a **project** is a
+folder you explore; a **gloom** is a note (`docs`, `Doc`, `reading` in code); to
+**gloom** is to walk one in read mode, and **glooming** is doing it; the **Woop**
+is the live views (`ExploreSections`, `explore`); the **Hub** is the project's
+front page.
 
 > The name is the goal: a file is done when you understand it well enough to
 > say *looks good to me*.
@@ -56,16 +65,17 @@ get rebuilt:
 
 - **An arc diagram of the reading path**, drawn in a widened divider. It needed
   explaining, which meant it wasn't working. The same data as a plain two-axis
-  chart is legible — parked as a possible `lgtm:path` block, not built.
+  chart is legible — parked as a possible view, not built.
 - **A soft-wrap toggle.** Wrapping is now unconditional; there is no case where
   scrolling sideways to finish a line is the better trade.
 - **A blame legend in the footer.** The gutter already names each author where
   the author changes, which is the same information where you are looking.
 
-Git is touched in exactly three read-only places (see `src-tauri/src/git.rs`):
-the branch label is a plain read of `.git/HEAD`; `git log --follow` runs once at
-seed time for the stats block; and `git blame` shells out lazily, only when the
-button is pressed. Nothing ever mutates a repository.
+Git is touched in exactly two read-only places (see `src-tauri/src/git.rs`):
+the branch label is a plain read of `.git/HEAD`, and `git blame` shells out
+lazily, only when the button is pressed. Nothing ever mutates a repository.
+(`git::history` — `git log --follow` for the cut stats block — is still there,
+tested, and called by nothing.)
 
 ## Stack
 
@@ -73,8 +83,10 @@ Deliberately identical to Alexandria and Xray, so all three are one stack.
 
 - **Frontend**: SvelteKit + `adapter-static` (SPA, **no SSR** — enforced by
   `src/routes/+layout.ts`), Svelte 5 runes (`$state` / `$derived` / `$effect`),
-  Tailwind 4, TypeScript. `markdown-it` for the doc pane, `highlight.js`
-  (core build, Elixir only) for the code pane, `d3-hierarchy` for the treemap.
+  Tailwind 4, TypeScript. `markdown-it` for the Gloom and the moduledoc,
+  `highlight.js` (core build, Elixir only) for code. `d3-hierarchy` is still in
+  `package.json` but unused since the treemap was cut — safe to remove.
+  `ignore` (Rust) walks the project with `.gitignore` honoured.
 - **Backend**: Rust + Tauri 2, `sqlx` against SQLite, `tree-sitter` +
   `tree-sitter-elixir` for parsing. DB at
   `~/Library/Application Support/com.alertmedia.lgtm/lgtm.db`; migrations run
@@ -118,8 +130,8 @@ ground, `--gloom-deep` (the on-paper teal the app already needed) for everything
 drawn on it. Measured across the whole label band, the darkest pixel still gives
 black text **17.3:1**.
 
-What it draws is the app's own picture: the **strata** from `shape.ts` at 9%
-(thickness ∝ √lines, the same arithmetic), faded out through the middle so the two
+What it draws is the app's own picture: the **strata** of the cut `shape.ts` at 9%
+(thickness ∝ √lines; the script carries its own copy of the arithmetic), faded out through the middle so the two
 icons sit on quiet ground, and a dashed teal arrow from the app to the Applications
 alias. The plinths sit *below* the labels rather than through them — Finder puts a
 name about 42px under an icon's centre, and a line across a word is worse than no
@@ -211,6 +223,7 @@ rm -rf src-tauri/target      # then build as usual; ~2 min from cold
 
 ```
 mockup/workspace.html          THE CONTRACT for the project model: home, exploring, writing, glooming
+                               (its sidebar-of-glooms and split pane were since replaced — see the Hub, Woop and Gloom)
 mockup/hub.html                the Hub: topics in columns, Recent, quick look (its modal state was cut)
 mockup/index.html              the original single-file contract — parser line numbers are pinned to it
 mockup/deps.html               the reach diagram's visual contract
@@ -229,34 +242,34 @@ scripts/motion-audit.py        every animation vs its reduced-motion rule
 scripts/effect-audit.py        $effects that read and write the same $state
 scripts/component-audit.py     components imported but never rendered
 app-icon.png                   icon source (1024², RGBA); also copied to static/
-IMPLEMENTATION_PLAN.md         the reasoning behind every decision here (predates projects)
+IMPLEMENTATION_PLAN.md         the v1 reasoning, plus §10: what the project model changed and why
 README.md                      user-facing: clone, install, run, build
 
 src/
   app.css                      design tokens for light and dark; hljs → token mapping
   routes/
     +layout.svelte             theme init
-    +page.svelte               shell: home, the workspace (sidebar, split), index, trail, autosave
+    +page.svelte               shell: home, the band, the Hub or the workspace, file tree, index, trail, keys, autosave
   lib/
     components/
       CodePane.svelte          source, line numbers, blame, focus, search, vim motions, trail ← →
-      DocPane.svelte           views + note, preview/edit/read, references, the ambiguity chooser
+      DocPane.svelte           Woop | Gloom, preview/edit/read mode, references, the ambiguity chooser
       FontStepper.svelte       A− / A+, shared by both panes
-      ExploreSections.svelte   the live views: surface table + the boundary, per file kind
+      ExploreSections.svelte   the Woop: moduledoc, surface, reach — or settings, or the suite — per file kind
       Sky.svelte               the masthead's weather: bloom, cosmos or aurora, rolled per visit
       FilePalette.svelte       ⌘T — find a file in the project, or paste a path
       FileIcon.svelte          the tree's icons: folder, the Elixir drop, a page per kind
       FnPalette.svelte         ⌘P — jump to a function by name
-      RefMenu.svelte           / — insert a reference to any loaded function
+      RefMenu.svelte           / — insert a reference to the module on screen or one of its functions
       HelpModal.svelte         ? — what everything does
-      Divider.svelte           draggable split, double-click reset
+      Divider.svelte           the draggable split between code and the right pane, double-click reset
       Hub.svelte               the project's front page and ⌘K: topics, Recent, filter, quick look, delete
     stores/
       theme.svelte.ts          ported from Alexandria; lgtm defaults to LIGHT
       focus.svelte.ts          which function is selected — shared by BOTH panes
       fontSize.svelte.ts       a remembered, clamped font size; one per pane
     explore.ts                 what the views show: surface rows, reach lines
-    fileset.ts                 the index + loaded files: which module means what, and how it is shown
+    fileset.ts                 the index + loaded files: which module means what, how it is shown, the / vocabulary
     filetree.ts                the sidebar's file tree: rows, folding, mentioned files
     markdownit.ts              markdown-it + references (no blocks)
     refs.ts                    references in prose, resolved by name across the project
@@ -267,7 +280,7 @@ src/
     tags.ts                    a gloom's tags, in docs.label
     hub.ts                     what the Hub says about a gloom (by rendering it), grouping, moves
     moduledoc.ts               a module's @moduledoc, rendered for the Woop, with its headings
-    exporting.ts               a gloom's name → a filename
+    exporting.ts               a gloom's name → a filename (unused until export returns)
     ipc.ts                     typed wrappers over invoke()
 
 src-tauri/
@@ -275,12 +288,12 @@ src-tauri/
     parse/elixir.rs            tree-sitter → Outline   ← the load-bearing file
     parse/kinds.rs             config scripts and test suites
     index.rs                   the project index: module names → files, by line scan
-    git.rs                     .git/HEAD read + lazy blame + log
+    git.rs                     .git/HEAD read + lazy blame (+ an unused log)
     db/{mod,models,docs}.rs    pool, serde shapes, gloom CRUD
     db/projects.rs             remembered folders and their gloom counts
     db/topics.rs               the Hub's topics, and arranging glooms in them
     commands/files.rs          open a file (always live), branch, blame
-    commands/docs.rs           gloom CRUD, export
+    commands/docs.rs           gloom CRUD, the new-gloom invitation, export_note (no UI yet)
     commands/hub.rs            the Hub's payload, topic CRUD, arrange
     commands/projects.rs       open a folder, walk every file in it, index its modules
   migrations/0001…0003         history
@@ -293,10 +306,10 @@ src-tauri/
 
 ### The project is what you explore; a gloom is a note in it
 
-`mockup/workspace.html` is the contract. **This section supersedes anything below
-that describes a gloom as a set of files, a snapshot, or a reading of a version**
-— those sections were removed, and what was cut is listed at the end of this one.
-Elsewhere, "the reading" in older prose means the gloom.
+`mockup/workspace.html` is the contract for the model; `mockup/hub.html` for the
+Hub. What was cut on the way here — snapshots, file sets, blocks, import — is
+listed at the end of this section. In older prose below, "the reading" means the
+gloom, and "the views" or "explore" means the Woop.
 
 **The day it is built for.** You open Glooming and pick a project. You browse its
 modules, follow a call into another one, and at some point start a gloom — *How
@@ -311,7 +324,7 @@ live code decays; the tool makes the decay visible.
 | | What | Stored? |
 |---|---|---|
 | the index | every module in the project and its file (`index.rs`, a line scan) | no — rebuilt on open and on window focus |
-| the loaded files | files read this session, with outlines: on screen, walked through, named by the prose | no — a cache of live reads |
+| the loaded files | files read this session, with outlines: on screen, walked through, named by a gloom's prose | no — a cache of live reads |
 | the gloom | title, tags, markdown, `project_id` | yes, `docs` |
 
 **The index is names only.** Parsing every file with tree-sitter to answer "which
@@ -332,14 +345,16 @@ be the gesture that deletes what you wrote. Home lists projects, with their gloo
 counts; inside one, the Hub lists its glooms (below).
 
 **The band is always there.** Inside a project the ink band under the header is
-where you are: a gloom's name and tags, or *Exploring — nothing is saved* — and
-always `Glooms ▾` (this project's glooms, plus a way into `⌘K`) and `+ New`. It
-used to appear only once a gloom was open, so the way in to glooms lived in the
-sidebar, which made the band a surprise rather than a place. The picker renders
-*outside* the band, because the band clips for its opening sweep.
+where you are: a gloom's name and tags, *The Hub*, or *Exploring — nothing is
+saved*. It used to appear only once a gloom was open, so the way in to glooms
+lived in the sidebar, which made the band a surprise rather than a place. A
+`Glooms ▾` picker sat in it for a while and was replaced by `⌂ Hub` — anything
+that hangs below the band must render *outside* it, because the band clips for its
+opening sweep.
 
-**Exploring needs no gloom.** With none open the right pane is all views; the band
-says so, which is why the views no longer carry a *Start a gloom* bar. `DocPane`
+**Exploring needs no gloom.** With none open the right pane is the Woop alone and
+there is no Woop | Gloom switch; the band says so, which is why the Woop carries no
+*Start a gloom* bar. `DocPane`
 stays mounted in that state (`gloom={false}`) because it owns the reach
 diagram's hover and trace wiring. A new gloom is unnamed, opens with its name
 field focused, and starts as the invitation (`INVITATION` in `commands/docs.rs`).
@@ -359,9 +374,9 @@ tree, the way an editor shows one**. It starts **collapsed** — the Hub and `�
 how most files are reached — and stays open once you open it (`sidebar` =
 `shown`). Its right edge resizes it (160–520px,
 remembered as `sidebarWidth`, double-click resets), and hiding it leaves a 30px
-rail with a **Files** button (icon, the word set vertically) that brings it back —
-it was a bare 14px strip with a ›, which read as the pane's border — the toggle used to be a word in the header, nowhere near
-the panel it acted on. The tree shows every file, not only Elixir. It was a
+rail with a **Files** button (icon, the word set vertically) that brings it back.
+The toggle was first a word in the app header, nowhere near the panel it acted
+on, and then a bare 14px strip with a ›, which read as the pane's border. The tree shows every file, not only Elixir. It was a
 namespace tree of modules first, and that was a partial map that looked complete:
 reading a codebase means `mix.exs`, the config, the migrations and the README as
 much as the modules. Folders first, then files, case-insensitive (`filetree.ts`,
@@ -448,11 +463,14 @@ you had clicked. For anything else, type the full name.
 
 #### Sharing
 
-Copy and Save… export the markdown verbatim; with full names in every reference it
-resolves against any checkout of the same repository. Opening a shared `.md` as a
-gloom ("Open a gloom file…", into the current project, with a small name/tags
-header) is decided but **not built yet** — it replaces the old import, without a
-file list or a branch check, because there is no snapshot left to validate.
+**Export and import are being redesigned as one feature, and neither has UI right
+now.** Copy and Save… were taken off the Gloom's header to make room for that;
+`export_note` (the one write outside the DB, to a path a save dialog chose) and
+`exporting.ts` stay for it. What is settled: a gloom travels as its markdown,
+verbatim — and with the full module name in every reference, it resolves against
+any checkout of the same repository. Opening a shared `.md` into the current
+project replaces the old import, without a file list or a branch check, because
+there is no snapshot left to validate.
 Storing glooms as files in the repo is open again now that the 42× snapshot
 argument is gone, and deliberately deferred.
 
@@ -473,6 +491,13 @@ So they are not rebuilt by accident:
   `explore.ts` and the views' drawing code stay; they draw the live views. A
   fence in a note is now just code. Stats and treemap may come back as *views*.
 - **Plain line references**, `L25-29` and `billing.ex:25-29`.
+- **Bare-name references** and the thread that resolved them.
+- **The sidebar's gloom list, the `Glooms ▾` picker, the library modal, the Hub
+  as a modal, `close ×`** — the Hub replaced all of them.
+- **The split between views and note**, its grip, and `Views | Both | Note` —
+  replaced by Woop | Gloom.
+- **Copy / Save…** on the note, pending export/import.
+- **HTML5 drag and drop** in the Hub — Tauri's window takes the events.
 
 ### To the user, a reading is a **gloom**
 
@@ -480,8 +505,8 @@ The name is a UI label and nothing else: `Reading`, `ReadingFile` and
 `open_reading` stay as they are, and `reading` in the frontend still also means
 read mode. Renaming the internals was considered and declined as churn.
 
-**A gloom is one revision journey** — your note, and the files it led you
-through. It gets its own band under the app header, and the band is **filled with
+**A gloom is a note in the project's knowledge base** — one thing you worked out.
+It gets its own band under the app header, and the band is **filled with
 ink, not tinted**: `--gloom-bg` is a deep teal-black in both themes, with
 `--gloom-ink` (near-white) on it. A masthead is the one element that can be dark in
 either theme without looking like a mistake, and it gives the window a top edge to
@@ -496,11 +521,11 @@ pushed darker to be legible at all. Four tokens, because a dark surface needs it
 own ink and its own muted grey: `--gloom`, `--gloom-bg`, `--gloom-ink`,
 `--gloom-dim`.
 
-**One line: the name at the left, the wordmark at the right end of it.** A title is
-the first thing on its line, not the middle of it — centring it needed a
-three-column grid and 56px of height to hold a stacked caption, and bought nothing.
-A file count lived on the right briefly and was cut: the file button in the row
-above already says it, and the same fact in two places is one place too many.
+**One line: `⌂ Hub` and `+ New`, a hairline, the name and its tags, then the
+wordmark at the right end.** A title is the first thing after the actions, not the
+middle of the line — centring it needed a three-column grid and 56px of height to
+hold a stacked caption, and bought nothing. A file count lived on the right
+briefly and was cut, then the gloom's set of files went altogether.
 
 **`GLOOM` is lettering, not a badge.** Condensed and tracked out at `0.28em` in
 `--display`, it reads as the name of the thing you are in; a filled pill read as a
@@ -523,21 +548,16 @@ band is a form appearing in the middle of the chrome. The field is transparent
 with a `--gloom` rule under it, so the name looks like the line of prose it
 already was and the rule is what says it is live.
 
-**The name is centred, and set in a serif.** `--serif` is a system stack (`ui-serif`
-→ New York → Georgia); the app is offline and its CSP blocks a webfont, so nothing
-is downloaded. In a tool made of monospace and UI sans, a serif reads as a *title*
+**The name is set in a serif.** `--serif` is a system stack (`ui-serif` → New
+York → Georgia); the app is offline and its CSP blocks a webfont, so nothing is
+downloaded. In a tool made of monospace and UI sans, a serif reads as a *title*
 rather than as one more label — it is the one line here you wrote as prose. The
-band is `grid-template-columns: 1fr auto 1fr`, not flex, so the name sits in the
-middle of the **window**: with flex it would drift as the count went from "1 file"
-to "12 files", and a title that moves is not a title. The same serif is used
-wherever a gloom's name is *shown* — the library, the welcome recents — so it is
-recognisable as the same thing; filenames and paths stay mono and sans, because
-they are data rather than something you wrote.
+same serif is used wherever a gloom's name is *shown* — the Hub's rows, its quick
+look, a topic's heading — so it is recognisable as the same thing; filenames and
+paths stay mono and sans, because they are data rather than something you wrote.
 
-**A gloom has a name, and it is `docs.title`.** That column has said "seeded from
-the module name, editable" since the first migration and `save_doc` always took a
-title — nothing had ever done the editing. Click the name to rename it, `↵` to
-commit, `esc` to throw the edit away.
+**A gloom has a name, and it is `docs.title`** — empty until you give it one. Click
+the name to rename it, `↵` to commit, `esc` to throw the edit away.
 
 **A new gloom opens with its name selected**, so naming it costs a sentence and
 skipping it costs one key. That is the only moment it happens: on a gloom you
@@ -546,52 +566,50 @@ invitation. There is deliberately no dialog on the way in — asking for a name
 *before* you have read anything asks at the one moment you cannot answer, which
 is the same reason there is no "new group?" prompt.
 
-**An untouched name shows as an invitation**, dimmed with a line saying what it
-is for. `seededTitle` is *derived and compared* rather than stored as a flag: a
-flag would have to be maintained by every path that writes a title, and this one
-cannot drift. Same idiom as the Explain invitation and the hollow file dot.
+**An unnamed gloom shows as an invitation** — *Unnamed gloom*, dimmed and italic,
+with *say what you are here to find out* beside it. Derived from the empty title
+rather than stored as a flag: a flag would have to be maintained by every path that
+writes a title, and this one cannot drift.
 
 The rename takes the server's row but puts **your** markdown back — an autosave
 may be in flight, and adopting the server's copy would lose the sentence you are
-half-way through. Same one-payload habit as the file mutations.
+half-way through.
 
 ### The markdown IS the data
 
 Still true of the note — it is plain markdown, readable anywhere, and nothing is
 added on the way out — but it no longer carries blocks of values. What a module
-*is* comes from the live views, which read the code as it is now; what you
+*is* comes from the Woop, which read the code as it is now; what you
 *understood* is the prose. The two cannot drift, because only one of them claims
 to describe the code.
 
 ### A file is not always a module
 
-`FileKind` decides which blocks a doc gets, because the blocks that suit one
-shape say nothing about another:
+`FileKind` decides what the Woop shows, because what suits one shape says nothing
+about another:
 
-| Kind | Detected by | What the drawer shows |
+| Kind | Detected by | What the Woop shows |
 |---|---|---|
-| `Module` | `defmodule` with `def`s | **surface** + **reaches** |
+| `Module` | `defmodule` with `def`s | **moduledoc** + **surface** + **reach** |
 | `Config` | `import Config` / any `config` call | **settings**, grouped by app, env vs literal |
 | `Test` | `use …Case` in a module body | the **suite**, then its **describes** |
-| `Plain` | anything else | one line saying there is nothing to navigate by |
+| `Plain` | an Elixir file with none of those | one line saying there is nothing to navigate by |
+| — | not Elixir at all | *File not supported*; the source opens as plain text |
 
-**This table used to decide which blocks a doc got *seeded* with. Now it decides
-what you navigate a file by** — which is the job it was always describing. No kind
-seeds a block: every doc is a title, a summary and a blank page.
+(The table once decided which blocks a doc was *seeded* with. Nothing is seeded
+now; it decides what you navigate a file by, which is what it always described.)
 
-The fallback is still the point of the whole mechanism. A config file parsed as a
+The fallback is the point of the whole mechanism. A config file parsed as a
 module has nothing to lay out, and **an empty panel reads as broken** — so `Plain`
-gets one line saying nothing structural was recognised, in the drawer *and* in the
-seeded note. No error, no empty boxes.
+gets one line saying nothing structural was recognised. No error, no empty boxes.
 
 `Config` is decided before the module walk (a config script has no modules at
-all); `Test` after, since a suite *is* a module, just one where surface, treemap
-and reach say nothing useful.
+all); `Test` after, since a suite *is* a module, just one where surface and reach
+say nothing useful.
 
-**Every block carries a span, not a line.** `12-40` in the text collapses to
-`12` when a block is one line. That's what lets clicking a test, describe,
-setup or setting select the *whole* block in the code rather than dropping a
-cursor on its opening line — the same thing clicking a function does.
+**Every row carries a span, not a line.** That's what lets clicking a test,
+describe, setup or setting select the *whole* thing in the code rather than
+dropping a cursor on its opening line — the same thing clicking a function does.
 
 **Keywords are click targets too.** In the code pane `markWord` wraps the first
 `test` / `describe` / `setup` / `config` on a line, exactly as it wraps a
@@ -599,25 +617,18 @@ function's name on a `def` line. The negative lookahead matters twice: it stops
 `setup` matching inside `setup_all`, and stops a test named `"the config test"`
 having the word in its *name* wrapped instead of the keyword.
 
-**No block is ever rewritten after it is written.** A block is a snapshot of what
-the code was when you read it, and a gloom holds the source that produced it — the
-two cannot drift, because neither one changes.
-
-**The config block's finding is `env` vs literal.** `System.get_env` versus a
+**The config view's finding is `env` vs literal.** `System.get_env` versus a
 hardcoded string is the difference between a value you can change at deploy time
 and one baked into the release; `fetch_env!` is marked `env!` because it crashes
 on boot when unset. A literal whose *key* looks like a credential
 (`SECRETISH` in `parse/kinds.rs`) is reported as `secret` **without its value** —
-that it is hardcoded is the finding, but docs get pasted into PR comments.
+that it is hardcoded is the finding, and a value on screen is a value in a
+screenshot.
 
-**A test selects as a span; a describe is gone to.** Both were already built and
-the drawer was not using them. `DocPane.selectBlock` has always read `data-end`
-off a `.lgtm-tests` row, so the block *in the note* selected a whole test
-correctly — while the drawer beside it emitted only `data-line` and routed
-through `selectFromExplore`, which resolves a **function signature** with
-`locate`. A test's name is not one, so it returned null and every click fell
-through to `gotoLine`: a one-line cursor on the `test "…" do` line. The parser
-had carried `end_line` since the first version.
+**A test selects as a span; a describe is gone to.** A test row passes its span
+to `selectFromExplore`; without it the click resolved a **function signature**
+with `locate`, and a test's name is not one — so it returned null and fell through
+to `gotoLine`, a one-line cursor on the `test "…" do` line.
 
 A describe deliberately does **not** select. Selecting forty lines dims nothing
 useful and claims you are reading all of them, when what you are doing is
@@ -661,20 +672,13 @@ absolutely positioned in the 14px the line number already reserves, not a flex
 column, or it would push the source over in *every* file to make room for
 something only a suite ever draws.
 
-**The block's grammar carries the kinds, and still reads the old form.**
-`tests_block` writes `aem` where it wrote `3`, and `-` for a test that asserts
-nothing. A block is never rewritten after it is written, so every `lgtm:tests`
-already in a note carries a number — `parseTests` reads both and draws the old
-form as **neutral** bars, because a count is genuinely all that form knows and
-inventing kinds for it would be the guess the kinds replaced.
-
 **`@moduletag` is not the next test's tag.** `attribute_tag` matched `tag` and
 `moduletag` and the caller could not tell them apart, so a `@moduletag
 :integration` at the top of a file was pushed onto the pending list and became
 the **first test's** tag. It has its own field now. This was invisible until a
 tag started drawing its own span.
 
-**The test block's finding is that setup stacks.** A test starts from module
+**The suite view's finding is that setup stacks.** A test starts from module
 `setup_all` + module `setup` + its describe's `setup`, which can be a hundred
 lines apart, so each describe shows the accumulated context its tests can
 destructure. `provides` is a best-effort read of the block's *last expression*
@@ -682,267 +686,136 @@ destructure. `provides` is a best-effort read of the block's *last expression*
 lives elsewhere in the file, so its keys are `None` — **unknown, which is not
 the same as "provides nothing"** — and the UI shows `+?` rather than guessing.
 
-### The right pane was a split you own (superseded — see *Woop and Gloom*)
+### How the right pane got to Woop | Gloom
 
-The pane has two jobs that want the same height, and for a while it was one
-column — surface, boundary, then your note — so you could scroll up to look
-something up without leaving what you were writing. A day of real use found the
-cost: on a module with a long surface and a busy boundary the note starts a screen
-and a half down, and **writing** becomes the thing you travel to.
+Three shapes, each replacing the last; *Woop and Gloom* (below) is the current one.
 
-So the height is yours. A **grip** between the two regions: drag it anywhere,
-collapse either side to nothing, double-click to reset, `⌥1` / `⌥2` for the two
-ends from the keyboard.
+1. **One column**: the views above the note in one scroll — scroll up to look
+   something up, down to write. It replaced a fixed 270px drawer with its own
+   scrollbar and a collapse toggle, and the toggle was the tell: a band
+   permanently taking room from the pane you write in, and **two scroll regions in
+   one column, so neither can be scrolled past**. That lesson stands.
+2. **A split you own**: a grip between views and note, draggable, collapsible at
+   either end with ⌥1 / ⌥2, remembered per gloom. On a long surface the note had
+   started a screen and a half down; the split made the height yours.
+3. **Woop | Gloom**: one at a time. Each half of the split was too short to do its
+   job, and the grip was one more thing to manage.
 
-**This is not the drawer that was cut.** That one was *fixed* — a band permanently
-taking 270px from the pane you write in, with a collapse toggle as the workaround,
-and the toggle was the tell. A band you can drag to zero and abolish with one click
-costs you nothing. What the earlier argument got right and still holds: two scroll
-regions in one column is a real cost, and the collapse is what pays it.
+What survived all three:
 
-**Its two ends are the tabs the alternative would have been.** Tabs (`Explore` /
-`Gloom`) were mocked beside it in `mockup/panes.html` and lose on two counts: a map
-behind a mode change is a map you forget — the argument that already killed the
-`⌥R` reach overlay — and the two jobs genuinely overlap, since writing *"…then it
-hands off to `changeset/2`"* is the moment you want the surface in view. A split
-does everything tabs do and everything in between; if it turns out nobody ever
-sits between the ends, the drag can be deleted and nothing is lost.
+- **The Woop is warm.** A grey mix read as *dirty paper*; a teal wash read as a
+  green panel dropped into a warm room, arguing with the gold `▷ Gloom` and the
+  header. Both failed by being a different **hue** where what was needed was a
+  different **level**: the Woop is `--read` at 9% over the paper, more of the
+  pane's own warm chrome. Teal stays where it means something — the boundary's
+  outside, the gloom band.
+- **`body` is the note's scroller**, not the pane. Read mode's lead-in, tail, band
+  and step tests all measure `body`, so they describe the thing being read.
+- **Nothing collapses with a transition** — see *Motion means something*.
 
-**Read mode and edit mode both take the whole pane.** Neither is navigating. That
-was mocked as its own arrangement and folded in here instead of shipped alone.
+### The Woop's sections
 
-**The navigation half is warm, and it took two wrong answers to get there.** A grey
-mix (`--doc-raised` toward `--doc-line`) read as *dirty paper*. A teal wash read as a
-green panel dropped into a warm room, arguing with the gold `▷ Gloom` sits in and with
-the pane header above it. Both failed the same way: they made it a different **hue**
-where what it needed was a different **level**.
+What you navigate the file on screen by (`ExploreSections.svelte`): for a module,
+its moduledoc, its **surface** and its **reach**; for a config, its settings; for a
+suite, its describes. They follow the file — every file behaves the same, and
+nothing has to be seeded.
 
-This pane is warm paper and warm chrome. The navigation half is simply more of the
-chrome — `--read` at 9%, one step deeper than the header, 1.12:1 against the note
-(1.16:1 dark) — and the grip carries the same warmth at 15%, so it belongs to the
-half it controls. Teal stays where it means something: the boundary's outside, the
-gloom band, the file button.
+**These are not blocks.** They read the live `Outline`; nothing in `explore.ts`
+parses a fence. They describe the code as it is *now*.
 
-**The grip is a seam, not a header.** At 28px with a label it was a third band
-between two others, in a tone close enough to the navigation half that the eye could
-not tell which side it belonged to. It is 16px now and *deeper than both* — `--read`
-at 26%, 1.29:1 against the navigation above it and 1.45:1 against the paper below —
-which is what a seam is. The label went with the height: a divider that has to be
-captioned is not dividing anything. `GRIP_H` in the script must match its CSS height,
-or the drag clamps against the wrong maximum.
-
-**The labelled rule at the end of the sections is gone.** It said *"your note"*
-across the seam; the grip says it four pixels away. The same fact in two places is
-one place too many, and the grip's version also moves.
-
-**The split is remembered per gloom** (`gloomSplit:<id>` in `localStorage`): a
-config script and a forty-function module want different balances, and a split you
-re-make every time is one you stop using.
-
-**`body` is the note's scroller**, not the pane. Read mode's lead-in, tail, band and
-step tests all measure `body`, so pointing it at the region that actually holds the
-prose keeps every one of those measurements describing the thing being read. The
-grip lives outside both scrollers, or it would scroll away from the split it
-controls.
-
-### The right pane was one column
-
-Surface, then the boundary diagram, then your note — **one scrollbar**, scroll
-down to write and up to look something up. `ExploreSections.svelte` is rendered as
-a *snippet* inside `DocPane`'s own scroll container, which is what makes it one
-region rather than two.
-
-This replaced a fixed-height drawer with its own scrollbar and a collapse toggle,
-and both parts of that were wrong:
-
-- **A band permanently taking 270px from the pane you write in** costs you the
-  thing that pane is for. Collapsing it was the workaround, which is the tell.
-- **Two scroll regions in one column means neither can be scrolled past.** Every
-  gesture needs you to first decide which one you are in.
-
-Being able to scroll away is also what makes the **diagram affordable inline**,
-and inline is the only place it does its job: it is a map you glance at while
-reading the file. Behind a button — which is where it briefly was — it is a thing
-you remember to open, which is to say a thing you don't.
-
-Two consequences:
-
-- The scroll container is still `DocPane`'s, so read mode measures the element it
-  always has. The sections are `display: none` while reading, so the lead-in sees
-  the same geometry it did before they existed — and if they were ever visible the
-  lead would compute to `0`, which is correct rather than broken: the sections have
-  already pushed the first step past the trigger.
-- **The cross-file jump moved onto the diagram.** Clicking an outside function
-  whose module is also under review switches file and focuses it. It used to live
-  in a separate reaches list; the picture can carry it, and the same fact in two
-  places is one place too many.
-
-### Navigation lives beside the note, not in it
-
-**A seeded module doc is a title, the moduledoc, and a blank page.** Not one
-fence. `a_seeded_module_doc_carries_no_blocks` pins it.
-
-Everything that used to be generated into it now lives **above** the note in the
-same scroll (`ExploreSections.svelte`), showing the surface and the reach of
-whatever file is on screen.
-
-That is not tidying. `lgtm:surface` and `lgtm:deps` are what you **navigate** by,
-and in the note they were pinned to a position in a narrative — so they only ever
-served the file the reading started from. Open a second file and it had none,
-which is exactly what made a multi-file reading uneven. Up there they follow the
-tab, so **every file behaves the same and nothing has to be seeded**.
-
-`lgtm:stats` left for a different reason and is *not* up there: size and history
-are not consulted while navigating, they are context you want
-**recorded**. `/stats` puts them where your prose wants them, and they travel with
-the text into a PR comment.
-
-**These sections are not blocks.** They read the live `Outline`; nothing in
-`explore.ts` parses a fence. A block in the note is a snapshot of what the code
-was when you read it; the sections are what the code is *now*. Both are useful and
-they are not the same thing, so "the markdown IS the data" does not apply out
-there.
-
-**Which means there are two sorters again** — the exact situation that once gave
-`get_user_by_email/1, get_user!/1, get_user/1` in the renderer against
-`get_user/1, get_user!/1` in the seeder. `explore.ts` therefore sorts by
-`(name, arity)` explicitly, comparing the parts rather than `localeCompare` on the
-whole signature, and **both sides pin the same literal**:
-`the_surface_order_is_pinned_for_the_drawer_to_match` in Rust (the name predates
-the drawer's removal), and the same string
-in the `explore.ts` probe. If either changes its mind, one of the two fails.
+**`explore.ts` sorts by `(name, arity)` explicitly**, comparing the parts rather
+than `localeCompare` on the whole signature — which once gave
+`get_user_by_email/1, get_user!/1, get_user/1` against the Rust seeder's
+`get_user/1, get_user!/1`. The Rust test that pinned the same order went with
+`seed.rs`, so nothing pins it now — probe `surfaceOf` if you touch it.
 
 **The surface is a table, capped at six rows.** Two columns — the name, and the
 line it is on — with tabular figures so the digits stack, which is the whole
-reason it is a table and not a list. Past six rows the column scrolls, so a
-40-function module costs exactly what a 3-function one does (166px either way,
-measured) and the note sits at a constant offset. **No badges**: `default args`
-and `3 clauses` are true, but at forty rows they turn a catalog you scan into a
-wall of annotations — they moved to the row's `title`, and the arity in the name
-already hints at the first.
+reason it is a table and not a list. Past six rows it scrolls, so a 40-function
+module costs exactly what a 3-function one does and the reach sits at a constant
+offset. **No badges**: `default args` and `3 clauses` are true, but at forty rows
+they turn a catalog you scan into a wall of annotations — they are in the row's
+`title`, and the arity in the name already hints at the first.
 
 **The diagram is inline, not behind a button.** An earlier version put it in an
 overlay reached by `⌥R`, on the argument that it needs 2.6–6.4× the room a list
-does. In one scrolling column that argument evaporates: room is free below the
-fold. A map you have to remember to open is a map you do not use.
+does. In a scrolling region that argument evaporates: room is free below the fold.
+A map you have to remember to open is a map you do not use.
 
 **Isolating works from both sides.** Clicking an outside function asks *where is
 this used*; clicking a **local** one asks *what does this touch* — the boundary
-holds that one function and the outside column holds only what it reaches. Both are
-questions you have while reading a function, and only one can be open at a time:
-they are two answers to the same picture, and holding both would draw a boundary
-that answers neither. A left-hand click also selects the function in the code,
-because that is the other half of what you meant by clicking it.
-
-**Narrowing lights the lines — and everything else it drew.** The travelling dash
-only runs on `svg.focusing .edge.lit`, so an isolated view drew its connections
-*dead*: the one animation that says which way a call goes disappeared exactly when
-the picture was down to the calls you had asked about. Isolating is a selection, so
-it wears the selected state — `focusing` on the svg, `lit` on every edge.
-
-But `focusing` also dims every outside name to 30% and brings back only the lit
-ones, which is right when one function is *hovered* inside a full picture and wrong
-here: everything still drawn **is** the answer. So a narrowed render marks its
-`.fn` and `.rfn` groups `lit` too, and the names stay at full ink.
+holds that one function and the outside column holds only what it reaches. Only one
+can be open at a time: they are two answers to the same picture. A left-hand click
+also selects the function in the code, because that is the other half of what you
+meant by clicking it.
 
 **Clicking an outside function isolates the boundary on it.** The module is
 redrawn with **only the functions that call it** inside, and only the lines that
-reach it. That is the question you actually have the moment your eye lands on
-`Repo.insert/1` — *where is this used* — and two lit lines inside twelve grey rows
-do not really answer it.
+reach it — *where is this used* is the question you have the moment your eye lands
+on `Repo.insert/1`, and two lit lines inside twelve grey rows do not answer it.
+Isolating narrows **both** columns: eleven other names still listed beside the
+answer would be pointing somewhere else.
+
+The layout is **re-run**, not hidden with CSS: hiding the other rows leaves the
+survivors at their old `y`, so every line points into a gap where something used
+to be. `renderDeps` takes an `isolate` argument and filters `locals` *before*
+laying out — and filters the edges to that one target.
+
+**Narrowing lights the lines — and everything else it drew.** The travelling dash
+only runs on `svg.focusing .edge.lit`, so an isolated view drew its connections
+*dead*. Isolating is a selection, so it wears the selected state — `focusing` on
+the svg, `lit` on every edge, and `lit` on the `.fn` / `.rfn` groups too, or
+`focusing` would dim the names that *are* the answer to 30%.
 
 **Three ways out, like the focus pill's four**: a `× whole boundary` button in the
 diagram's own top-right corner, clicking the isolated function again, and clicking
-empty space inside the diagram. The button is on the *picture*, not under it — the
-diagram is where you are looking, and an exit you have to go and find is what makes
-a filtered view feel like a trap. The empty-space exit is scoped to `.reachwrap`, so
-a click on the hint below it, or on the jump button, is not silently an exit.
+empty space inside the diagram. The button is on the *picture* — an exit you have
+to go and find is what makes a filtered view feel like a trap. The empty-space exit
+is scoped to `.reachwrap`, so a click on the jump button is not silently an exit.
 
-The layout is **re-run**, not hidden with CSS: hiding the other rows leaves the
-survivors at their old `y`, so the box keeps its full height and every line points
-into a gap where something used to be. `renderDeps` therefore takes an `isolate`
-argument and filters `locals` *before* laying out — and filters the edges to that
-one target, because keeping a caller's other calls puts back most of what
-isolating just removed.
-
-**Isolating narrows both columns.** The outside stack was left whole at first, on
-the grounds that it is what you pick the next question from — but a boundary drawn
-to answer *"who calls `Repo.insert/1`"* with eleven other names still listed beside
-it is answering the question while pointing somewhere else. Picking the next
-question is what leaving the isolate is for, and there are three ways to do that.
-
-A stale block that names a caller the outline no longer has says so rather than
-drawing an empty box.
-
-**Reach is the cross-file navigator**, and it is the best thing to come out of
-this. A call landing in a module that is *also* under review is a **jump**: one
-click switches file and focuses that function, which is what following a flow
-across files actually means. Calls landing outside the reading say so — and that
-marks the edge of what you are reviewing, which is worth seeing.
-
-**The jump moved off the click and onto a named control**, under the diagram,
-reading `open billing.ex ↗`. "Who calls this" is the question you ask *first*, so
-the click answers that one; and a button that names the file it will open is more
-discoverable than an invisible click target on a dot ever was.
+**Reach is the cross-file navigator.** A call landing in a module the project index
+knows is a **jump**: a named control under the diagram, `open billing.ex ↗`, opens
+it and focuses that function. The click on the dot answers "who calls this", the
+question you ask *first*; a button that names the file it will open is more
+discoverable than an invisible click target ever was. A call landing outside the
+project — `Repo` from a dependency — says so.
 
 **Hidden in read mode.** `DocPane` renders the sections as a snippet and reports
-the mode with `onreading` rather than sharing it, because the pane owns it and two owners would eventually disagree with
-the button. Read mode is being walked *through* something; a reference panel above
-it is noise.
+the mode with `onreading` rather than sharing it, because the pane owns it and two
+owners would eventually disagree with the button.
 
 **The suite list has no inner scroll, and that is the correction of a
-correction.** The first fix for "a sixty-test suite pushes the note off the
-bottom" was to give the list the surface's six-row cap. That was wrong for a
-reason worth writing down: the cap exists so a 40-function surface cannot bury
-the **reach diagram below it**, and nothing sits below the describes. So the cap
-bought nothing and cost everything — a 57-test suite became a 236px porthole
-*inside* a region that already scrolls and that the grip already resizes, which
-is two scroll regions in one column, the exact thing this pane was built to
-avoid.
-
-The list now fills the navigation region and scrolls with it. **The grip is the
-resize control** — one drag, `⌥1`/`⌥2`, remembered per gloom — so there is no
-second divider, and a suite that needs more room gets it the same way everything
-else in this pane does.
+correction.** The first fix for a sixty-test suite was the surface's six-row cap.
+But the cap exists so a long surface cannot bury the **reach below it**, and
+nothing sits below the describes — so a 57-test suite became a 236px porthole
+*inside* a region that already scrolls: two scroll regions in one column, the
+thing this pane exists to avoid. The list fills the Woop and scrolls with it.
 
 `overflow: clip` on the list, not `hidden`. Both clip children to the rounded
 corner, but `hidden` makes the list a scroll container, and a sticky describe
-header inside a box that cannot scroll is pinned to something that never moves —
-so it would never stick to anything. Written correctly and visible never, which
-is the `overflow-x` bug's exact shape for the third time.
+header inside a box that cannot scroll is pinned to something that never moves.
+Written correctly and visible never, which is the `overflow-x` bug's exact shape.
 
 **A describe is a section, and it folds.** With nine describes the headers *are*
-the map, so each group carries its test count and a chevron that hides its rows.
-Folding is `display`, not height — the finding that outlived the explore drawer:
-there is no version of an animated collapse that is right, because it has to move
-everything below it. The toggle is a **sibling** of the header button, never
-nested in it: a button inside a button is invalid, and it would need a
-`stopPropagation` to keep folding from also being a jump. Fold state is session
-state keyed by file, because folding is "let me see the shape for a second" and a
-suite that reopens with half its describes hidden looks broken rather than tidy.
+the map, so each carries its test count and a chevron. Folding is `display`, not
+height — no animated collapse is right, because it has to move everything below
+it. The toggle is a **sibling** of the header button, never nested in it. Fold
+state is session state keyed by file: a suite that reopens with half its describes
+hidden looks broken rather than tidy.
 
-**Module scope is stated once.** The old view repeated the module's context keys
-on every describe row, under a band that had already listed them — the same fact
-in two places, and the repetition grew with the number of describes. `suiteScope`
-is the stack at the top; a describe shows only its `adds`. `async: false` gets a
-colour rather than a dimmed `async false` at the end of a row: it says the suite
-touches shared state, which is the most reliably reviewable fact in a test file.
+**Module scope is stated once.** `suiteScope` is the stack at the top; a describe
+shows only its `adds`. `async: false` gets a colour rather than a dimmed label: it
+says the suite touches shared state, the most reliably reviewable fact in a test
+file.
 
-**A named setup's keys are unknown, and that is not the same as none.** A test
-starts from module `setup_all` + module `setup` + its describe's `setup`, and a
-*named* callback (`setup :put_user`) is defined elsewhere in the file — so its keys
-cannot be read from the describe. `testsOf` therefore returns the keys it **can**
-see plus a separate `unknown` flag, and the section shows `:user +?`: here is what
-I know, and there is more. An earlier version collapsed the whole list to null the
-moment anything was unreadable, which threw away the keys it *had* found — and it
-got the condition backwards as well, treating a named callback as readable. The
-probe caught both.
+**A named setup's keys are unknown, and that is not the same as none.** A *named*
+callback (`setup :put_user`) is defined elsewhere in the file, so `testsOf` returns
+the keys it **can** see plus an `unknown` flag, and the section shows `:user +?` —
+here is what I know, and there is more. An earlier version collapsed the whole list
+to null the moment anything was unreadable, and treated a named callback as
+readable besides. The probe caught both.
 
-The blocks themselves are untouched — all five still render, `lgtm:functions`
-still renders, and `/` inserts any of them. What changed is that **nothing puts one
-in your note but you**.
-
-### The reach block
+### The reach diagram
 
 `mockup/deps.html` is the contract; `deps.ts` is the port. The concept is a
 **boundary, not a graph** — a node-link diagram of one file's dependencies is
@@ -955,7 +828,7 @@ finding, not an empty state.
 
 Layout is deterministic: outside anchors are ordered by the **barycentre** of
 their callers, which is the standard crossing-reduction heuristic and gives zero
-crossings on typical modules. No force simulation — the same doc must always
+crossings on typical modules. No force simulation — the same module must always
 render the same picture.
 
 **Both columns size the diagram.** The viewBox height is
@@ -967,9 +840,8 @@ where SVG silently clips, with nothing on screen to say it had happened. Centrin
 each column separately also stops five functions being stretched thin across a
 diagram made tall by a long alias list.
 
-The left column comes from the **outline**, not the block. The block records
-edges; listing every local function a fourth time would be noise. So a doc whose
-file has moved renders the outside column and a note rather than the boundary.
+The left column comes from the outline's functions and the edges from its deps —
+both live, so the picture is always the module as it is on disk.
 
 Parser notes, all confirmed by dumping the tree rather than guessing:
 
@@ -1016,8 +888,8 @@ It used to be pinned: every file it touched was snapshotted, the pane showed the
 snapshot, and a changed file said so. That was right for reviewing one version of
 a change and wrong for a knowledge base, where the point is that next month's
 reading of a gloom describes next month's code. The database stays — it holds the
-glooms and the projects — but it is no longer the reason a gloom is a row rather
-than a file; see *Sharing* above.
+glooms, the projects and the topics — but it is no longer the reason a gloom is a
+row rather than a file; see *Sharing* above.
 
 ### Motion means something
 
@@ -1063,13 +935,13 @@ a selection handing over feel like one tempo.
 
 Each animation carries information rather than decorating:
 
-- **The reach block traces outward**, wherever it is drawn. `reachHosts()` walks
-  the whole scroll container rather than the note, because the sections above the
-  note render the same `.lgtm-deps` markup and sit *outside* `.doc` — so the trace
-  and the arrival ring were rendered every time and could never run, which is the
-  `overflow-x` bug's exact shape in a different place. The pointer wiring moved up
-  to `.panebody` with it, and every host is lit, not the first: a hand-written
-  `/deps` block and a section's diagram can both be on screen.
+- **The reach diagram traces outward.** `reachHosts()` walks the whole pane
+  rather than the note, because the Woop's diagram (`.lgtm-deps` markup, a name
+  kept from when it was a block) sits *outside* `.doc` — looking only inside the
+  note rendered the trace and the arrival ring every time and ran them never, the
+  `overflow-x` bug's exact shape in a different place. The pointer wiring lives on
+  `.panebody` for the same reason, which is also why `DocPane` stays mounted with
+  no gloom open.
 
   A static boundary shows you *that* `create_user/1` reaches `Repo.insert/1`,
   never that the call goes **out**. A travelling `stroke-dashoffset` does. The far dot then takes one ring on arrival,
@@ -1077,13 +949,13 @@ Each animation carries information rather than decorating:
   there — both at once is the static picture again with extra noise. The ring is
   its own `<circle>` scaled by `transform` on a `fill-box` origin, because `r` is
   not reliably animatable and this way the renderer supplies no geometry for it.
-- **Opening a file points at the blank page.** The pane rises, then 260ms later a
-  ring expands from the **Explain invitation** — not the pane. "A file arrived" is
-  decoration; you know, you just opened it. The invitation is found
-  *structurally*: the last paragraph of the doc, containing nothing but emphasis.
-  That is what `seed.rs` writes, and **the moment you type a word it stops
-  matching** — so nothing has to remember whether a doc is "fresh", and the nudge
-  only ever appears on a doc you have not written in.
+- **A new gloom points at its blank page.** 260ms after it opens, a ring expands
+  from the **invitation** — not the pane. "A gloom arrived" is decoration; you
+  know, you just made it. The invitation is found *structurally*: the last
+  paragraph, containing nothing but emphasis. That is what `INVITATION` is, and
+  **the moment you type a word it stops matching** — so nothing has to remember
+  whether a gloom is "fresh", and the nudge only ever appears on one you have not
+  written in.
 - **A reference arrives; it never fades in.** The rule from the read-mode notes
   still holds — transitioning the chip's *fill* left two references looking
   current at once. So the outgoing chip loses its state in the same frame and only
@@ -1111,9 +983,8 @@ Each animation carries information rather than decorating:
   arrives as two. Every edge shares the last index, so they draw as one gesture.
   Opacity only: the parts are laid out against each other, and sliding them in
   from an offset would put a function somewhere its own line does not reach.
-- **The directory arrives in order.** `--i` per row — in `surface.ts` for the
-  block and on the surface table's `<tr>` in `ExploreSections`, which gates it on
-  the *path* so it plays once per file rather than on every render — staggered
+- **The directory arrives in order.** `--i` on the surface table's `<tr>` in
+  `ExploreSections`, gated on the file's *path* so it plays once per file rather than on every render — staggered
   16ms in CSS, and **capped at row 12** — 200 functions would otherwise cascade
   for 3.4s, and waiting on an animation to look a name up is worse than no
   animation. Both columns share the index so they arrive together.
@@ -1151,10 +1022,10 @@ Each animation carries information rather than decorating:
   permanent underline is a decoration rather than an event. Diffed against the
   previous title, so it fires on the transition and a gloom you named last week
   opens silently.
-- **The dot earns its colour.** The file button diffs `referenced` against the
-  previous set, so this fires on the *transition* rather than the state — and the
-  first paint of an already-written note is seeded silently, because that is not
-  an achievement. A state change you caused is the one place a small reward is
+- **The dot earns its colour.** The file tree diffs `referenced` against the
+  previous set, so a file's dot rings on the *transition* rather than the state —
+  and the first paint of an already-written gloom is taken silently, because that
+  is not an achievement. A state change you caused is the one place a small reward is
   honest.
 - **The trigger band flashes per step.** It showed you *where* the hand-over
   happens but never *that* it happened, which is the difference between "the code
@@ -1163,11 +1034,9 @@ Each animation carries information rather than decorating:
   switched off.
 
 **Arrival animations are gated on `opened`, not on render.** `html` is derived
-from `markdown`, so it re-renders on every keystroke — an unguarded stagger
-re-cascades the surface block while you type. The shell bumps `opened` only when
-the *doc id* changes (adding a file replaces `doc` too, and re-cascading because
-you opened one more file is exactly that restlessness), and `DocPane` puts
-`.arriving` on the container for one beat.
+from `markdown`, so it re-renders on every keystroke — an unguarded arrival
+replays while you type. The shell bumps `opened` only when the *doc id* changes,
+and `DocPane` puts `.arriving` on the container for one beat.
 
 **Restarting a CSS animation needs a forced reflow** — remove the class, read
 `offsetWidth`, add it back. Without the read the browser coalesces both changes
@@ -1181,7 +1050,7 @@ focus bar keeps the bright end of its pulse — and the trace hands direction ov
 to an **arrowhead** that is invisible the rest of the time. Honouring the setting
 by deleting the signal would be worse than ignoring it.
 
-**Nothing collapses with a transition.** The explore drawer — since replaced by
+**Nothing collapses with a transition.** The explore drawer — long since replaced by
 one scrolling column — used to animate its `height`, and there is no version of
 that which is right: collapsing a panel has to make what is below it move up, so
 `height` and `grid-template-rows: 0fr→1fr` both go through layout, and `transform`
@@ -1266,7 +1135,7 @@ There are **four ways out** and all four ship together: `Esc`, re-clicking the
 selected row, clicking empty space in the code pane, and clicking the hint
 pill. One is never enough; the pill exists so the exit is discoverable.
 
-Treemap tiles and table rows are the same gesture — both carry `data-sig`, and
+Surface rows and diagram functions are the same gesture — both carry `data-sig`, and
 `DocPane.select()` handles either.
 
 **Dimming yields to file-wide views.** `.focusing` (the dim-to-32%) is right for
@@ -1281,7 +1150,7 @@ authors invisible.
 
 A gloom only means something inside the codebase it was written about, so home
 lists **projects** — name, path, gloom count, when you were last in it — and each
-project's glooms live in its sidebar. One way in (**Open a folder…**), then three
+project's glooms live in its Hub. One way in (**Open a folder…**), then three
 sentences on what a gloom is.
 
 The masthead keeps its weather — `Sky.svelte`, bloom / cosmos / aurora, rolled per
@@ -1291,7 +1160,7 @@ composes one frame and holds it.
 
 `--gloom-deep` came out of the old home screen: the bright teal is for ink surfaces
 and measures 2.2:1 on paper; the deep one is 5.2:1, and it is what the project
-counts, the sidebar's selected gloom and the tree's dots use.
+counts, the Hub's headings and selection, and the tree's dots use.
 
 ### The app header is a small theme
 
@@ -1302,32 +1171,21 @@ dark strip, which is read mode's trick at the scale of one row, and the two bars
 stack as a single masthead: actions above, the name of the journey below. Measured
 on the light head: ink 10.9:1, dim 7.5:1, the teal accent 6.5:1.
 
-**The header shows the GLOOM's branch, not the working tree's.** A gloom is pinned
-to the versions it was read at, and the branch those versions came from is part of
-that reading — it does not change when you check something else out. Showing the
-live branch made the header report the state of your tree, which is a different
-tool's job and was a fact about *now* sitting in a window entirely about *then*.
-**Nothing announces staleness over the code.** A bar above the pane said it for a
-while, in two wordings, and both were the same mistake: a gloom holds the version it
-was read at, so *"this differs from disk"* is a fact about the world **outside** the
-reading — true, and not worth a row across the top of the thing you are reading. It
-still shows where it costs nothing: the dot on the file button, and the words beside
-each file in `⌘⇧T` (*changed on disk*).
+**The row is the project's**: `← Home`, the project's name, the **live branch**,
+the save state, and *Find a module or file… ⌘T*. Everything about a gloom is in the
+band below it.
 
-**The branch is context, not decoration.** It was a grey pill among grey pills, and
-it names the versions everything under it is showing. It carries the accent now, and
-is keyed on its own value so it plays its arrival when it changes — which, since it
-is the gloom's branch, happens when you open a different gloom.
+**The branch is the working tree's, live** — a plain read of `.git/HEAD`, re-read
+when the window regains focus. While a gloom was pinned to the versions it was read
+at, the header showed *the gloom's* branch, and a guard refused references off it;
+with the code always live, the branch you are on is the one true answer. It carries
+the accent, is copyable (a branch name is something you are about to type somewhere
+else), and is keyed on its own value so it plays its arrival when it changes.
 
-**`← Home` is a way out and now looks like one** — filled, bolder, first in the
-row. **Re-parse is gone**: it re-read a file you had not edited, since lgtm never
-writes, and the two cases that matter have their own controls (*Code changed —
-reconcile* in the note, and the amber staleness row above a joined file). Both of
-those have since gone the same way — see *A gloom is pinned to the versions it was
-read at*.
-**Library is gone from this row too** — the way to another gloom is ← Home, and
-`⌘K` still opens the library from anywhere. What is left is about *this* gloom:
-where you are, which files it covers, and two ways to add one.
+**`← Home` is a way out and looks like one** — filled, bolder, first in the row.
+Re-parse, the library button, the file button and the staleness notices have all
+left this row on the way here; there is nothing to re-parse when nothing is
+snapshotted.
 
 ### The code pane shows what you selected, and nothing else
 
@@ -1424,9 +1282,9 @@ one change.) UI words only — the code still says `explore`,
 `ExploreSections`, `doc`, as `reading` survived the first rename.
 
 **One at a time, not a split.** `Woop | Gloom` sits first in the pane's
-header; `⌘1` / `⌘2` go to each and `⌘J` flips — all on ⌘ like every other
-shortcut (they were ⌥1 / ⌥2 while they collapsed a split's ends) (`show`, `flip` in `DocPane`,
-called by the shell, which owns the window keys). The choice is remembered per
+header; `⌘1` / `⌘2` go to each and `⌘J` flips (`show`, `flip` in `DocPane`,
+called by the shell, which owns the window keys) — all on ⌘ like every other
+shortcut; they were ⌥1 / ⌥2 while they collapsed a split's ends. The choice is remembered per
 gloom (`gloomSide:<id>`). Edit and read mode always land on the Gloom; picking
 the Woop while reading leaves read mode. Exploring with no gloom open, there
 is only a Woop and no switch.
@@ -1450,53 +1308,44 @@ export will be built on.
 The active half of the switch carries its side's hue pulled 20% toward the ink —
 the pure tokens on their own tint were 3.9:1 and 4.3:1 on light paper.
 
-### The note's header is controls, nothing else
+### The Gloom's header is controls, nothing else
 
 It used to open with `impact_stage.ex.md` — a filename for a file that does not
 exist, since the note is a row in a database and the `.md` was an invention. The
 gloom's name is in the band above it and the source file's name is on the pane
-beside it, so the third name was the only thing that row was adding.
+beside it, so a third name was the only thing that row was adding. On the Gloom
+side it is `Woop | Gloom`, then `▷ Gloom`, then Preview/Edit and A−/A+.
 
 **Preview/Edit is one button, not a segmented control.** You are always in exactly
 one of the two modes, so half of that control's width was spent telling you where
 you already are. The label is what the click *does*: `Edit` while previewing,
 `Preview` while editing.
 
-**`▷ Read` is on the left**, where the row starts: it is the one control here that
-changes what the whole window does, and among four right-aligned buttons it read as
-the third of them.
+**`▷ Gloom` comes first after the switch**: it is the one control here that changes
+what the whole window does, and among right-aligned buttons it read as the third of
+them.
 
 **The font stepper is last, as in the code pane.** The same control in the same
-place on both sides of the window; it had drifted into the middle of this one.
+place on both sides of the window.
 
-**The note can leave: `Copy` and `Save…`.** It is markdown and nothing else,
-which was always the point — readable as plain text anywhere, and it survives
-being pasted into a PR comment. Both hand over **exactly** what is in the editor:
-no front matter, no generated title, nothing added on the way out. What you would
-have selected and copied by hand is what you get, which is the only version of
-this that keeps "the markdown IS the data" true.
+**For when export returns — the parts that were already argued:**
 
-They sit before the mode toggle: `Preview`/`Edit` and the stepper are about
-looking at the note, these two are about taking it somewhere. The confirmation
-**replaces** them for 1.6s rather than sitting beside them — a row that grows by
-a word every time you copy would shift the controls next to it — and it lands on
-the control, not in a toast, which is the call the branch chip already made.
-
-**Saving goes through `export_note`, not `tauri-plugin-fs`.** The plugin would put
-a general "write files" capability into the app — with a scope to get wrong — to
-serve one gesture whose destination the user has already named in a native dialog.
-The command writes that text to that path and can do nothing else. It is the only
-place lgtm writes anything outside its own database, and the rule it does not
-break is the important one: **it never writes into a repository it read from.**
-`dialog:allow-save` is the only capability added.
-
-`exportFilename` is its own module because a gloom is named as *prose* —
-`Accounts — the write path` — and a filename is not. Diacritics are folded rather
-than dropped (`Añadir usuario` is `anadir-usuario`, not `a-adir-usuario`, which is
-what stripping non-ASCII without decomposing first gives you), the stem is capped
-at 60 characters, and a name that survives none of it falls back to `gloom.md`.
-The dialog is where the user names it anyway, so the suggestion only has to be
-reasonable.
+- **It hands over exactly what is in the editor**: no front matter, no generated
+  title, nothing added on the way out. That is the only version that keeps "the
+  markdown IS the data" true.
+- **Saving goes through `export_note`, not `tauri-plugin-fs`.** The plugin would put
+  a general "write files" capability into the app — with a scope to get wrong — to
+  serve one gesture whose destination the user has already named in a native
+  dialog. The command writes that text to that path and can do nothing else. It is
+  the only place the app writes outside its own database, and the rule it does not
+  break is the important one: **it never writes into a repository it read from.**
+  `dialog:allow-save` is the only capability it needs.
+- **`exportFilename`** turns a name written as prose (`Accounts — the write path`)
+  into a filename: diacritics folded rather than dropped (`Añadir usuario` →
+  `anadir-usuario`, not `a-adir-usuario`), the stem capped at 60 characters, and
+  `gloom.md` when nothing survives.
+- **A confirmation lands on the control, not in a toast**, and replaces it rather
+  than sitting beside it, or the row shifts every time you use it.
 
 ### The two mode toggles are keys as well as buttons
 
@@ -1508,8 +1357,8 @@ listeners would eventually disagree with the buttons about which mode is on.
 `⌘R` is `preventDefault`ed before anything else can see it: in a dev build it
 would reload the webview.
 
-**Entering read mode is gated; leaving it never is.** The conditions — a module in
-the reading, not editing, at least one step — decide whether there is anything to
+**Entering read mode is gated; leaving it never is.** The conditions — a
+reference that resolves, not editing, at least one step — decide whether there is anything to
 walk. They were applied to the toggle in *both* directions, so anything that
 emptied `steps` mid-read locked you in: the button disappeared and `⌘R` was refused
 by the same test. `Esc` exits too, for the same reason the focus pill exists — a
@@ -1522,9 +1371,8 @@ you type is chaos — the same rule the Edit button already followed.
 
 Adding them exposed the real problem, which was the status bar. It advertised
 `j k gg G vim`, which tells anyone who does not think of themselves as a vim user
-to skip the line — while `↑`/`↓` for the review cursor and `⌘T` to add a file were
-only mentioned inside `?`. It now reads
-`↑↓ lines · [ ] fns · / find · ⌘T add a file · ⌘R read · ⌘E edit · ? help`.
+to skip the line. It names the keys you need instead, and now reads
+`⌘T find · ⌘[⌘] trail · ⌘\ sidebar · ⌘J woop/gloom · ⌘R glooming · ⌘E edit · ? help`.
 
 ### Lists are rows
 
@@ -1608,20 +1456,18 @@ survives in the repo, the crate, the bundle id and the internals (`reading`,
 
 ### Reading: the doc drives the code
 
-`▷ Read` in the doc pane header, shown when there is a module anywhere in the
-reading — a config or a test suite on its own is a directory, not a narrative, so
-there is nothing to walk. A reading of several files walks all of them, swapping
-the code pane where the prose crosses a boundary.
+`▷ Gloom` in the Gloom's header, shown when the note has a reference to walk. A
+gloom walks every module its prose names, swapping the code pane where the prose
+crosses a boundary and reading files nobody opened.
 
 The geometry scrollytelling wants was already here: the doc is the text, the
 code pane is the sticky graphic, and `focus` is the graphic's state. So this is
 one wire — doc scroll position → focus — not a rewrite.
 
-**There is no new syntax.** Inline code naming a function in the reading becomes a
-reference (`refs.ts`) — with or without an arity, always module-qualified — and
-`L30-34` points at plain lines. That keeps the
-markdown portable: paste a reading into a PR comment and it still reads
-correctly, which inventing `{{create_user/1}}` would have destroyed. Anything
+**There is no new syntax.** Inline code naming a function by its full module name
+becomes a reference (`refs.ts`) — with or without an arity, with or without lines
+inside it. That keeps the markdown portable: paste a gloom into a PR comment and it
+still reads correctly, which inventing `{{create_user/1}}` would have destroyed. Anything
 that doesn't look like a signature — `` `nil` ``, `` `{:ok, user}` `` — stays
 ordinary inline code.
 
@@ -1808,14 +1654,13 @@ Four rules, each of which replaced something that read worse:
   anything.
 
 A dangling reference — the function has since been deleted — renders struck
-through and unclickable. Same principle as the functions block keeping
-struck-through prose: never quietly lose the fact that the code moved.
+through and unclickable: never quietly lose the fact that the code moved.
 
 `mockup/reading.html` and `mockup/authoring.html` are the contracts. An earlier
 version put a "reading path" arc diagram in the divider; it was cut because it
 needed explaining, which meant it wasn't working. The same data as a plain
 two-axis chart (step across, file position down) is legible, and is parked as a
-possible `lgtm:path` block rather than built.
+possible view rather than built.
 
 ### Projects are a path, and an index derived from it
 
@@ -1824,9 +1669,9 @@ A project is picked explicitly with **Open a folder…** and remembered in a
 searches its files by name.
 
 Still deliberately thin. There is **no index on disk and no notion of
-membership**. The module index (`project_index`) is rebuilt in memory when the
-project opens and whenever the window regains focus; the file walk runs when the
-palette opens. Both take milliseconds on a large app, and caching either would be
+membership**. The module index (`project_index`) and the file walk
+(`project_files`) are rebuilt in memory when the project opens and whenever the
+window regains focus. Both take milliseconds on a large app, and caching either would be
 inventing a staleness problem to solve in a tree that changes while you work.
 
 Two things it does *not* do, both on purpose:
@@ -1836,10 +1681,11 @@ Two things it does *not* do, both on purpose:
 - **No git.** Listing changed files was discussed and cut: the tool is about
   opening files to read, and knowing what changed is done elsewhere.
 
-`ignore::WalkBuilder` honours `.gitignore`, with `_build`, `deps`,
-`node_modules`, `.git`, `.elixir_ls` and `cover` skipped explicitly on top —
-a fresh checkout may not have them ignored yet. Only `.ex`/`.exs` are listed:
-lgtm can open anything, but the picker offers what it actually reads.
+`ignore::WalkBuilder` honours `.gitignore` (even outside a git checkout), with
+`SKIP` on top — `_build`, `deps`, `node_modules`, `.git`, `.elixir_ls`,
+`.lexical`, `cover`, `.hex`, `.mix`, `.DS_Store`, `erl_crash.dump` — because a
+fresh checkout may not have them ignored yet. Every other file is listed, in the
+palette as in the tree; only the module index is limited to `.ex`/`.exs`.
 
 **Matching ranks filename hits above directory hits**, otherwise everything
 under a `processor/` directory outranks `processor.ex` itself. Substring first,
@@ -1849,7 +1695,7 @@ then subsequence over the whole relative path, so `myacc` finds
 `⌘O` opens the same palette as `⌘T`. It is the muscle memory for "open", and what
 you almost always want to open is a file in the project you are already in — so
 the system picker moved to `⌘⇧O`, for the rarer case of a file outside it. Two keys
-for one action is deliberate: `⌘T` is advertised in the status bar as "add a file",
+for one action is deliberate: `⌘T` is advertised in the status bar as "find",
 `⌘O` is what fingers reach for, and neither being wrong is worth more than the
 saved binding. Comparing `e.key` **lowercased** matters — `⇧O` arrives as `"O"`,
 so the old `=== "o"` meant the shifted form silently did nothing.
@@ -1871,13 +1717,15 @@ for. A table of its own buys nothing: tags here are for *finding* a gloom, not f
 reporting on, so there is nothing to join.
 
 **Each tag's colour comes from its own text.** `tagHue` hashes the string, so
-`retry` is the same hue in the gloom band, on home and in the library — for free,
-and forever. Nobody picks a colour for a word they typed in two seconds, and a
+`retry` is the same hue in the gloom band, the Hub's filters and its quick look —
+for free, and forever. Nobody picks a colour for a word they typed in two seconds, and a
 random one would make one gloom look like two.
 
-**A tag you cannot search by is decoration**, so `list` matches `label` alongside
-title, filename, path and branch. Pinned by
-`a_tag_is_something_you_can_search_for`.
+**A tag you cannot search by is decoration**, so the Hub's filter matches tags
+alongside the name and the prose (`matches` in `hub.ts`), and each tag is a
+one-click filter at the top of the Hub. `db::docs::list` does the same in SQL,
+pinned by `search_matches_the_name_the_tags_and_the_prose`, though nothing calls
+it since the library went.
 
 Added and removed in the band, beside the name, because they are part of what the
 gloom is *called*. `parseTags` drops blanks and duplicates and preserves order —
@@ -1990,17 +1838,6 @@ as is the reverse. `preceding_attrs` walks back through *consecutive* attribute
 siblings and stops at the first non-attribute — checking only the immediate
 previous sibling misses half of them.
 
-**Two blocks sort, and they follow opposite rules.** `lgtm:functions` is sorted
-in `seed.rs` only, now that nothing re-writes a block after it is written. `lgtm:surface` is sorted in `seed.rs` *only*, and the renderer
-preserves the text's order — because two sorters did disagree there (Rust orders
-by `(name, arity)`, JS `localeCompare` reorders punctuation). If you add a
-sorted block, pick one of these two shapes deliberately.
-
-**Tests must scope assertions to one block.** Several blocks list every function
-name, so `md.lines().find(|l| l.contains("get_user!/1"))` finds the surface row,
-not the table row. Split on the fence first — see `functions_block_of` in
-`seed.rs`'s tests and `block_of` in `kind_tests`.
-
 **`data-tauri-drag-region` needs an explicit permission.** `core:default`
 includes `core:window:default`, which is a *read-only query* set —
 `allow-start-dragging` is not in it, so drags are silently denied by the ACL
@@ -2035,8 +1872,8 @@ prefixed `.code ` to sit above it.
 function across several `def`s; the outline reports one `name/arity` entry with
 a `clauses` count, `clause_ranges` for every clause, and jumps to the first.
 Default arguments produce an arity *range* (`search/1..2`) whose identity is the
-top arity. Badges spell this out (`default args`, `3 clauses`) — the earlier
-`search/1..2 ·3` was unreadable.
+top arity. The surface row's tooltip spells this out (`default args`,
+`3 clauses`) — the earlier `search/1..2 ·3` was unreadable.
 
 **Count assertions over the whole `test` call, not its do-block.** A one-liner
 written `test "x", do: assert(y)` has no `do_block` at all, so walking only the
@@ -2056,31 +1893,20 @@ of a pane sits below its top. Fixed fractions fail silently at both ends and the
 failure looks like nothing at all. One `TRIGGER` constant drives the lead-in,
 the tail, the band position and the step test.
 
-**`overflow-x: auto` clips vertically too.** The file strip scrolls sideways when
-a reading has many tabs, and the remove confirmation was an absolutely-positioned
-popover *inside* it. Per the CSS Overflow spec, `visible` on one axis computes to
+**`overflow-x: auto` clips vertically too.** A file strip (since cut) scrolled
+sideways when a reading had many tabs, and the remove confirmation was an
+absolutely-positioned popover *inside* it. Per the CSS Overflow spec, `visible` on one axis computes to
 `auto` when the other is not `visible` — so the strip clips at its own 32px and a
 popover starting 37px down never appears. It rendered correctly every time and was
 never once visible, which is the worst kind of bug: nothing to see, nothing in the
-console. The confirmation is now a row *below* the strip, outside the scroll
-container. Anything positioned relative to a tab has the same problem.
+console. The same shape has come back twice since — the band's `overflow: hidden`
+is why the Hub renders nothing below it, and why the old picker sat outside it.
+Anything positioned relative to a clipping box has the same problem.
 
-**Don't nest a button inside a button.** The tab's `×` was a `<span role="button">`
-inside the `<button class="tab">`, which is invalid HTML and needs
-`stopPropagation` to behave. It is now a sibling button positioned over the tab's
-right edge — valid, and the propagation question disappears.
-
-**Adding a file to a reading must not re-snapshot it.** Opening the same file
-twice mid-review is completely normal, so `doc_files::add` is idempotent and
-returns the existing row. Re-snapshotting would silently discard the staleness
-you were about to be told about. `adding_twice_keeps_the_first_snapshot` pins it.
-
-**A mutation returns the whole reading.** `add_doc_file`, `remove_doc_file` and
-`resnapshot_doc_file` all return a `Reading`, so the UI replaces state rather
-than patching it — the same one-payload habit as `open_file`. The one thing the
-frontend must *not* adopt is the markdown: an autosave may be in flight, and
-taking the server's copy would lose the sentence you are mid-way through. Every
-call site saves `markdown` and puts it back.
+**Don't nest a button inside a button.** A tab's `×` was once a
+`<span role="button">` inside the tab's `<button>`, which is invalid HTML and needs
+`stopPropagation` to behave. Make it a sibling. A Hub row is a `div` for the same
+reason: its `i` is a button.
 
 **An imported component must actually be rendered.** `HelpModal` was imported,
 `showHelp` was toggled by `?` and by two buttons, and the `{#if showHelp}` block
@@ -2153,10 +1979,21 @@ subtracts the lead's height instead.
 
 **`db` is `pub`** solely so `tests/pipeline.rs` can construct `FileHistory`.
 
+**HTML5 drag and drop does not reach the page.** Tauri's window handles files
+dropped onto it and takes the drag events first, so `draggable` rows did nothing.
+Drag with pointer events (the Hub does) — or set `dragDropEnabled: false` on the
+window, which would cost dropping files onto the app.
+
+**Measure without collapsing.** Setting a spacer to `0px` to read the layout under
+it shrinks the document, the browser clamps `scrollTop` to the shorter page, and
+restoring the height does not restore the scroll. Read mode's spacers are measured
+by subtracting their own height (`sizeLead`).
+
 ## Testing
 
-~90 Rust tests cover the parser (modules, configs, test suites), the seeder, the
-git parsing and the DB layer. `tests/pipeline.rs` runs the whole
+~83 Rust tests cover the parser (modules, configs, test suites), the project
+index and walk, the git parsing, and the DB layer (projects, glooms, topics and
+arranging them). `tests/pipeline.rs` runs the whole
 chain against `tests/fixtures/accounts.ex`, which is the exact file
 `mockup/index.html` draws — asserting the click-target line numbers
 `12, 20, 24, 30, 36`, the full body spans `12–17, 20–22, 24–26, 36–41`, and the
@@ -2170,8 +2007,8 @@ habits load-bearing rather than optional:
   repo was written against a printed syntax tree, and every one of them would
   have been wrong from intuition. `child_by_field_name` in particular returns
   `None` for children the grammar leaves unnamed.
-- **Check layout maths with a throwaway `node -e`.** The treemap's cell sizes,
-  the reach block's crossing count, the read mode lead-in and tail — all of them
+- **Check layout maths with a throwaway `node -e`.** The treemap's cell sizes (when
+  there was one), the reach diagram's crossing count, read mode's stop spacing, the read mode lead-in and tail — all of them
   had arithmetic bugs that a script caught in seconds and eyeballing would not
   have. The read-mode tail was silently short on any pane above ~500px; nothing
   looked broken, the last step just never fired.
@@ -2203,7 +2040,7 @@ habits load-bearing rather than optional:
   the UI shows `+?` or strikes the row through. A confident wrong answer is
   worse than a visible gap, and the gaps are the tool's whole method.
 - Rust owns parsing; the frontend never sees a syntax tree, only an `Outline`.
-- Commands in `commands/` stay thin; logic lives in `db/`, `parse/`, `seed.rs`,
+- Commands in `commands/` stay thin; logic lives in `db/`, `parse/`, `index.rs`,
   `git.rs`.
 - **Each pane owns its font size, under its own key** (`codeFontSize`,
   `docFontSize`) via one shared `fontSize()` store. `--doc-font` sits on the doc

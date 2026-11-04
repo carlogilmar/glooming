@@ -4,10 +4,15 @@
 > outline of it, and write an explanation next to it in extended markdown.
 > Elixir first; the architecture assumes more languages later.
 
-Status: **M0–M12 implemented** (see §7 for what each covers). 40 Rust tests
-pass, `pnpm check` is clean, the app builds and runs. The validated UI mockup at
-`mockup/index.html` is the visual contract, and `src-tauri/tests/pipeline.rs`
-asserts the parser still matches it line-for-line.
+Status: **M0–M12 implemented**, then **superseded in shape** by the project model
+(§10). Sections 1–9 are the original v1 plan — one file, one explanation — kept
+as written because the parser, the reach diagram, focus, read mode and the motion
+rules all still stand on that reasoning. Where they describe a doc *seeded* with
+blocks, a snapshot of the code, or a reading as a set of files, §10 is what
+replaced them; `CLAUDE.md` is the current map.
+
+`src-tauri/tests/pipeline.rs` still asserts the parser matches `mockup/index.html`
+line-for-line.
 
 ---
 
@@ -429,3 +434,31 @@ a v2 idea, not a v1 requirement.
 
 None blocking. `mockup/index.html` is committed on purpose — it is the visual
 contract for M1–M8 and is referenced throughout this document.
+
+---
+
+## 10. Since then: the project is the unit (2026-11)
+
+Using v1 for real — onboarding to codebases, not reviewing one change — moved the
+centre of gravity from *a file* to *a project*. Inspired by Smalltalk, Glamorous
+Toolkit and Lepiter: an environment you ask questions of, and a knowledge base of
+notes beside it. What changed, and why, in the order it was decided:
+
+| Was | Now | Why |
+|---|---|---|
+| Open a file; the doc is about it | Open a **project**; browse any file in it | onboarding is about a codebase, not a file |
+| A reading = a set of files, each **snapshotted** | A **gloom** stores prose only; code is read live | a knowledge base about live code should show its decay (struck-through references), not freeze the code and drift silently |
+| Seeded with `lgtm:*` blocks | No blocks; the **Woop** shows live views beside the note | a block's values were text, correct only while a snapshot guaranteed them |
+| Line references (`L25-29`) | Lines *inside a function* (`Mod.fun/2:3-6`) | they follow code that moves, and say when they break |
+| Bare names resolved by thread | Every reference names its module | a bare `enabled?/2` says nothing about which file it is in |
+| Library modal, file strip, origin file | The **Hub**: topics in reading order, Recent | a knowledge base needs a table of contents, and a reading order for the next person |
+| One column, then a split | **Woop \| Gloom**, one at a time (`⌘1`/`⌘2`/`⌘J`) | each half of a split was too short to do its job |
+| Import with a branch check | (export/import being redesigned) | there is no snapshot left to validate |
+| `▷ Read`, then `▷ LGTM` | `▷ Gloom` / `▶ Glooming` | *to gloom* is to read a codebase this way |
+
+Schema: `0004` dropped `doc_files` and the snapshot columns and gave glooms a
+`project_id`; `0005` added `topics` and a gloom's `topic_id` / `position`. A
+project index (`index.rs`, a `defmodule` line scan) maps every module to its file,
+so a reference resolves across the codebase and read mode can walk into files
+nobody opened. The details, and everything that was built and then cut, are in
+`CLAUDE.md`.
