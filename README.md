@@ -12,6 +12,8 @@ work out as **glooms** — notes whose references walk the code in the order you
 prose takes it. Nothing is copied out of your code, and nothing is ever written
 into it.
 
+https://github.com/user-attachments/assets/9dfaab9c-31c2-4264-83b2-e253fd9d5cbb
+
 ## Requirements
 
 | Tool | Version | Why |
