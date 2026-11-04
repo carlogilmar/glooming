@@ -1,354 +1,20 @@
 <script lang="ts">
-  // `?` — everything the app can do, in one place.
+  // `?` — the shortcuts, and nothing else.
   //
-  // Most of lgtm's interactions are discoverable by clicking around, but a few
-  // are not: that clicking a function *name* means something different from
-  // clicking its *line*, and that there are four ways out of a selection. This
-  // is where those get said out loud.
+  // It used to be a manual: every gesture, every view, every reference form, in
+  // ten sections. Nobody reads a manual in a modal; what you open `?` for is the
+  // key you forgot. These are the six the app is driven by — everything else is
+  // on screen, or one hover away.
 
   let { onclose }: { onclose: () => void } = $props();
 
-  type Row = { keys?: string[]; action?: string; what: string };
-  type Section = { title: string; note?: string; rows: Row[] };
-
-  const sections: Section[] = [
-    {
-      title: "Reading code",
-      note: "The left pane is read-only, permanently. lgtm reads; your editor edits.",
-      rows: [
-        {
-          action: "click a function name",
-          what: "Selects the whole function — every clause, its @spec and its @doc — and dims the rest of the file",
-        },
-        {
-          action: "click test / describe / setup / config",
-          what:
-            "In a test suite or a config script the same gesture works on the keyword opening a " +
-            "block, and selects the whole block",
-        },
-        {
-          action: "click any other line",
-          what: "Puts the review cursor on that line, for reading one line at a time. Click it again to drop it",
-        },
-        { action: "click empty space", what: "Clears the selection" },
-        { action: "click the filename", what: "Copies the file's full path, ready to paste into your editor" },
-      ],
-    },
-    {
-      title: "Navigating",
-      rows: [
-        { keys: ["↑", "↓"], what: "Move the review cursor one line. Also `j` / `k`, and `5j` for five" },
-        { keys: ["[", "]"], what: "Previous / next function, selected whole. Does not wrap at either end" },
-        {
-          action: "⇧click, or drag the line numbers",
-          what:
-            "Select a run of lines. A click sets the review cursor — one line, \"where am I\" — " +
-            "where a range is \"this bit here\", which is what you want when the thing you are " +
-            "writing about is four lines of a pipeline rather than a whole function. Dragging " +
-            "happens in the gutter because the code itself is selectable text, and a drag over it " +
-            "has to keep meaning copy",
-        },
-        { keys: ["⌘P"], what: "Jump to a function by name. Type a prefix, or an abbreviation like cu" },
-        {
-          keys: ["⌘1", "⌘2"],
-          what:
-            "The right pane: ⌘1 the Woop (the views of the code on screen), ⌘2 the Gloom " +
-            "(your note). Remembered per gloom",
-        },
-        { keys: ["⌘J"], what: "Flip between the Woop and the Gloom" },
-        { keys: ["⌘R"], what: "Gloom: walk the code in the order your prose takes it — every reference, across modules. While glooming, ⌘R or `esc` stops" },
-        { keys: ["⌘E"], what: "Edit / preview the note. Entering edit stops glooming; typing under a scroll-driven selection is chaos" },
-        {
-          action: "the views",
-          what:
-            "The right pane's top half, always live from disk: a module's surface and the " +
-            "boundary it reaches through; a config script's settings, marked env or literal; a " +
-            "suite's describes and the context each one starts with. They follow the file on " +
-            "screen, with or without a gloom open",
-        },
-        {
-          action: "the sidebar",
-          what:
-            "Every file in the project as a tree. A teal dot marks a file the open gloom mentions. " +
-            "Drag its right edge to resize it (double-click resets); `‹` or `⌘\\` hides it, and the " +
-            "Files button left in its place brings it back. Read mode always hides it",
-        },
-        {
-          keys: ["⌘[", "⌘]"],
-          what:
-            "Back and forward along your trail — every module you opened, from the tree, ⌘T, a " +
-            "reference or the reach diagram. Also the ← → in the code pane's header",
-        },
-        { keys: ["Esc"], what: "Clear the selection" },
-      ],
-    },
-    {
-      title: "Search",
-      note:
-        "Every occurrence in the file is marked, not just the one you jumped to — seeing where a " +
-        "name appears is most of why you searched for it. smartcase, as vim does it: a lowercase " +
-        "query ignores case, a capital letter makes it exact. A selected function keeps its " +
-        "highlight but stops dimming the file, so no match is ever hidden.",
-      rows: [
-        { keys: ["/"], what: "Open the search bar and start typing" },
-        { keys: ["↵"], what: "Jump to the first match at or after the line you're on" },
-        { keys: ["n", "N"], what: "Next / previous occurrence, wrapping around the file" },
-        { keys: ["Esc"], what: "Clear the search and its highlights" },
-      ],
-    },
-    {
-      title: "Vim motions",
-      note:
-        "Always on, no mode to remember — the code pane is read-only, so only the motions exist. " +
-        "Counts work: 5j, 42G. Two deviations from vim: ? opens this help rather than searching " +
-        "backwards (use / then N), and [ / ] step functions with one key instead of [[ / ]].",
-      rows: [
-        { keys: ["j", "k"], what: "Down / up a line — 5j moves five" },
-        { keys: ["⌃d", "⌃u"], what: "Half a screen down / up, measured from what's actually visible" },
-        { keys: ["g g", "G"], what: "First / last line. 42G goes to line 42" },
-        { keys: ["H", "M", "L"], what: "Highest / middle / lowest line on screen" },
-        { keys: ["{", "}"], what: "Previous / next blank-line block — in Elixir, function and pipeline boundaries" },
-        { keys: ["z z"], what: "Centre the current line in the pane" },
-        { keys: ["y y"], what: "Copy the current line" },
-      ],
-    },
-    {
-      title: "Leaving a selection",
-      note: "Four ways, because one is never enough.",
-      rows: [
-        { keys: ["Esc"], what: "From anywhere" },
-        { action: "re-click the row", what: "Reach back for the thing you clicked" },
-        { action: "click empty code", what: "When the mouse is already over there" },
-        { action: "click the hint pill", what: "The visible button, bottom of the code pane" },
-      ],
-    },
-    {
-      title: "The code pane's controls",
-      rows: [
-        { action: "A− / A+", what: "Code font size, 10–22px. Remembered between sessions" },
-        {
-          action: "◫ Blame",
-          what:
-            "Tints each line with its author's colour and names them in the gutter — runs of lines by " +
-            "one person read as blocks. Stops any selection from dimming the file, so every author " +
-            "stays visible. Only shown inside a git repo, and only runs git blame when pressed",
-        },
-        {
-          action: "long lines",
-          what: "Always soft-wrapped, so reading never means scrolling sideways",
-        },
-      ],
-    },
-    {
-      title: "Glooms",
-      note:
-        "A gloom is a note in this project's knowledge base: one thing you worked out, in your " +
-        "own words, beside the code it is about. It stores your prose and nothing else — no copy " +
-        "of the code — so it always describes the code as it is now.",
-      rows: [
-        {
-          action: "Start a gloom",
-          what:
-            "`+ New` in the band at the top, or in the Hub. It opens with its name selected and " +
-            "lands in Unsorted; exploring without one saves nothing at all",
-        },
-        {
-          action: "open a gloom",
-          what:
-            "Lands the code pane on the first module its prose names, which is where your " +
-            "understanding of it starts. To move to another, go through the Hub (`⌂ Hub` at the " +
-            "start of the band, or ⌘K)",
-        },
-        {
-          action: "Woop | Gloom",
-          what:
-            "The right pane shows one at a time: the Woop — the surface, the reach and the " +
-            "other views of the code on screen, always live — or the Gloom, your note. ⌘1 / ⌘2, " +
-            "⌘J flips. Edit and ▷ Gloom bring you to the Gloom",
-        },
-        {
-          action: "a Broadway module",
-          what:
-            "Its Woop adds two views: how start_link wires it — the producer, each stage's " +
-            "processes as squares, batch sizes and timeouts, the context — and its lifecycle, " +
-            "from the producer to acked or failed. Hover lights the lines in the code; click " +
-            "selects them. A value's colour says where it comes from: the code, app env, " +
-            "Broadway's default when it is not set, or computed at runtime (named by what computes it)",
-        },
-        {
-          action: "Preview / Edit",
-          what: "On the note's own bar, above the note: the rendered note, or its raw markdown",
-        },
-        {
-          action: "A− / A+",
-          what: "On the note's bar too: text size for Preview and Edit, separate from the code pane's",
-        },
-        {
-          keys: ["/"],
-          what:
-            "While editing, insert a reference to any function in a file you have open or have " +
-            "walked through. It inserts the full module name and no arity — the footer shows the " +
-            "exact text. Only fires at a word boundary, so a path or a date stays prose",
-        },
-        {
-          action: "hover the reach diagram",
-          what:
-            "The module drawn as a closed shape, with lines only where a call leaves it. Click " +
-            "something outside to see who here calls it, and open it from there — any module in " +
-            "the project can be followed",
-        },
-        { keys: ["⌘S"], what: "Force a save. Autosave already runs 800ms after you stop typing" },
-        {
-          keys: ["⌘K"],
-          what:
-            "The Hub: this project's glooms as a table of contents. Opening a project lands there; " +
-            "once you are reading, ⌘K (or `⌂ Hub`) shows it again in place of the panes, and " +
-            "esc goes back to what you had open",
-        },
-        {
-          action: "the Hub",
-          what:
-            "Topics in reading order, one line per gloom — drag rows and topics, double-click a " +
-            "topic to rename it, `remove` sends its glooms to Unsorted. `Recent` lists everything " +
-            "newest first. `/` filters by name, tag or prose; ↑/↓ and ↵ open; Space looks inside, " +
-            "where Delete is. ⚠ marks a gloom whose references no longer match the code",
-        },
-      ],
-    },
-    {
-      title: "References",
-      note:
-        "Inline code naming something in the project becomes a reference, looked up by name every " +
-        "time the note renders — so it follows a function that moved, and says so when it is " +
-        "gone. No new syntax: the markdown still reads correctly anywhere.",
-      rows: [
-        {
-          action: "`MyApp.Billing.charge`",
-          what:
-            "Every arity of it; `charge/2` narrows to one. Shown at its shortest unique name — " +
-            "`Billing.charge` — while the text keeps the full one",
-        },
-        {
-          action: "`MyApp.Billing.charge/2:3-6`",
-          what:
-            "Lines 3–6 of that function, counted from its first line, so an edit elsewhere in the " +
-            "file cannot move them. Plain line numbers are gone: they could not follow anything",
-        },
-        { action: "`Weather.Pipeline`", what: "The module itself — a step that opens it" },
-        {
-          action: "`enabled?/2` alone",
-          what:
-            "Plain code, not a reference. A reference always names its module — on its own, " +
-            "`enabled?/2` does not say which file it is in. The chip shows the short name anyway",
-        },
-        {
-          action: "/ while editing",
-          what:
-            "The module on screen and its functions, inserted with the full module name. For any " +
-            "other module, type the full name: the note reads that file without your opening it",
-        },
-        {
-          action: "a dashed reference",
-          what:
-            "Ambiguous: `Pipeline.run` with two Pipelines in the project. Click it to choose, and " +
-            "the text is rewritten to the full name. Read mode skips it until then",
-        },
-        {
-          action: "a struck-through reference",
-          what:
-            "The function it names is gone, or the lines are past its end. It stays visible " +
-            "rather than becoming plain text, and read mode skips it",
-        },
-        {
-          action: "`attrs`, `String.trim`",
-          what:
-            "Left as prose. A word with no module, and a module that is not in this project, are " +
-            "things you write about code — not broken references to it",
-        },
-      ],
-    },
-    {
-      title: "Reading",
-      rows: [
-        {
-          action: "▷ Gloom",
-          what:
-            "Scroll the note and the code follows your prose order — not the file's — crossing " +
-            "into whichever module the next reference names. Every reference is a step, in the " +
-            "order you wrote them — several on one line are walked one by one. While it runs " +
-            "the button says ▶ Glooming: to gloom is to read a codebase this way, and glooming " +
-            "is doing it"
-        },
-        {
-          keys: ["↓", "↑"],
-          what:
-            "While glooming: the next or previous reference, exactly one at a time (`j`/`k` too). " +
-            "The code pane's line cursor stands down while the prose is driving it",
-        },
-        {
-          action: "one step per reference",
-          what:
-            "Every reference is a stop, triggered as you reach the sentence naming it — so a " +
-            "paragraph that names three functions walks the code through all three",
-        },
-        {
-          action: "crossing a module",
-          what:
-            "The pane dips and its header lights up in gold, rather than crossfading line ranges " +
-            "between two files that share nothing",
-        },
-      ],
-    },
-    {
-      title: "Other kinds of file",
-      note:
-        "A module is not the only shape a file comes in, so the views change with what lgtm " +
-        "finds.",
-      rows: [
-        {
-          action: "a config script",
-          what:
-            "Settings grouped by app, with every value marked as literal or read from the " +
-            "environment. A hardcoded credential is reported without its value",
-        },
-        {
-          action: "a test suite",
-          what:
-            "Describes as foldable sections, the setup each one inherits, and every assertion " +
-            "marked by kind inside a selected test",
-        },
-        {
-          action: "anything else",
-          what: "One line saying there is nothing structural to navigate by — never empty boxes",
-        },
-      ],
-    },
-    {
-      title: "Projects and files",
-      rows: [
-        { action: "← Home", what: "Back to your projects. Saves anything pending first" },
-        {
-          keys: ["⌘T", "⌘O"],
-          what:
-            "Find a module or file by name in the project. Matches the whole path, so `web/proc` " +
-            "and `my_app/acc` both narrow, and a pasted full path works too",
-        },
-        {
-          action: "Open a folder…",
-          what:
-            "On home. A project is a folder, remembered with its glooms. Build output and " +
-            "dependencies are never listed",
-        },
-        { keys: ["⌘⇧O"], what: "The system file picker, for a file outside the project" },
-        {
-          action: "coming back to the window",
-          what:
-            "Re-reads what you have open and rebuilds the module index, so an edit made in your " +
-            "editor is there when you return",
-        },
-        { keys: ["?"], what: "This help" },
-      ],
-    },
+  const keys: { keys: string[]; what: string }[] = [
+    { keys: ["⌘", "K"], what: "The Hub" },
+    { keys: ["⌘", "B"], what: "Open or close the file tree" },
+    { keys: ["⌘", "N"], what: "New gloom" },
+    { keys: ["⌘", "1"], what: "Switch between the Woop and the Gloom" },
+    { keys: ["⌘", "E"], what: "Edit the gloom" },
+    { keys: ["⌘", "R"], what: "Reading mode" },
   ];
 </script>
 
@@ -357,32 +23,17 @@
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="panel" onclick={(e) => e.stopPropagation()}>
     <header>
-      <b>lgtm</b>
-      <span>a file is done when you can say <em>looks good to me</em></span>
+      <b>Shortcuts</b>
       <span class="spacer"></span>
       <button class="btn" onclick={onclose}>Close</button>
     </header>
 
-    <div class="body">
-      {#each sections as section (section.title)}
-        <section>
-          <h3>{section.title}</h3>
-          {#if section.note}<p class="note">{section.note}</p>{/if}
-          <dl>
-            {#each section.rows as row (row.what)}
-              <dt>
-                {#if row.keys}
-                  {#each row.keys as k (k)}<kbd>{k}</kbd>{/each}
-                {:else}
-                  <span class="act">{row.action}</span>
-                {/if}
-              </dt>
-              <dd>{row.what}</dd>
-            {/each}
-          </dl>
-        </section>
+    <dl>
+      {#each keys as row (row.what)}
+        <dt>{#each row.keys as k, i (i)}<kbd>{k}</kbd>{/each}</dt>
+        <dd>{row.what}</dd>
       {/each}
-    </div>
+    </dl>
   </div>
 </div>
 
@@ -395,11 +46,10 @@
     display: flex;
     justify-content: center;
     align-items: flex-start;
-    padding-top: 6vh;
+    padding-top: 14vh;
   }
   .panel {
-    width: min(760px, 94vw);
-    max-height: 84vh;
+    width: min(400px, 94vw);
     display: flex;
     flex-direction: column;
     background: var(--bg-raised);
@@ -412,7 +62,7 @@
   header {
     flex: none;
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 10px;
     padding: 12px 16px;
     border-bottom: 1px solid var(--line-soft);
@@ -424,71 +74,39 @@
     color: var(--fg-dim);
     text-transform: uppercase;
   }
-  header span {
-    font-size: 11.5px;
-    color: var(--fg-faint);
-  }
-  header em {
-    font-style: italic;
-  }
   header .spacer {
     flex: 1;
   }
 
-  .body {
-    overflow: auto;
-    padding: 4px 16px 16px;
-    min-height: 0;
-  }
-
-  section {
-    padding-top: 16px;
-  }
-  h3 {
-    margin: 0;
-    font-size: 10.5px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--fg-faint);
-  }
-  .note {
-    margin: 5px 0 0;
-    font-size: 11.5px;
-    color: var(--fg-dim);
-    line-height: 1.5;
-  }
-
   dl {
     display: grid;
-    grid-template-columns: minmax(120px, max-content) 1fr;
-    gap: 6px 14px;
-    margin: 9px 0 0;
-    align-items: baseline;
+    grid-template-columns: max-content 1fr;
+    gap: 10px 16px;
+    margin: 0;
+    padding: 16px 18px 18px;
+    align-items: center;
   }
   dt {
     white-space: nowrap;
   }
   dd {
     margin: 0;
-    font-size: 12px;
-    color: var(--fg-dim);
-    line-height: 1.5;
+    font-size: 13px;
+    color: var(--fg);
   }
 
   kbd {
+    display: inline-block;
+    min-width: 22px;
+    text-align: center;
     font-family: var(--mono);
-    font-size: 10.5px;
+    font-size: 12px;
     border: 1px solid var(--line);
     border-bottom-width: 2px;
-    border-radius: 4px;
-    padding: 1px 5px;
-    margin-right: 3px;
+    border-radius: 5px;
+    padding: 2px 6px;
+    margin-right: 4px;
     color: var(--fg);
     background: var(--bg);
-  }
-  .act {
-    font-size: 11.5px;
-    color: var(--fg);
-    white-space: nowrap;
   }
 </style>

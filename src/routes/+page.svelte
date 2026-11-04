@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick, untrack } from "svelte";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { when } from "$lib/when";
@@ -89,7 +90,7 @@
   // ---- the sidebar ---------------------------------------------------------
 
   /**
-   * Collapsed by default, opened with ⌘\ or the Files rail, always hidden in read mode. Remembered,
+   * Collapsed by default, opened with ⌘B or the Files rail, always hidden in read mode. Remembered,
    * because a narrow window wants it gone and asking twice is once too many.
    */
   let side = $state(false);
@@ -104,7 +105,7 @@
     try {
       // Collapsed unless you opened it: the Hub and ⌘T are how most files are
       // reached, and the code pane is the reason the tool exists. The Files rail
-      // or ⌘\ opens it, and that choice is remembered.
+      // or ⌘B opens it, and that choice is remembered.
       side = localStorage.getItem("sidebar") === "shown";
       const w = Number(localStorage.getItem("sidebarWidth"));
       if (w) sideW = clampSide(w);
@@ -143,6 +144,30 @@
     sideW = SIDE_W;
     rememberSide();
   }
+
+  /**
+   * The Hub closes the file tree while it is up — the index is the whole page,
+   * and the tree beside it was a second way in competing with the first — and
+   * leaving the Hub puts the tree back as it was. Not persisted: it is the Hub's
+   * arrangement, not your preference, so `sidebar` in storage keeps meaning what
+   * you chose. `⌘B` still opens it on the Hub if you want it there.
+   *
+   * `before` is bookkeeping only this effect reads, so it is a plain `let`; the
+   * read of `side` is untracked, or this effect would re-run on every toggle and
+   * close the tree you just opened.
+   */
+  let sideBeforeHub: boolean | null = null;
+  $effect(() => {
+    if (hubFull) {
+      if (sideBeforeHub === null) {
+        sideBeforeHub = untrack(() => side);
+        side = false;
+      }
+    } else if (sideBeforeHub !== null) {
+      side = sideBeforeHub;
+      sideBeforeHub = null;
+    }
+  });
 
   function toggleSide() {
     side = !side;
@@ -755,6 +780,19 @@
     return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable;
   }
 
+  /**
+   * Run something on the right pane, leaving the Hub first if it is up. The pane
+   * is not mounted under the Hub, so `⌘E` there used to do nothing at all; now it
+   * goes back to the gloom and opens its editor, which is what it means.
+   */
+  async function onPane(act: () => void) {
+    if (hubOverWork) {
+      hubPage = false;
+      await tick();
+    }
+    act();
+  }
+
   function onKeydown(e: KeyboardEvent) {
     const meta = e.metaKey || e.ctrlKey;
     const key = e.key.toLowerCase();
@@ -814,7 +852,10 @@
       toggleHub();
       return;
     }
-    if (meta && e.key === "\\") {
+    // The file tree: Cmd+B, the sidebar toggle of VS Code, Zed and Sublime, so the
+    // hand already knows it. It was Cmd+Backslash, which nobody's hand knew. In the note
+    // editor (a plain textarea) ⌘B means nothing, so no text command is lost.
+    if (meta && key === "b" && !e.shiftKey) {
       e.preventDefault();
       toggleSide();
       return;
@@ -834,31 +875,31 @@
     // ⌘R would reload the webview in a dev build, so it is prevented first.
     if (meta && key === "r") {
       e.preventDefault();
-      docPane?.toggleRead();
+      void onPane(() => docPane?.toggleRead());
       return;
     }
-    // Woop and Gloom: ⌘1 / ⌘2 go to each, ⌘J flips between them — all on ⌘,
-    // like every other shortcut here. They were ⌥1 / ⌥2 while they collapsed the
-    // ends of a split. `e.code` as well as `e.key`, so a layout whose 1 and 2 are
-    // shifted still works.
+    // Woop and Gloom: ⌘1 switches between them — two sides, and the switch on
+    // screen always says which one you are on, so one key does it. ⌘2 (the Gloom)
+    // and ⌘J (a flip that duplicated this) are gone. From the Hub it goes back to
+    // the gloom on the side you left it rather than flipping too: you cannot see
+    // the pane from the Hub, so a flip there would land somewhere unpredictable.
+    // `e.code` as well as `e.key`, so a layout whose 1 is shifted still works.
     if (meta && !e.shiftKey && (e.key === "1" || e.code === "Digit1") && doc) {
       e.preventDefault();
-      docPane?.show("woop");
+      if (hubOverWork) hubPage = false;
+      else docPane?.flip();
       return;
     }
-    if (meta && !e.shiftKey && (e.key === "2" || e.code === "Digit2") && doc) {
+    // A new gloom, from anywhere in a project — the Hub included.
+    if (meta && key === "n" && !e.shiftKey) {
       e.preventDefault();
-      docPane?.show("gloom");
-      return;
-    }
-    if (meta && key === "j" && doc) {
-      e.preventDefault();
-      docPane?.flip();
+      hubPage = false;
+      void newGloom();
       return;
     }
     if (meta && key === "e") {
       e.preventDefault();
-      docPane?.toggleEdit();
+      void onPane(() => docPane?.toggleEdit());
       return;
     }
     if (meta && key === "p") {
@@ -1037,7 +1078,7 @@
           >
             ⌂ Hub <kbd>⌘K</kbd>
           </button>
-          <button class="gnew" onclick={newGloom} title="Start a gloom">+ New</button>
+          <button class="gnew" onclick={newGloom} title="Start a gloom (⌘N)">+ New</button>
           <span class="gsep"></span>
           {#if doc}
             {#if renaming !== null}
@@ -1132,7 +1173,7 @@
             <!-- The way out sits on the thing it hides; the way back is the rail
                  left in its place. Up in the header it was a word among words,
                  nowhere near the panel it acted on. -->
-            <button class="sbtn" onclick={toggleSide} title="Hide the sidebar (⌘\)">‹</button>
+            <button class="sbtn" onclick={toggleSide} title="Hide the sidebar (⌘B)">‹</button>
           </div>
           <div class="tree">
             {#each treeRows as n (n.key)}
@@ -1178,7 +1219,7 @@
              bare 14px strip with a ›, which read as the pane's border — something
              you had to know was clickable. -->
         <div class="srail">
-          <button onclick={toggleSide} title="Show the files (⌘\)">
+          <button onclick={toggleSide} title="Show the files (⌘B)">
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
               <rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.2" />
               <path d="M6 2.5v11" stroke="currentColor" stroke-width="1.2" />
@@ -1296,8 +1337,8 @@
       {/if}
       <span class="spacer"></span>
       <span class="keys">
-        <kbd>⌘T</kbd> find · <kbd>⌘[</kbd><kbd>⌘]</kbd> trail · <kbd>⌘\</kbd> sidebar ·
-        <kbd>⌘J</kbd> woop/gloom · <kbd>⌘R</kbd> glooming · <kbd>⌘E</kbd> edit · <kbd>?</kbd> help
+        <kbd>⌘K</kbd> hub · <kbd>⌘B</kbd> files · <kbd>⌘N</kbd> new · <kbd>⌘1</kbd> woop/gloom ·
+        <kbd>⌘E</kbd> edit · <kbd>⌘R</kbd> reading · <kbd>?</kbd> shortcuts
       </span>
       {#if doc}
         <span>gloom #{doc.id} → sqlite</span>
@@ -2365,7 +2406,7 @@
     display: flex;
   }
   /* Narrow on purpose: the code pane is the reason the tool exists, and three
-     columns on a laptop squeeze it. ⌘\ takes this away entirely. */
+     columns on a laptop squeeze it. ⌘B takes this away entirely. */
   .side {
     position: relative;
     flex: 0 0 240px;

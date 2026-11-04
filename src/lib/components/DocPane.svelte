@@ -167,7 +167,7 @@
    * use the two halves were each too short to do their job, and the grip was one
    * more thing to manage. Two names made the choice clearer than a seam did: the
    * **Woop** is what the code shows you, the **Gloom** is what you make of it,
-   * and you are in one or the other. ⌘1 / ⌘2 go to each, ⌘J flips.
+   * and you are in one or the other. ⌘1 switches between them.
    *
    * Remembered per gloom, because what you were doing in one — reading its
    * Woop, writing its Gloom — is where you want to be when you come back.
@@ -186,7 +186,7 @@
     }
   });
 
-  /** Show one side. Exported: the shell owns ⌘1, ⌘2 and ⌘J. */
+  /** Show one side. Exported: the shell owns ⌘1 (via `flip`), and Edit and read mode land on the Gloom. */
   export function show(to: Side) {
     if (!gloom) return;
     // Read mode walks the note; looking at the Woop is leaving it.
@@ -1292,7 +1292,7 @@
           aria-selected={side === "woop" && !reading}
           class:on={side === "woop" && !reading}
           onclick={() => show("woop")}
-          title="Woop — what the code shows you (⌘1 · ⌘J flips)"
+          title="Woop — what the code shows you (⌘1 switches)"
         >
           Woop
         </button>
@@ -1301,7 +1301,7 @@
           aria-selected={side === "gloom" || reading}
           class:on={side === "gloom" || reading}
           onclick={() => show("gloom")}
-          title="Gloom — what you make of it (⌘2 · ⌘J flips)"
+          title="Gloom — what you make of it (⌘1 switches)"
         >
           Gloom
         </button>

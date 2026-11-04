@@ -3,7 +3,7 @@
 A desktop tool for **reading a codebase deeply** — onboarding to one you do not
 know yet is the case it is built for. You open a **project** and land on its
 **Hub**: the project's glooms as a table of contents. Open a module — `⌘T`, the
-file tree (`⌘\`), a reference — and the window splits: source on the left,
+file tree (`⌘B`), a reference — and the window splits: source on the left,
 read-only and always live; on the right, the **Woop**, what the code shows you
 (its moduledoc, its surface, the boundary it reaches through). Following a call
 opens the next module, and your trail is walkable with `⌘[` / `⌘]`.
@@ -373,7 +373,7 @@ you are on the Hub, so it reads "you are here" and a click goes back), then
 then a hairline and the name. They are the same in every gloom, so they get a
 fixed place instead of drifting after a name of any length.
 
-**The sidebar** (`⌘\`, or `‹` in its own header; hidden in read mode) is a **file
+**The sidebar** (`⌘B`, or `‹` in its own header; hidden in read mode) is a **file
 tree, the way an editor shows one**. It starts **collapsed** — the Hub and `⌘T` are
 how most files are reached — and stays open once you open it (`sidebar` =
 `shown`). Its right edge resizes it (160–520px,
@@ -1344,9 +1344,12 @@ one change.) UI words only — the code still says `explore`,
 `ExploreSections`, `doc`, as `reading` survived the first rename.
 
 **One at a time, not a split.** `Woop | Gloom` sits first in the pane's
-header; `⌘1` / `⌘2` go to each and `⌘J` flips (`show`, `flip` in `DocPane`,
-called by the shell, which owns the window keys) — all on ⌘ like every other
-shortcut; they were ⌥1 / ⌥2 while they collapsed a split's ends. The choice is remembered per
+header; **`⌘1` switches between them** (`flip` in `DocPane`, called by the shell,
+which owns the window keys). Two sides, and the switch on screen always says which
+one you are on, so one key does it — `⌘2` and a `⌘J` flip existed and were
+removed, and before that ⌥1 / ⌥2 collapsed a split's ends. From the Hub, `⌘1`
+returns to the gloom on the side you left it rather than flipping too: you cannot
+see the pane from the Hub, so a flip there would land somewhere unpredictable. The choice is remembered per
 gloom (`gloomSide:<id>`). Edit and read mode always land on the Gloom; picking
 the Woop while reading leaves read mode. Exploring with no gloom open, there
 is only a Woop and no switch.
@@ -1409,6 +1412,24 @@ place on both sides of the window.
 - **A confirmation lands on the control, not in a toast**, and replaces it rather
   than sitting beside it, or the row shifts every time you use it.
 
+### Six keys, and `?` lists only them
+
+| Key | Does |
+|---|---|
+| `⌘K` | the Hub (again: back to what was open) |
+| `⌘B` | the file tree — the sidebar toggle of VS Code, Zed and Sublime; it was `⌘\` |
+| `⌘N` | a new gloom, from anywhere in a project |
+| `⌘1` | Woop ↔ Gloom |
+| `⌘E` | edit ↔ preview |
+| `⌘R` | reading mode |
+
+All on ⌘, the Mac convention for app commands. **Not Option**: ⌥+letter types a
+character on a Mac layout (⌥E starts an accent), so in the note editor it would
+insert symbols. **Not Ctrl**: ⌃+letter is Cocoa text editing in every field (⌃A,
+⌃E, ⌃K…). The rest still work — `⌘T`/`⌘O` find, `⌘P` functions, `⌘[`/`⌘]` the
+trail, `⌘S`, the code pane's vim motions — but `?` shows only the six. It was a
+ten-section manual; what you open `?` for is the key you forgot.
+
 ### The two mode toggles are keys as well as buttons
 
 `⌘R` for read mode and `⌘E` for edit/preview. Both live in `DocPane` as exported
@@ -1434,7 +1455,7 @@ you type is chaos — the same rule the Edit button already followed.
 Adding them exposed the real problem, which was the status bar. It advertised
 `j k gg G vim`, which tells anyone who does not think of themselves as a vim user
 to skip the line. It names the keys you need instead, and now reads
-`⌘T find · ⌘[⌘] trail · ⌘\ sidebar · ⌘J woop/gloom · ⌘R glooming · ⌘E edit · ? help`.
+`⌘T find · ⌘[⌘] trail · ⌘B sidebar · ⌘J woop/gloom · ⌘R glooming · ⌘E edit · ? help`.
 
 ### Lists are rows
 
@@ -1808,6 +1829,13 @@ the display face, the project and its counts under it, then the controls and
 tags, all inside the one scroll — so it reads as a page you are on, and gets out
 of the way once you are into the topics. It was a 13px label at the start of a
 toolbar row and read as one more control.
+
+**It closes the file tree while it is up**, and leaving restores it — the index is
+the whole page, and a tree beside it was a second way in competing with the first.
+Not persisted, so `sidebar` in storage keeps meaning what you chose. The pane's
+keys work from it too: `⌘E` / `⌘R` leave the Hub, let the pane mount, then act
+(`onPane`), and `⌘1` goes back to the gloom — the pane is not mounted under the Hub, so they used to
+do nothing there. `⌘N` starts a gloom from anywhere.
 
 **It never shows before its glooms have loaded.** `enterProject` fetches the
 index, the files and the Hub together and sets `project` last; setting it first
