@@ -28,6 +28,8 @@
   } from "$lib/explore";
   import type { IndexedModule, Range, ReadingFile } from "$lib/ipc";
   import { renderModuledoc } from "$lib/moduledoc";
+  import { contextRow, lifecycle, wiring } from "$lib/broadway";
+  import { focus } from "$lib/stores/focus.svelte";
   import { tick } from "svelte";
 
   let {
@@ -88,6 +90,100 @@
 
   const kind = $derived(file?.outline?.kind ?? "plain");
   const module = $derived(moduleOf(file));
+
+  // ---- the Broadway Woop ----------------------------------------------------
+  //
+  // A module that says `use Broadway` gets two views below its reach: how
+  // start_link wires it, and its lifecycle as a node graph. `lib/broadway.ts`
+  // draws them; this is the wiring between them and the code.
+  //
+  // Hover tints the element's lines in the code (`focus.peek`, which selects and
+  // dims nothing) and traces the edges it leads to; a stage's process squares
+  // cascade once as the pointer enters it. Click selects — a callback by its
+  // signature, so every clause comes with it; anything else by its lines.
+  const broadway = $derived(module?.behaviour?.kind === "broadway" ? module.behaviour : null);
+  const bwWiring = $derived(broadway ? wiring(broadway) + contextRow(broadway) : "");
+  const bwLife = $derived(broadway && module ? lifecycle(broadway, module.functions) : "");
+
+  const spansOf = (attr: string | undefined) =>
+    (attr ?? "")
+      .split(",")
+      .filter(Boolean)
+      .map((r) => {
+        const [a, b] = r.split("-").map(Number);
+        return { start: a, end: b || a };
+      });
+
+  const reduced = () =>
+    typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  let traced: Element | null = null;
+  let arrivals: ReturnType<typeof setTimeout>[] = [];
+  let cascaded: Element | null = null;
+
+  function untrace(root: Element) {
+    for (const t of arrivals) clearTimeout(t);
+    arrivals = [];
+    root.querySelectorAll(".trace, .arrived").forEach((g) => g.classList.remove("trace", "arrived"));
+  }
+
+  function bwOver(e: MouseEvent) {
+    const root = e.currentTarget as Element;
+    const t = e.target as Element;
+    const lit = t.closest<HTMLElement | SVGElement>("[data-lines]");
+    focus.peek = spansOf(lit?.dataset.lines);
+
+    // Trace what this node leads to, once per entry — the line draws, and its
+    // head turns as the line arrives, not before it has left.
+    const node = t.closest<HTMLElement | SVGElement>("[data-out]");
+    if (node !== traced) {
+      untrace(root);
+      traced = node;
+      for (const id of (node?.dataset.out ?? "").split(" ").filter(Boolean)) {
+        const g = node?.closest("svg")?.querySelector(`[data-edge="${id}"]`);
+        if (!g) continue;
+        void (g as SVGGraphicsElement).getBoundingClientRect(); // restart the draw
+        g.classList.add("trace");
+        arrivals.push(setTimeout(() => g.classList.add("arrived"), reduced() ? 0 : 620));
+      }
+    }
+
+    // A stage's squares cascade as the pointer enters it: ×50 read as fifty.
+    const stage = t.closest(".wstage");
+    if (stage !== cascaded) {
+      cascaded?.classList.remove("cascade");
+      cascaded = stage;
+      if (stage?.querySelector(".proc")) {
+        void (stage as SVGGraphicsElement).getBoundingClientRect();
+        stage.classList.add("cascade");
+      }
+    }
+  }
+
+  function bwLeave(e: MouseEvent) {
+    focus.peek = [];
+    untrace(e.currentTarget as Element);
+    traced = null;
+    cascaded?.classList.remove("cascade");
+    cascaded = null;
+  }
+
+  function bwClick(e: MouseEvent) {
+    const t = e.target as Element;
+    const el = t.closest<HTMLElement | SVGElement>("[data-lines]");
+    const spans = spansOf(el?.dataset.lines);
+    if (!spans.length) return;
+    e.stopPropagation();
+    const sig = t.closest<HTMLElement | SVGElement>("[data-sig]")?.dataset.sig;
+    if (sig) onselect?.(sig, spans[0].start);
+    else onselect?.("broadway", spans[0].start, { start: spans[0].start, end: spans[spans.length - 1].end });
+  }
+
+  // A peek must never outlive the file it was about.
+  $effect(() => {
+    file;
+    return () => (focus.peek = []);
+  });
 
   // ---- the moduledoc --------------------------------------------------------
   //
@@ -632,6 +728,32 @@
         {module.name.split(".").pop()} reaches nothing outside itself. That silence
         is the finding, not an empty state.
       </p>
+    {/if}
+
+    {#if broadway}
+      <!-- The first behaviour view. Below the reach rather than instead of it:
+           what a module touches is still worth seeing. -->
+      <p class="sec">Broadway · how start_link wires it <span class="kind">behaviour</span></p>
+      <!-- The views are a pointer aid over code you can read and select by keyboard
+           anyway; hovering peeks and clicking selects what is already in the pane. -->
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions, a11y_mouse_events_have_key_events -->
+      <div class="bwv" onmouseover={bwOver} onmouseleave={bwLeave} onclick={bwClick}>
+        {@html bwWiring}
+        <div class="legend">
+          <span><b>▪</b> one process</span>
+          <span><b class="v-lit">10</b> written in the code</span>
+          <span><b class="v-env">50</b> from app env, its default</span>
+          <span><b class="v-def">1</b> not set — Broadway's default</span>
+          <span><b class="v-unk">count(…)</b> computed at runtime</span>
+        </div>
+      </div>
+      <p class="sec">Broadway · the lifecycle</p>
+      <!-- The views are a pointer aid over code you can read and select by keyboard
+           anyway; hovering peeks and clicking selects what is already in the pane. -->
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions, a11y_mouse_events_have_key_events -->
+      <div class="bwv" onmouseover={bwOver} onmouseleave={bwLeave} onclick={bwClick}>
+        {@html bwLife}
+      </div>
     {/if}
   {/if}
 </div>
@@ -1565,4 +1687,278 @@
     color: var(--fg-faint);
   }
 
+
+  /* ---- the Broadway Woop (lib/broadway.ts draws it; mockup/broadway.html is the
+     contract). Everything is :global because it arrives as {@html}. ---------- */
+  .bwv {
+    border: 1px solid var(--doc-line);
+    border-radius: 8px;
+    background: var(--doc-bg);
+    padding: 10px 8px 8px;
+  }
+  .bwv :global(svg.bw) {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  .bwv :global(text) {
+    font-family: var(--sans);
+  }
+  .bwv :global(.t-mono) {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    fill: var(--fg);
+  }
+  .bwv :global(.t-dim) {
+    font-size: 10px;
+    fill: var(--fg-faint);
+  }
+  .bwv :global(.colhead) {
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    fill: var(--fg-faint);
+  }
+  /* where a value comes from — SVG text fills, HTML chips colour */
+  .bwv :global(.v-lit) {
+    fill: var(--fg);
+    color: var(--fg);
+  }
+  .bwv :global(.v-env) {
+    fill: var(--syn-at);
+    color: var(--syn-at);
+  }
+  /* Not set in the code: Broadway's own default — known, so it is drawn, but in
+     a quieter ink than anything the module actually says. */
+  .bwv :global(.v-def) {
+    fill: var(--fg-dim);
+    color: var(--fg-dim);
+  }
+  .bwv :global(.proc.def) {
+    opacity: 0.4;
+  }
+  .bwv :global(.v-unk) {
+    fill: var(--fg-faint);
+    color: var(--fg-faint);
+    font-style: italic;
+  }
+  .bwv :global(.node) {
+    fill: var(--code-bg);
+    stroke: var(--line);
+    stroke-width: 1;
+  }
+  .bwv :global(.node.src) {
+    fill: color-mix(in srgb, var(--gloom-deep) 10%, var(--code-bg));
+    stroke: var(--gloom-deep);
+  }
+  .bwv :global(.node.cb) {
+    stroke: color-mix(in srgb, var(--accent) 45%, var(--line));
+  }
+  .bwv :global([data-lines]) {
+    cursor: pointer;
+  }
+  .bwv :global(.wstage:hover > .node),
+  .bwv :global(.gn:hover > .node) {
+    stroke: var(--accent);
+    stroke-width: 2;
+  }
+  .bwv :global(.knob:hover tspan) {
+    text-decoration: underline;
+  }
+  .bwv :global(.proc) {
+    fill: var(--gloom-deep);
+    opacity: 0.75;
+  }
+  .bwv :global(.bucketwall) {
+    fill: none;
+    stroke: var(--fg-dim);
+    stroke-width: 1.4;
+  }
+  .bwv :global(.bucketfill) {
+    fill: color-mix(in srgb, var(--gloom-deep) 30%, transparent);
+  }
+  .bwv :global(.wire) {
+    fill: none;
+    stroke: var(--fg-faint);
+    stroke-width: 1.3;
+    stroke-dasharray: 2 3;
+  }
+  .bwv :global(.pgroup) {
+    fill: color-mix(in srgb, var(--gloom-deep) 5%, transparent);
+    stroke: color-mix(in srgb, var(--gloom-deep) 40%, transparent);
+    stroke-dasharray: 4 3;
+  }
+  .bwv :global(.stage:hover > .pgroup) {
+    stroke: var(--gloom-deep);
+  }
+  .bwv :global(.failnode .node) {
+    stroke: color-mix(in srgb, var(--priv) 60%, var(--line));
+    fill: color-mix(in srgb, var(--priv) 6%, var(--code-bg));
+  }
+  /* A callback the module does not define: the lifecycle is still Broadway's,
+     so the slot is drawn — dashed, and saying so. */
+  .bwv :global(.gn.ghost) {
+    opacity: 0.55;
+  }
+  .bwv :global(.gn.ghost .node) {
+    stroke-dasharray: 4 3;
+    fill: transparent;
+  }
+  .bwv :global(.ge .ln-main) {
+    fill: none;
+    stroke: var(--fg-faint);
+    stroke-width: 1.4;
+  }
+  .bwv :global(.ge.fail .ln-main) {
+    stroke: var(--priv);
+    stroke-dasharray: 5 4;
+  }
+  .bwv :global(.elabel) {
+    font-size: 10px;
+    fill: var(--fg-faint);
+  }
+  .bwv :global(.ge.fail .elabel) {
+    fill: var(--priv);
+  }
+  .bwv :global(.outcome.ok) {
+    fill: color-mix(in srgb, var(--pub) 12%, var(--code-bg));
+    stroke: var(--pub);
+  }
+  .bwv :global(.outcome.bad) {
+    fill: color-mix(in srgb, var(--priv) 12%, var(--code-bg));
+    stroke: var(--priv);
+  }
+  .bwv :global(.olabel) {
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .bwv :global(.olabel.ok) {
+    fill: var(--pub);
+  }
+  .bwv :global(.olabel.bad) {
+    fill: var(--priv);
+  }
+
+  /* The trace: a node's outgoing edges draw themselves once, in the direction a
+     message goes — the reach diagram's idiom. pathLength="1" makes the dash maths
+     independent of each edge's length. The head turns when the line ARRIVES
+     (`arrived`, set as the draw ends), not when it starts. */
+  .bwv :global(.tr) {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 2.2;
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .bwv :global(.ge.fail .tr) {
+    stroke: var(--priv);
+  }
+  .bwv :global(.trace .tr) {
+    opacity: 1;
+    animation: bwDraw 0.62s linear forwards;
+  }
+  @keyframes bwDraw {
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+  .bwv :global(.ge.arrived:not(.fail) .ln-main) {
+    marker-end: url(#bw-hl);
+  }
+  /* A stage's squares, cascading once as the pointer enters it. */
+  .bwv :global(.cascade .proc) {
+    animation: bwSquares 0.3s ease backwards;
+    animation-delay: calc(var(--i) * 12ms);
+  }
+  @keyframes bwSquares {
+    from {
+      opacity: 0.15;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* The meaning survives: an edge is drawn in full at once, the squares light
+       together. */
+    .bwv :global(.trace .tr) {
+      animation: none;
+      stroke-dashoffset: 0;
+    }
+    .bwv :global(.cascade .proc) {
+      animation: none;
+    }
+  }
+
+  /* the context, as the map it is */
+  .bwv :global(.ctxrow) {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin: 4px 6px 2px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--doc-line);
+  }
+  .bwv :global(.ctxlabel) {
+    margin-right: 2px;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+  }
+  .bwv :global(.ctxrow .sp) {
+    flex: 1;
+  }
+  .bwv :global(.kv) {
+    display: inline-flex;
+    overflow: hidden;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--code-bg);
+  }
+  .bwv :global(.kv:hover) {
+    border-color: var(--accent);
+  }
+  .bwv :global(.kv .k) {
+    padding: 2px 7px;
+    color: var(--fg-dim);
+    background: var(--bg-inset);
+    border-right: 1px solid var(--line);
+  }
+  .bwv :global(.kv .v) {
+    padding: 2px 8px;
+  }
+  .bwv :global(.kv .v.v-lit) {
+    color: var(--syn-atom);
+    font-style: normal;
+  }
+  .bwv :global(.kv.name .v) {
+    color: var(--syn-mod);
+  }
+  .bwv :global(.bw-unknown) {
+    padding: 8px 10px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--fg-dim);
+  }
+  .bwv :global(.bw-unknown code) {
+    font-family: var(--mono);
+    color: var(--syn-fn);
+  }
+  .bwv .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 6px 6px 0;
+    font-size: 10px;
+    color: var(--fg-faint);
+  }
+  .bwv .legend b {
+    font-family: var(--mono);
+    font-weight: 500;
+  }
 </style>

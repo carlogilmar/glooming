@@ -455,6 +455,7 @@ notes beside it. What changed, and why, in the order it was decided:
 | One column, then a split | **Woop \| Gloom**, one at a time (`⌘1`/`⌘2`/`⌘J`) | each half of a split was too short to do its job |
 | Import with a branch check | (export/import being redesigned) | there is no snapshot left to validate |
 | `▷ Read`, then `▷ LGTM` | `▷ Gloom` / `▶ Glooming` | *to gloom* is to read a codebase this way |
+| Every module gets the same views | **Behaviour views**: a `use Broadway` module adds its wiring and lifecycle | a module that implements a behaviour is best read through what that behaviour is — the first of a family (GenServer, Oban next) |
 
 Schema: `0004` dropped `doc_files` and the snapshot columns and gave glooms a
 `project_id`; `0005` added `topics` and a gloom's `topic_id` / `position`. A

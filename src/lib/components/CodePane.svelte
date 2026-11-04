@@ -1007,6 +1007,7 @@
           class:leaving={focus.isLeaving(n)}
             class:docline={docLines.has(n)}
             class:cursor={focus.cursorLine === n}
+            class:peek={focus.isPeek(n)}
             class:authored={showBlame && !!blameRows[i]}
             class:asserted={focus.contains(n) && asserts.has(n)}
             style:--as={focus.contains(n) ? assertColour(asserts.get(n)) : undefined}
@@ -1681,6 +1682,14 @@
     --gut: 128px;
   }
 
+  /* Peeked from a view — a Broadway knob, a lifecycle node. A tint, lighter than
+     a selection and never dimming: hovering a diagram must not rearrange the
+     code you are reading. Prefixed `.code ` like every selection state, so it
+     outranks the blame tint. */
+  .code .row.peek {
+    background: color-mix(in srgb, var(--accent) 9%, transparent);
+    box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+  }
   .code .row.hit {
     background: var(--sel);
     box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 30%, transparent);

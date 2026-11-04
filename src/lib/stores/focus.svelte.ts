@@ -32,6 +32,15 @@ class FocusStore {
   // ---- line cursor ----
   cursorLine = $state<number | null>(null);
 
+  // ---- peek ----
+  /**
+   * Lines hovered in a view — a Broadway knob, a lifecycle node. A tint and
+   * nothing else: it selects nothing, dims nothing and scrolls nothing, so
+   * moving the pointer across a diagram never moves the code you are reading.
+   * Clicking is what selects.
+   */
+  peek = $state<Span[]>([]);
+
   // ---- scroll-driven reading ----
   /** True while the doc's scroll position is driving the selection. */
   reading = $state(false);
@@ -81,6 +90,10 @@ class FocusStore {
 
   get clauseCount(): number {
     return this.ranges.length;
+  }
+
+  isPeek(n: number): boolean {
+    return inside(this.peek, n);
   }
 
   contains(n: number): boolean {

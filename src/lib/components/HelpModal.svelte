@@ -167,6 +167,15 @@
             "⌘J flips. Edit and ▷ Gloom bring you to the Gloom",
         },
         {
+          action: "a Broadway module",
+          what:
+            "Its Woop adds two views: how start_link wires it — the producer, each stage's " +
+            "processes as squares, batch sizes and timeouts, the context — and its lifecycle, " +
+            "from the producer to acked or failed. Hover lights the lines in the code; click " +
+            "selects them. A value's colour says where it comes from: the code, app env, " +
+            "Broadway's default when it is not set, or computed at runtime (named by what computes it)",
+        },
+        {
           action: "Preview / Edit",
           what: "On the note's own bar, above the note: the rendered note, or its raw markdown",
         },

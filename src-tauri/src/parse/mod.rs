@@ -2,6 +2,7 @@
 //! [`Outline`]. Adding a language means adding a module here that produces the
 //! same shape — nothing downstream changes.
 
+pub mod broadway;
 pub mod elixir;
 pub mod kinds;
 
@@ -124,6 +125,121 @@ pub struct ModuleInfo {
     pub functions: Vec<FnInfo>,
     /// What this module reaches outside itself.
     pub deps: Vec<Dep>,
+    /// A behaviour this module implements that has a view of its own — the
+    /// first of a family (`use Broadway`; GenServer, Oban, Phoenix next).
+    pub behaviour: Option<Behaviour>,
+}
+
+// ---------------------------------------------------------- behaviour views ---
+
+/// A behaviour with a view of its own in the Woop. Tagged, so the frontend can
+/// switch on `kind` and a new member of the family is one more variant.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Behaviour {
+    Broadway(BroadwayInfo),
+}
+
+/// Where a configured value comes from — the shape of `start_link`'s options,
+/// read statically. The uncertain answer is drawn as uncertain: anything that is
+/// not a literal or an app-env read is `Runtime`, carried as its source text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum KnobValue {
+    /// Written in the file: `4`, `1_000`, `:orders`, `"us-east-1"`.
+    Literal { text: String },
+    /// `Application.get_env(:app, :key, default)`, `fetch_env!`, `System.get_env`.
+    /// `default` is what the view can show; `required` marks the bang.
+    Env { key: String, default: Option<String>, required: bool },
+    /// Anything else — a variable, a function call, a struct field.
+    Runtime { text: String },
+}
+
+/// One option and the lines it sits on, so hovering it can light them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Knob {
+    pub value: KnobValue,
+    pub range: Range,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BroadwayProducer {
+    /// `BroadwaySQS.Producer` — what tells SQS from Kafka from a custom one.
+    pub module: Option<String>,
+    pub module_range: Option<Range>,
+    /// The producer's own option keys, and where they sit — one hover, not a list.
+    pub options: Vec<String>,
+    pub options_range: Option<Range>,
+    pub concurrency: Option<Knob>,
+    pub range: Range,
+}
+
+/// A processor group or a batcher: a name, its knobs, its lines.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BroadwayStage {
+    pub name: String,
+    pub range: Range,
+    pub concurrency: Option<Knob>,
+    /// Processors only.
+    pub max_demand: Option<Knob>,
+    /// Batchers only.
+    pub batch_size: Option<Knob>,
+    pub batch_timeout: Option<Knob>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextEntry {
+    pub key: String,
+    pub value: KnobValue,
+    pub range: Range,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BroadwayContext {
+    pub range: Range,
+    /// A literal map's entries. Empty when the context is built at runtime.
+    pub entries: Vec<ContextEntry>,
+    /// `weather_config`, `build_context()` — the expression, when it is not a map.
+    pub runtime: Option<String>,
+}
+
+/// The options passed to `Broadway.start_link/2`, when they are a literal
+/// keyword list the parser can read.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BroadwayOptions {
+    pub range: Range,
+    pub name: Option<Knob>,
+    pub producer: Option<BroadwayProducer>,
+    pub processors: Vec<BroadwayStage>,
+    pub batchers: Vec<BroadwayStage>,
+    pub context: Option<BroadwayContext>,
+}
+
+/// One `handle_batch/4` clause, and the batcher it answers for — `None` when its
+/// first argument is a variable, a catch-all for every batcher.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchClause {
+    pub batcher: Option<String>,
+    pub range: Range,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BroadwayInfo {
+    /// Where `Broadway.start_link(...)` is called, if it is.
+    pub call: Option<Range>,
+    /// The options, read — or `None` when they are built at runtime.
+    pub options: Option<BroadwayOptions>,
+    /// The expression the options come from when they are not a literal list.
+    pub runtime_options: Option<String>,
+    pub batch_clauses: Vec<BatchClause>,
 }
 
 /// What shape a file came in.

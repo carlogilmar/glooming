@@ -127,6 +127,10 @@ fn module_from_call(node: Node, src: &str) -> Option<ModuleInfo> {
 
     let deps = resolve_deps(&alias_table(body, src), &refs, &name);
 
+    // A behaviour with a view of its own. Broadway is the first.
+    let behaviour = super::broadway::uses_broadway(body, src)
+        .then(|| super::Behaviour::Broadway(super::broadway::broadway_info(&name, body, src)));
+
     Some(ModuleInfo {
         name,
         line: line_of(node),
@@ -134,6 +138,7 @@ fn module_from_call(node: Node, src: &str) -> Option<ModuleInfo> {
         doc_range: attribute_range(body, src, "moduledoc"),
         functions,
         deps,
+        behaviour,
     })
 }
 

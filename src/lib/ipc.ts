@@ -47,7 +47,66 @@ export interface ModuleInfo {
   docRange: Range | null;
   functions: FnInfo[];
   deps: Dep[];
+  /** A behaviour with a view of its own — `use Broadway` is the first. */
+  behaviour: Behaviour | null;
 }
+
+// ---- behaviour views -------------------------------------------------------
+
+/** Where a configured value comes from. `runtime` is drawn as +?, never guessed. */
+export type KnobValue =
+  | { kind: "literal"; text: string }
+  | { kind: "env"; key: string; default: string | null; required: boolean }
+  | { kind: "runtime"; text: string };
+
+export interface Knob {
+  value: KnobValue;
+  range: Range;
+}
+
+export interface BroadwayProducer {
+  module: string | null;
+  moduleRange: Range | null;
+  options: string[];
+  optionsRange: Range | null;
+  concurrency: Knob | null;
+  range: Range;
+}
+
+export interface BroadwayStage {
+  name: string;
+  range: Range;
+  concurrency: Knob | null;
+  maxDemand: Knob | null;
+  batchSize: Knob | null;
+  batchTimeout: Knob | null;
+}
+
+export interface BroadwayContext {
+  range: Range;
+  entries: { key: string; value: KnobValue; range: Range }[];
+  runtime: string | null;
+}
+
+export interface BroadwayOptions {
+  range: Range;
+  name: Knob | null;
+  producer: BroadwayProducer | null;
+  processors: BroadwayStage[];
+  batchers: BroadwayStage[];
+  context: BroadwayContext | null;
+}
+
+export interface BroadwayInfo {
+  kind: "broadway";
+  call: Range | null;
+  options: BroadwayOptions | null;
+  runtimeOptions: string | null;
+  /** One per `handle_batch/4` clause; `batcher` null is a catch-all. */
+  batchClauses: { batcher: string | null; range: Range }[];
+}
+
+export type Behaviour = BroadwayInfo;
 
 export type FileKind = "module" | "config" | "test" | "plain";
 

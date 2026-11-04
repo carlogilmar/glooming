@@ -38,7 +38,8 @@ front page.
 
 > If you are a Claude session being onboarded: read this file end to end, then
 > `IMPLEMENTATION_PLAN.md` for the *why* behind each decision. This file is the
-> map; the plan is the reasoning. `README.md` is the user-facing version.
+> map; the plan is the reasoning. `README.md` is deliberately short — what it is,
+> requirements, getting started — so the detail lives here and nowhere else.
 >
 > **The `mockup/*.html` files are the visual contracts** — standalone,
 > dependency-free pages the real UI was built from. If a component and its
@@ -225,6 +226,7 @@ rm -rf src-tauri/target      # then build as usual; ~2 min from cold
 mockup/workspace.html          THE CONTRACT for the project model: home, exploring, writing, glooming
                                (its sidebar-of-glooms and split pane were since replaced — see the Hub, Woop and Gloom)
 mockup/hub.html                the Hub: topics in columns, Recent, quick look (its modal state was cut)
+mockup/broadway.html           the Broadway Woop: how start_link wires it, and the lifecycle graph
 mockup/index.html              the original single-file contract — parser line numbers are pinned to it
 mockup/deps.html               the reach diagram's visual contract
 mockup/surface.html            the surface's visual contract
@@ -243,7 +245,7 @@ scripts/effect-audit.py        $effects that read and write the same $state
 scripts/component-audit.py     components imported but never rendered
 app-icon.png                   icon source (1024², RGBA); also copied to static/
 IMPLEMENTATION_PLAN.md         the v1 reasoning, plus §10: what the project model changed and why
-README.md                      user-facing: clone, install, run, build
+README.md                      one paragraph, requirements, getting started — nothing else
 
 src/
   app.css                      design tokens for light and dark; hljs → token mapping
@@ -280,6 +282,7 @@ src/
     tags.ts                    a gloom's tags, in docs.label
     hub.ts                     what the Hub says about a gloom (by rendering it), grouping, moves
     moduledoc.ts               a module's @moduledoc, rendered for the Woop, with its headings
+    broadway.ts                the Broadway Woop: wiring + lifecycle, hand-written SVG
     exporting.ts               a gloom's name → a filename (unused until export returns)
     ipc.ts                     typed wrappers over invoke()
 
@@ -287,6 +290,7 @@ src-tauri/
   src/
     parse/elixir.rs            tree-sitter → Outline   ← the load-bearing file
     parse/kinds.rs             config scripts and test suites
+    parse/broadway.rs          `use Broadway`: start_link's options and the handle_batch clauses
     index.rs                   the project index: module names → files, by line scan
     git.rs                     .git/HEAD read + lazy blame (+ an unused log)
     db/{mod,models,docs}.rs    pool, serde shapes, gloom CRUD
@@ -1271,6 +1275,64 @@ fencing and indent stripped.
 - `L3–20` on the section's rule selects the moduledoc in the code.
 - **`@moduledoc false` is said, not rendered**: hiding a module from the docs is a
   decision, and it marks the module as internal.
+
+### Behaviour views: the Broadway Woop
+
+`mockup/broadway.html` is the contract. A module that says `use Broadway` keeps
+its moduledoc, surface and reach, and gets two views below them. It is the first
+of a family: `ModuleInfo.behaviour` is a tagged enum (`Behaviour::Broadway`), so
+GenServer, Oban or Phoenix is one more variant and one more renderer.
+
+**Read statically, in Rust** (`parse/broadway.rs`), and only what the tree says.
+The options are taken when they are a literal keyword list passed to
+`Broadway.start_link/2`; built anywhere else, `runtime_options` carries the
+expression and the view says so. Each value is a `KnobValue`: a literal, an
+app-env read (`Application.get_env/3`, `fetch_env!`, `System.get_env`) with its
+default, or `Runtime`, carried as its source text — never guessed.
+
+**Four inks for where a value comes from**, and none of them is `+?`, which said
+nothing. Written in the code; from app env, showing its default; **not set —
+Broadway's default** (`DEFAULTS` in `broadway.ts`: producer and batcher
+concurrency 1, demand 10, batch size 100, timeout 1s), in a quieter ink with
+lighter squares; and **computed at runtime**, named by what computes it
+(`batch_partition_count(…)`, `…processor_concurrency`) with no squares, because
+the number is not in the code. Processor concurrency left out is "2 × cores" with
+no squares: `System.schedulers_online() * 2` describes the machine, and sixteen
+squares would describe a laptop. A field name is cut from its START, keeping the
+end — `weather_processing_producer_concurrency` and `…_processor_concurrency`
+share a prefix, and cut from the end both read `weather_process…`. `__MODULE__` resolves to the
+module. **Comments are named nodes**, so they are filtered out of every child list:
+the real Weather producer's tuple has one, and reading the second child as its
+options read the comment instead.
+
+**How start_link wires it** — producer by its module name (that is what tells SQS
+from Kafka from a custom one; its options are "N options ›", one hover), the
+processor group and each batcher with **concurrency drawn as that many process
+squares** (capped at 100), the bucket's size and ⏱ timeout, and the context as the
+map it is: a chip per entry, coloured by where its value comes from. Labels are one
+or two words; sentences were tried and read as clutter.
+
+**The lifecycle** — Broadway's callbacks as nodes, its routes as edges, ending in
+the only two outcomes a message has, **✓ acked** and **✗ failed**. The producer; a
+dashed *processors* group around `prepare_messages` and `handle_message`; a dashed
+*batchers* group around one `handle_batch` per batcher (the clause that names it,
+or the catch-all); `handle_failed`; the outcomes. One failed edge leaves each
+**group**, not one node: any callback in a stage can fail a message, `:default`'s
+included. A callback the module does not define is drawn **ghosted** — the
+lifecycle is Broadway's, not the module's. Two things were tried and cut: a flow
+chart unrolling `handle_message`'s own calls (`Decoder.decode`, `Customers.fetch_many`
+— specific to one codebase, a second, worse copy of any long callback), and
+`Message.put_data` / `put_batcher` chips on the nodes.
+
+**Interaction.** Hover tints the element's lines in the code with `focus.peek` — a
+store field that selects, dims and scrolls nothing, so moving across a diagram
+never rearranges the code. Click selects: a callback by its signature (every
+clause), anything else by its lines. A node's outgoing edges trace once on hover,
+and the arrowhead turns blue **when the line arrives** (`arrived`, set at 620ms) —
+turning it with the draw coloured the head before the line had left. A stage's
+squares cascade as the pointer enters it. Markers are in user units, or a lit
+line's head grows with its stroke. The outcomes carry no `data-lines`: they are
+where a message ends, not code.
 
 ### Woop and Gloom: the right pane shows one at a time
 
