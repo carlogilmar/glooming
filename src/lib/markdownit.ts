@@ -53,12 +53,6 @@ export function createMarkdownIt(
 
   const resolver = refResolver(files, known, labels);
 
-  const baseRender = md.render.bind(md);
-  md.render = (src: string, env?: unknown) => {
-    resolver.reset();
-    return baseRender(src, env as never);
-  };
-
   const defaultInline =
     md.renderer.rules.code_inline ??
     ((tokens, idx, opts, _env, self) => self.renderToken(tokens, idx, opts));

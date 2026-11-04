@@ -444,51 +444,56 @@
       <button class="tbtn primary" onclick={onnew}>+ Start a gloom</button>
     </div>
   {:else}
-    <div class="ihead">
-      <h2>Hub</h2>
-      <div class="view">
-        <button class:on={view === "topics"} onclick={() => setView("topics")} title="The reading order, by topic">
-          Topics
-        </button>
-        <button class:on={view === "recent"} onclick={() => setView("recent")} title="Every gloom, newest first">
-          Recent
-        </button>
-      </div>
-      <span class="sum">
-        <b>{data.glooms.length}</b>
-        {data.glooms.length === 1 ? "gloom" : "glooms"} · <b>{data.topics.length}</b>
-        {data.topics.length === 1 ? "topic" : "topics"}
-        {#if brokenCount}· <span class="badsum">{brokenCount} with broken references</span>{/if}
-      </span>
-      <span class="spacer"></span>
-      <input
-        class="q"
-        bind:this={filterEl}
-        bind:value={query}
-        placeholder="Filter by name, tag or prose…  /"
-        spellcheck="false"
-      />
-      {#if view === "topics"}
-        <button class="tbtn" onclick={newTopic}>+ Topic</button>
-      {/if}
-      <button class="tbtn primary" onclick={onnew}>+ New gloom</button>
-      {#if back}
-        <button class="tbtn" onclick={() => onback?.()} title="Back to what you had open (esc)">← Back</button>
-      {/if}
-      {#if tags.length}
-        <div class="filters">
-          {#each tags as t (t)}
-            <button
-              class="ftag"
-              class:on={tag === t}
-              class:off={tag !== null && tag !== t}
-              style="--hue:{tagHue(t)}"
-              onclick={() => (tag = tag === t ? null : t)}>{t}</button
-            >
-          {/each}
+    <!-- One scroll for the whole page: the masthead is the top of the Hub's
+         content, not a toolbar above it — so it reads as a page you are on, and
+         it scrolls away once you are into the topics. Dragging autoscrolls this. -->
+    <div class="page" bind:this={topicsEl}>
+      <header class="mast">
+        <h2>Hub</h2>
+        <p class="sub">
+          {project.name} · <b>{data.glooms.length}</b>
+          {data.glooms.length === 1 ? "gloom" : "glooms"} in <b>{data.topics.length}</b>
+          {data.topics.length === 1 ? "topic" : "topics"}
+          {#if brokenCount}· <span class="badsum">{brokenCount} with broken references</span>{/if}
+        </p>
+        <div class="controls">
+          <div class="view">
+            <button class:on={view === "topics"} onclick={() => setView("topics")} title="The reading order, by topic">
+              Topics
+            </button>
+            <button class:on={view === "recent"} onclick={() => setView("recent")} title="Every gloom, newest first">
+              Recent
+            </button>
+          </div>
+          <input
+            class="q"
+            bind:this={filterEl}
+            bind:value={query}
+            placeholder="Filter by name, tag or prose…  /"
+            spellcheck="false"
+          />
+          {#if view === "topics"}
+            <button class="tbtn" onclick={newTopic}>+ Topic</button>
+          {/if}
+          <button class="tbtn primary" onclick={onnew}>+ New gloom</button>
+          {#if back}
+            <button class="tbtn" onclick={() => onback?.()} title="Back to what you had open (esc)">← Back</button>
+          {/if}
         </div>
-      {/if}
-    </div>
+        {#if tags.length}
+          <div class="filters">
+            {#each tags as t (t)}
+              <button
+                class="ftag"
+                class:on={tag === t}
+                class:off={tag !== null && tag !== t}
+                style="--hue:{tagHue(t)}"
+                onclick={() => (tag = tag === t ? null : t)}>{t}</button
+              >
+            {/each}
+          </div>
+        {/if}
+      </header>
 
     {#if view === "recent"}
       <!-- One list, newest first, every topic mixed. No numbers — a place in the
@@ -504,7 +509,7 @@
         </div>
       </div>
     {:else}
-      <div class="topics" bind:this={topicsEl}>
+      <div class="topics">
         {#each groups as grp (grp.topic?.id ?? "unsorted")}
           {@const visible = grp.ids.filter(shown)}
           <!-- Unsorted only while something is in it: an empty "Everything has a
@@ -583,6 +588,7 @@
         {/each}
       </div>
     {/if}
+    </div>
   {/if}
 
   {#if drag && ghost}
@@ -653,23 +659,51 @@
     color: var(--fg);
   }
 
-  .ihead {
-    flex: none;
+  .page {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+  /* The masthead: a page title, centred and large, so there is no doubt which
+     page this is — it was a 13px label at the start of a toolbar, and read as one
+     more control. The display face is the one home's wordmark uses. */
+  .mast {
     display: flex;
+    flex-direction: column;
     align-items: center;
     gap: 10px;
-    padding: 12px 22px 10px;
-    border-bottom: 1px solid var(--line);
-    flex-wrap: wrap;
+    padding: 30px 22px 18px;
+    text-align: center;
   }
-  .ihead h2 {
+  .mast h2 {
     margin: 0;
     font-family: var(--display);
-    font-size: 13px;
+    font-size: 30px;
     font-weight: 600;
-    letter-spacing: 0.24em;
+    letter-spacing: 0.3em;
+    /* Tracking adds its gap after the last letter too; pull it back or the word
+       sits off-centre. */
+    margin-right: -0.3em;
     text-transform: uppercase;
     color: var(--gloom-deep);
+    line-height: 1;
+  }
+  .sub {
+    margin: 0;
+    font-size: 13px;
+    color: var(--fg-faint);
+  }
+  .sub b {
+    color: var(--fg-dim);
+    font-weight: 600;
+  }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
   }
   .view {
     display: flex;
@@ -679,11 +713,11 @@
   }
   .view button {
     font: inherit;
-    font-size: 11px;
+    font-size: 12.5px;
     color: var(--fg-dim);
     background: transparent;
     border: 0;
-    padding: 3px 10px;
+    padding: 4px 13px;
     cursor: pointer;
   }
   .view button + button {
@@ -694,14 +728,6 @@
     color: var(--gloom-deep);
     font-weight: 600;
   }
-  .sum {
-    font-size: 11.5px;
-    color: var(--fg-faint);
-  }
-  .sum b {
-    color: var(--fg-dim);
-    font-weight: 600;
-  }
   .badsum {
     color: var(--priv);
   }
@@ -709,11 +735,11 @@
     flex: 1;
   }
   .q {
-    width: 240px;
+    width: 300px;
     font: inherit;
-    font-size: 12px;
+    font-size: 13px;
     color: var(--fg);
-    padding: 4px 9px;
+    padding: 5px 11px;
     border: 1px solid var(--line);
     border-radius: 6px;
     background: var(--bg-raised);
@@ -724,12 +750,12 @@
   }
   .tbtn {
     font: inherit;
-    font-size: 11.5px;
+    font-size: 12.5px;
     color: var(--fg-dim);
     background: transparent;
     border: 1px solid var(--line);
-    border-radius: 5px;
-    padding: 3px 9px;
+    border-radius: 6px;
+    padding: 4px 12px;
     cursor: pointer;
     white-space: nowrap;
   }
@@ -748,10 +774,11 @@
     color: var(--bg);
   }
   .filters {
-    width: 100%;
     display: flex;
     flex-wrap: wrap;
+    justify-content: center;
     gap: 5px;
+    max-width: 760px;
   }
   /* The tag's own hue, the same everywhere — band, row tooltip, quick look. */
   .ftag,
@@ -785,10 +812,8 @@
   /* Topics flow in columns across the width: an index you take in at a glance,
      not a list you scroll. */
   .topics {
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
     padding: 6px 22px 40px;
+    border-top: 1px solid var(--line);
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
     gap: 4px 28px;
@@ -1047,13 +1072,14 @@
   }
 
   .recent {
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
     padding: 10px 22px 40px;
+    border-top: 1px solid var(--line);
   }
+  /* Centred under the masthead, at a width where a name and its date stay in
+     one glance. */
   .recent .list {
     max-width: 860px;
+    margin: 0 auto;
   }
   .recent .row {
     height: 28px;

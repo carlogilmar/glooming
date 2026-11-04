@@ -1,9 +1,9 @@
 <script lang="ts">
   // `/` in the editor — insert a reference without leaving the keyboard.
   //
-  // The list is free: every file loaded this session is already parsed by the
-  // time you can type, so this is a filter over data we have rather than any new
-  // analysis.
+  // The list is the file on screen: its module, then its functions — already
+  // parsed by the time you can type, so this is a filter, not new analysis. To
+  // reference anything else, type its full name; the note resolves it.
   //
   // Anchored to the caret via a mirror element. Measuring a textarea caret is
   // the one fiddly part: there is no API for it, so a hidden div copies the
@@ -20,11 +20,7 @@
     onpick,
     onclose,
   }: {
-    /**
-     * Every function in every file loaded this session — the one on screen, the
-     * ones you walked through, the ones your prose already names. You write
-     * about what you have read, so that is the vocabulary.
-     */
+    /** The module on screen and its functions — see `vocabulary`. */
     entries: VocabEntry[];
     query: string;
     x: number;
@@ -72,14 +68,9 @@
   }
 
   /**
-   * Matched, then ranked by the file you are looking at.
-   *
-   * You are usually writing about what is on screen, so its functions come first
-   * even when one elsewhere scores a slightly better substring hit. That is the
-   * *only* thing the open file decides here — what gets **inserted** is settled
-   * by module, so the same keystroke always produces the same text. The module
-   * name is part of what you can match against, so `billing.to_c` narrows the
-   * way you'd expect.
+   * Matched, best first; the module before its functions when they tie, so an
+   * empty query opens on the module. The module name is part of what you can
+   * match against, so `billing.to_c` narrows the way you'd expect.
    */
   const hits = $derived(
     entries
@@ -93,11 +84,11 @@
       .filter((h) => h.s !== Infinity)
       .sort(
         (a, b) =>
-          Number(b.e.nearby) - Number(a.e.nearby) ||
           a.s - b.s ||
+          Number(b.e.kind === "module") - Number(a.e.kind === "module") ||
           a.e.sig.localeCompare(b.e.sig),
       )
-      .slice(0, 9),
+      .slice(0, 12),
   );
 
   /** Rows in order, with a header wherever the module changes. */
@@ -165,8 +156,8 @@
   {#if !hits.length}
     <p class="none">
       {entries.length
-        ? `no function matches “${query}”`
-        : "nothing loaded to reference yet — open a module first"}
+        ? `nothing here matches “${query}” — type a full name to reference another module`
+        : "no module on screen — open one, or type a full name like MyApp.Billing.charge"}
     </p>
   {:else}
     {#each rows as row (row.hit.e.path + row.hit.e.sig)}
@@ -191,7 +182,12 @@
         }}
         onmouseenter={() => (cursor = row.i)}
       >
-        <span class="dot" class:priv={row.hit.e.visibility === "private"}></span>
+        {#if row.hit.e.kind === "module"}
+          <!-- The module itself: a reference to it opens the file. -->
+          <span class="mod">module</span>
+        {:else}
+          <span class="dot" class:priv={row.hit.e.visibility === "private"}></span>
+        {/if}
         <span class="sig">{row.hit.e.sig}</span>
         <span class="spacer"></span>
         <span class="ln">{row.hit.e.line}</span>
@@ -298,6 +294,15 @@
     border-radius: 2px;
     background: var(--pub);
     flex: none;
+  }
+  /* The module row: a word, in the gloom teal that module chips use. */
+  .hit .mod {
+    flex: none;
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--gloom-deep);
   }
   .hit .dot.priv {
     background: var(--priv);

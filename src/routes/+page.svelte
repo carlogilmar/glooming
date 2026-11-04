@@ -539,10 +539,21 @@
     try {
       const p = await ipc.openProject(path);
       await leaveProject();
+      // Everything the first screen needs, BEFORE the project is set. Setting it
+      // first showed the Hub with no glooms loaded yet — "Nothing written about
+      // this project" — for the moment it took them to arrive, which on a
+      // project full of glooms is a lie told on the way in.
+      const [idx, files, hub, branch] = await Promise.all([
+        ipc.projectIndex(p.path),
+        ipc.projectFiles(p.path),
+        ipc.hub(p.id).catch(() => ({ topics: [], glooms: [] })),
+        ipc.branchOf(p.path).catch(() => null),
+      ]);
+      index = idx;
+      tree = files;
+      hubData = hub;
+      liveBranch = branch;
       project = p;
-      [index, tree] = await Promise.all([ipc.projectIndex(p.path), ipc.projectFiles(p.path)]);
-      liveBranch = await ipc.branchOf(p.path).catch(() => null);
-      await loadGlooms();
     } catch (e) {
       error = clean(e);
     }
@@ -1092,14 +1103,9 @@
               {/if}
             </span>
           {:else if hubFull && !currentPath}
-            <span class="ghub">
-              The Hub
-              <small>
-                {hubData.glooms.length}
-                {hubData.glooms.length === 1 ? "gloom" : "glooms"} in {hubData.topics.length}
-                {hubData.topics.length === 1 ? "topic" : "topics"}
-              </small>
-            </span>
+            <!-- The counts are on the Hub's own masthead, right below; saying them
+                 here too was the same fact twice. -->
+            <span class="ghub">The Hub</span>
           {:else}
             <span class="gexplore">Exploring — nothing is saved</span>
           {/if}
@@ -2281,12 +2287,6 @@
     font-size: 16px;
     color: var(--gloom-ink);
     white-space: nowrap;
-  }
-  .ghub small {
-    margin-left: 8px;
-    font-family: var(--sans);
-    font-size: 11px;
-    color: var(--gloom-dim);
   }
   .gpick kbd {
     margin-left: 4px;

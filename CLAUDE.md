@@ -402,7 +402,7 @@ a note is not navigating.
 | `` `MyApp.Billing.to_cents` `` | every arity — what `/` inserts |
 | `` `MyApp.Billing.to_cents/1` `` | narrowed to one arity |
 | `` `MyApp.Billing.charge/2:3-6` `` | lines 3–6 of the function, counted from its first line |
-| `` `to_cents`, `to_cents/1:2` `` | bare: **only** in the module the prose is threading |
+| `` `to_cents/1` `` | **not a reference** — plain inline code |
 | `` `Weather.Pipeline` `` | the module itself — a step that opens it |
 
 **The text stores the full name; the chip shows the shortest unique one.**
@@ -418,8 +418,19 @@ candidates and rewrites every occurrence of that text to the chosen full name.
 `matchModules` takes an exact name outright, otherwise dot-boundary suffixes —
 `Pipeline` never matches `ProcessingPipeline`.
 
-**Bare names thread, and stop there.** The old fallback (origin, then every file
-in order) is gone: across a codebase, `changeset/1` exists in thirty modules.
+**A reference always names its module; bare names are plain code.** They used to
+resolve against the module the previous reference named — the "thread" — and
+before that against an origin file, then every file in order. Both read well and
+carried no information: `enabled?/2` alone does not say which file it is in,
+moving a paragraph silently re-pointed it, and across a codebase `changeset/1`
+exists in thirty modules. With the thread gone, a reference depends on nothing
+but its own text, so the resolver is stateless and read mode walks the same path
+wherever you stand.
+
+**Writing about modules you have not opened is the normal case.** Every full name
+tells the shell which file to read (`namedPaths`, from the index), so a note can
+reference a dozen modules and read mode walks all of them without one being opened
+first.
 
 **Lines inside a function replace line ranges.** Counted from the first clause's
 `def`, so edits elsewhere cannot move them; past the function's last line they
@@ -429,8 +440,11 @@ dangle, which is the one way they can still drift and it is visible.
 ambiguous and broken chips carry no `data-line`, so the walk passes them rather
 than stopping or highlighting the wrong code.
 
-**The `/` menu offers every function in a loaded file** — you write about what you
-have read — and inserts the full module name with no arity.
+**The `/` menu offers the module on screen, then its functions** — the module
+itself first, as a step that opens it — and inserts the full module name with no
+arity. It was every function in every file loaded this session, a set that made
+sense when a gloom was a set of files and across a codebase was an accident of what
+you had clicked. For anything else, type the full name.
 
 #### Sharing
 
@@ -1604,7 +1618,7 @@ code pane is the sticky graphic, and `focus` is the graphic's state. So this is
 one wire — doc scroll position → focus — not a rewrite.
 
 **There is no new syntax.** Inline code naming a function in the reading becomes a
-reference (`refs.ts`) — with or without an arity, bare or module-qualified — and
+reference (`refs.ts`) — with or without an arity, always module-qualified — and
 `L30-34` points at plain lines. That keeps the
 markdown portable: paste a reading into a PR comment and it still reads
 correctly, which inventing `{{create_user/1}}` would have destroyed. Anything
@@ -1878,6 +1892,17 @@ the band or `⌘K` brings the **same page** back in place of the two panes
 (`hubPage`); opening a gloom or any file leaves it, and esc or `← Back` returns
 to what was open, which stayed open behind it. It replaced the library, so it
 also searches prose and deletes.
+
+**Its masthead is the top of the page, not a toolbar.** A large centred `HUB` in
+the display face, the project and its counts under it, then the controls and
+tags, all inside the one scroll — so it reads as a page you are on, and gets out
+of the way once you are into the topics. It was a 13px label at the start of a
+toolbar row and read as one more control.
+
+**It never shows before its glooms have loaded.** `enterProject` fetches the
+index, the files and the Hub together and sets `project` last; setting it first
+showed *"Nothing written about this project yet"* for the moment the glooms took
+to arrive.
 
 **It was a modal first, and that was cut.** A sheet over the code made the index
 a detour you had to dismiss, where it is a place you go to — and the sidebar, the

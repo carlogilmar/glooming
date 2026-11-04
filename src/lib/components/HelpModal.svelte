@@ -227,11 +227,16 @@
         },
         { action: "`Weather.Pipeline`", what: "The module itself — a step that opens it" },
         {
-          action: "an unqualified name",
+          action: "`enabled?/2` alone",
           what:
-            "Means the module the prose is currently about: after `MyApp.Billing.charge/2`, a bare " +
-            "`to_cents/1` is Billing's. Only that module — across a whole codebase, a bare " +
-            "`changeset/1` could be thirty things",
+            "Plain code, not a reference. A reference always names its module — on its own, " +
+            "`enabled?/2` does not say which file it is in. The chip shows the short name anyway",
+        },
+        {
+          action: "/ while editing",
+          what:
+            "The module on screen and its functions, inserted with the full module name. For any " +
+            "other module, type the full name: the note reads that file without your opening it",
         },
         {
           action: "a dashed reference",
@@ -248,8 +253,8 @@
         {
           action: "`attrs`, `String.trim`",
           what:
-            "Left as prose. A bare word that names no function, and a module that is not in this " +
-            "project, are things you write about code — not broken references to it",
+            "Left as prose. A word with no module, and a module that is not in this project, are " +
+            "things you write about code — not broken references to it",
         },
       ],
     },

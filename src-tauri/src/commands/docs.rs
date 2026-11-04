@@ -15,8 +15,9 @@ use tauri::State;
 /// emphasis — so the arrival nudge points at it, and the moment you type a word
 /// it stops matching. Nothing has to remember whether a gloom is "fresh".
 pub const INVITATION: &str = "_The code is on the left — write what you make of it here. \
-Press `/` while editing to reference any function in this project; once your prose \
-names one, `▷ Gloom` will walk the code in the order you wrote it._\n";
+Press `/` while editing to reference the module on screen, or type any full name like \
+`MyApp.Billing.charge/2`; once your prose names one, `▷ Gloom` will walk the code in \
+the order you wrote it._\n";
 
 /// Start a gloom in a project. Unnamed: the band selects the name for you, so
 /// naming it costs a sentence and skipping it costs one key — and asking before

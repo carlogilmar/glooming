@@ -141,18 +141,18 @@ export interface VocabEntry {
   filename: string;
   line: number;
   visibility: "public" | "private";
-  /**
-   * This function is in the file currently on screen. Used only to rank the
-   * menu — you are usually writing about what you are looking at — and never to
-   * decide what gets inserted.
-   */
-  nearby: boolean;
+  /** The module itself, or a function in it. */
+  kind: "module" | "function";
 }
 
 /**
- * Everything the `/` menu can insert: every function in every file loaded this
- * session — the one on screen, the ones you walked through, the ones your prose
- * already names. You write about what you have read, so that is the set.
+ * Everything the `/` menu can insert: the module on screen, then its functions.
+ *
+ * Only the file you are looking at. It used to be every function in every file
+ * loaded this session — a set that made sense when a gloom *was* a set of files,
+ * and that across a whole codebase was an accident of what you happened to have
+ * clicked. You write about what is in front of you; for anything else, type the
+ * full name — the note resolves it, and reads the file, without your opening it.
  *
  * **The insert is the full module name. Always.** `MyApp.Billing.to_cents`, never
  * `Billing.to_cents`: a short form that is unique today becomes ambiguous the day
@@ -168,23 +168,22 @@ export function vocabulary(
   currentPath: string | null,
   labels: Map<string, string>,
 ): VocabEntry[] {
+  const file = byPath(files, currentPath);
   const out: VocabEntry[] = [];
-  for (const file of files) {
-    for (const module of file.outline?.modules ?? []) {
-      const label = labels.get(module.name) ?? module.name;
-      for (const fn of module.functions) {
-        out.push({
-          sig: displaySig(fn),
-          insert: `${module.name}.${fn.name}`,
-          module: module.name,
-          label,
-          path: file.path,
-          filename: file.filename,
-          line: fn.line,
-          visibility: fn.visibility,
-          nearby: file.path === currentPath,
-        });
-      }
+  for (const module of file?.outline?.modules ?? []) {
+    const label = labels.get(module.name) ?? module.name;
+    const base = { module: module.name, label, path: file!.path, filename: file!.filename };
+    // The module first: a reference to it is a step that opens the file.
+    out.push({ ...base, kind: "module", sig: label, insert: module.name, line: module.line, visibility: "public" });
+    for (const fn of module.functions) {
+      out.push({
+        ...base,
+        kind: "function",
+        sig: displaySig(fn),
+        insert: `${module.name}.${fn.name}`,
+        line: fn.line,
+        visibility: fn.visibility,
+      });
     }
   }
   return out;
