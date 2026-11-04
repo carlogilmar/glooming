@@ -1291,7 +1291,7 @@
       <span class="spacer"></span>
       <span class="keys">
         <kbd>⌘T</kbd> find · <kbd>⌘[</kbd><kbd>⌘]</kbd> trail · <kbd>⌘\</kbd> sidebar ·
-        <kbd>⌘J</kbd> woop/gloom · <kbd>⌘R</kbd> gloom · <kbd>⌘E</kbd> edit · <kbd>?</kbd> help
+        <kbd>⌘J</kbd> woop/gloom · <kbd>⌘R</kbd> glooming · <kbd>⌘E</kbd> edit · <kbd>?</kbd> help
       </span>
       {#if doc}
         <span>gloom #{doc.id} → sqlite</span>

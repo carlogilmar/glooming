@@ -56,7 +56,7 @@
             "(your note). Remembered per gloom",
         },
         { keys: ["⌘J"], what: "Flip between the Woop and the Gloom" },
-        { keys: ["⌘R"], what: "Gloom: walk the code in the order your prose takes it — every reference, across modules. `esc` also leaves it" },
+        { keys: ["⌘R"], what: "Gloom: walk the code in the order your prose takes it — every reference, across modules. While glooming, ⌘R or `esc` stops" },
         { keys: ["⌘E"], what: "Edit / preview the note. Entering edit stops glooming; typing under a scroll-driven selection is chaos" },
         {
           action: "the views",
@@ -261,8 +261,9 @@
           what:
             "Scroll the note and the code follows your prose order — not the file's — crossing " +
             "into whichever module the next reference names. Every reference is a step, in the " +
-            "order you wrote them — several on one line are walked one by one. To gloom is to " +
-            "read a codebase this way",
+            "order you wrote them — several on one line are walked one by one. While it runs " +
+            "the button says ▶ Glooming: to gloom is to read a codebase this way, and glooming " +
+            "is doing it"
         },
         {
           keys: ["↓", "↑"],

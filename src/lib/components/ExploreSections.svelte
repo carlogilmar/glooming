@@ -27,6 +27,8 @@
     testsOf,
   } from "$lib/explore";
   import type { IndexedModule, Range, ReadingFile } from "$lib/ipc";
+  import { renderModuledoc } from "$lib/moduledoc";
+  import { tick } from "svelte";
 
   let {
     file = null,
@@ -86,6 +88,62 @@
 
   const kind = $derived(file?.outline?.kind ?? "plain");
   const module = $derived(moduleOf(file));
+
+  // ---- the moduledoc --------------------------------------------------------
+  //
+  // First in the Woop, because it is the author telling you what the module is
+  // for — the thing to read before its surface. Rendered markdown in a frame of
+  // its own height: a long moduledoc scrolls inside it rather than pushing the
+  // surface and the reach a screen down, and "Show all" lets it run full length
+  // when it is the thing you came to read. With two or more headings it gets a
+  // navigation bar, which is how a long one is read rather than scrolled.
+  const docView = $derived(module?.doc ? renderModuledoc(module.doc, "moduledoc") : null);
+  let docOpen = $state(false);
+  let docOverflows = $state(false);
+  /** The heading the reader is under, lit in the navigation bar. */
+  let docAt = $state("");
+  let docBody = $state<HTMLDivElement | null>(null);
+
+  // A different file starts folded and at the top. `docFor` is bookkeeping only
+  // this effect reads — a plain `let`, not state.
+  let docFor = "";
+  $effect(() => {
+    const path = file?.path ?? "";
+    if (path === docFor) return;
+    docFor = path;
+    docOpen = false;
+    docAt = "";
+  });
+
+  // Whether the folded frame is hiding anything — only then are "Show all" and
+  // the fade worth showing. Measured after the render lands.
+  $effect(() => {
+    docView;
+    const body = docBody;
+    if (!body) return;
+    void tick().then(() => {
+      if (!docOpen) docOverflows = body.scrollHeight > body.clientHeight + 4;
+    });
+  });
+
+  function goHeading(id: string) {
+    const el = docBody?.querySelector<HTMLElement>(`#${CSS.escape(id)}`);
+    if (!el || !docBody) return;
+    docAt = id;
+    // Folded, the frame scrolls; open, the Woop itself does.
+    if (!docOpen) docBody.scrollTo({ top: el.offsetTop - 6, behavior: "smooth" });
+    else el.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+
+  function onDocScroll() {
+    if (!docBody || !docView) return;
+    let at = "";
+    for (const h of docView.headings) {
+      const el = docBody.querySelector<HTMLElement>(`#${CSS.escape(h.id)}`);
+      if (el && el.offsetTop - docBody.scrollTop <= 12) at = h.id;
+    }
+    docAt = at;
+  }
   const pub = $derived(surfaceOf(module, "public"));
   const priv = $derived(surfaceOf(module, "private"));
   const settings = $derived(settingsOf(file?.outline?.config?.groups ?? []));
@@ -452,6 +510,41 @@
       navigate by. The code is on the left, and the note is yours.
     </p>
   {:else}
+    {#if docView}
+      <p class="sec">
+        Moduledoc
+        {#if module?.docRange}
+          {@const r = module.docRange}
+          <button
+            class="secbtn"
+            onclick={() => onselect?.("@moduledoc", r.start, r)}
+            title="Show it in the code">L{r.start}–{r.end}</button
+          >
+        {/if}
+        {#if !docView.hidden && (docOverflows || docOpen)}
+          <button class="secbtn" onclick={() => (docOpen = !docOpen)}>{docOpen ? "Fold" : "Show all"}</button>
+        {/if}
+      </p>
+      {#if docView.hidden}
+        <!-- Not an empty frame: hiding a module from the docs is a decision, and
+             it says the module is internal. -->
+        <p class="quiet"><code>@moduledoc false</code> — hidden from the docs on purpose: an internal module.</p>
+      {:else}
+        <div class="mdoc" class:open={docOpen} class:clipped={docOverflows && !docOpen}>
+          {#if docView.headings.length > 1}
+            <nav class="mdnav" aria-label="Moduledoc sections">
+              {#each docView.headings as h (h.id)}
+                <button class="l{h.level}" class:on={h.id === docAt} onclick={() => goHeading(h.id)}>{h.text}</button>
+              {/each}
+            </nav>
+          {/if}
+          <div class="mdbody" bind:this={docBody} onscroll={onDocScroll}>
+            {@html docView.html}
+          </div>
+        </div>
+      {/if}
+    {/if}
+
     <p class="sec">Surface</p>
     <div class="surface">
       {#each [["public", pub], ["private", priv]] as const as [k, rows]}
@@ -605,6 +698,160 @@
     height: 1px;
     background: var(--doc-line);
     opacity: 0.7;
+  }
+  /* Small actions at the end of a section's rule: the rule is the ::after, so
+     `order` puts them after it, at the right edge. */
+  .secbtn {
+    order: 1;
+    font: inherit;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--fg-dim);
+    background: transparent;
+    border: 1px solid var(--doc-line);
+    border-radius: 4px;
+    padding: 1px 7px;
+    cursor: pointer;
+  }
+  .secbtn:hover {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  .sec::after {
+    order: 0;
+  }
+
+  /* The moduledoc: the author's prose, so it is set on paper, framed like the
+     surface so the Woop's sections read as siblings. */
+  .mdoc {
+    position: relative;
+    border: 1px solid var(--doc-line);
+    border-radius: 8px;
+    background: var(--doc-bg);
+    box-shadow: var(--shadow);
+  }
+  .mdnav {
+    display: flex;
+    gap: 4px;
+    padding: 6px 8px;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--doc-line);
+    background: var(--doc-raised);
+    border-radius: 8px 8px 0 0;
+    scrollbar-width: none;
+  }
+  /* Open, the Woop scrolls rather than the frame — so the bar holds at the top
+     of the Woop while the sections pass under it. */
+  .mdoc.open .mdnav {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  .mdnav button {
+    flex: none;
+    font: inherit;
+    font-size: 11px;
+    color: var(--fg-dim);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    padding: 1px 9px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .mdnav button.l3 {
+    font-size: 10.5px;
+    color: var(--fg-faint);
+  }
+  .mdnav button:hover {
+    color: var(--accent);
+  }
+  .mdnav button.on {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+  /* Folded: its own height, scrolling inside. Positioned, so headings measure
+     their offset from it when the bar jumps to one. */
+  .mdbody {
+    position: relative;
+    max-height: 260px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 10px 16px 12px;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--doc-fg);
+  }
+  .mdoc.open .mdbody {
+    max-height: none;
+    overflow: visible;
+  }
+  /* Folded with more below: a fade says so, where a hard cut reads as the end. */
+  .mdoc.clipped::after {
+    content: "";
+    position: absolute;
+    left: 1px;
+    right: 1px;
+    bottom: 1px;
+    height: 28px;
+    border-radius: 0 0 8px 8px;
+    background: linear-gradient(transparent, var(--doc-bg));
+    pointer-events: none;
+  }
+  .mdbody :global(:is(h1, h2, h3, h4)) {
+    margin: 14px 0 6px;
+    font-family: var(--serif);
+    line-height: 1.3;
+    color: var(--fg);
+    scroll-margin-top: 40px;
+  }
+  .mdbody :global(h1) {
+    font-size: 16px;
+  }
+  .mdbody :global(h2) {
+    font-size: 14.5px;
+  }
+  .mdbody :global(:is(h3, h4)) {
+    font-size: 13px;
+  }
+  .mdbody :global(:first-child) {
+    margin-top: 0;
+  }
+  .mdbody :global(p),
+  .mdbody :global(ul),
+  .mdbody :global(ol) {
+    margin: 0 0 8px;
+  }
+  .mdbody :global(ul),
+  .mdbody :global(ol) {
+    padding-left: 20px;
+  }
+  .mdbody :global(code) {
+    font-family: var(--mono);
+    font-size: 0.9em;
+    padding: 0 3px;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--doc-fg) 7%, transparent);
+  }
+  .mdbody :global(pre) {
+    margin: 0 0 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: var(--code-bg);
+    border: 1px solid var(--line-soft);
+    overflow-x: auto;
+    font-size: 11.5px;
+    line-height: 1.55;
+  }
+  .mdbody :global(pre code) {
+    padding: 0;
+    background: none;
+  }
+  .mdbody :global(a) {
+    color: var(--accent);
   }
   .sec:not(:first-of-type) {
     margin-top: 26px;

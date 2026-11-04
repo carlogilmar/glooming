@@ -266,6 +266,7 @@ src/
     deps.ts                    draws the reach diagram (see mockup/deps.html)
     tags.ts                    a gloom's tags, in docs.label
     hub.ts                     what the Hub says about a gloom (by rendering it), grouping, moves
+    moduledoc.ts               a module's @moduledoc, rendered for the Woop, with its headings
     exporting.ts               a gloom's name → a filename
     ipc.ts                     typed wrappers over invoke()
 
@@ -1375,6 +1376,30 @@ source is selectable text — deliberately, you copy from it — so a drag acros
 glyphs has to keep meaning "select this text", and the line numbers are the one
 column nobody copies.
 
+### The moduledoc leads the Woop
+
+A module's `@moduledoc` is rendered first in the Woop (`lib/moduledoc.ts`), above
+the surface: it is the author telling you what the module is for, which is what to
+read before its functions. The parser already hands it over as markdown with the
+fencing and indent stripped.
+
+- **A plain markdown-it, not the note's.** The note's renderer turns inline code
+  naming a function into a reference chip; in someone else's moduledoc that would
+  invite a click nothing on this side answers.
+- **Doctests are highlighted.** `iex>` examples sit in *indented* code blocks,
+  which markdown-it renders without calling `highlight`; `code_block` is routed
+  through it, and unlabelled code in an Elixir module is Elixir.
+- **Its own height, folded.** 260px and scrolling inside, so a long moduledoc does
+  not push the surface and the reach a screen down; a fade says there is more, and
+  `Show all` lets it run full length (the Woop scrolls then, and the navigation bar
+  sticks to its top).
+- **A navigation bar when there are two or more headings** (h1–h3), lighting the
+  section you are in. Ids are prefixed and de-duplicated — two `## Examples` are
+  common.
+- `L3–20` on the section's rule selects the moduledoc in the code.
+- **`@moduledoc false` is said, not rendered**: hiding a module from the docs is a
+  decision, and it marks the module as internal.
+
 ### Woop and Gloom: the right pane shows one at a time
 
 **The names.** The note is a **Gloom**; the live views of the code on screen —
@@ -1557,7 +1582,9 @@ the text nearly vanishes.
 The window title and the brand in the title strip say **Glooming**, set in
 `--display` — the same wordmark home carries, so the two agree.
 
-**The read-mode button is `▷ Gloom`**, and *gloom* is the verb: to explore a
+**The read-mode button is `▷ Gloom`, and `▶ Glooming` while it runs** — the verb
+when it is something you can do, its present continuous while you are doing it;
+the trigger band's tag says *Glooming* too. *Gloom* is the verb: to explore a
 codebase by walking your own prose through it. It was `▷ LGTM` while a gloom was
 a review of one change, named for the verdict at the end of the pass; once the
 project became the unit there is no change to approve, and the verb that names

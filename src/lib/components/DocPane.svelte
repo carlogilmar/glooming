@@ -1270,7 +1270,7 @@
     <!-- Where one paragraph hands over to the next. Quiet on purpose: it makes
          the mechanic legible without becoming a debug overlay. -->
     <div class="band" style:top="{bandTop}px" bind:this={bandEl}>
-      <span class="tag">Reader</span>
+      <span class="tag">Glooming</span>
     </div>
   {/if}
   <!-- The strip is controls and nothing else.
@@ -1314,9 +1314,14 @@
           class="btn icon read"
           class:on={reading}
           onclick={toggleReading}
-          title="Gloom: walk the code in the order your prose takes it (⌘R)"
+          title={reading
+            ? "Glooming — the code follows your prose. Click, ⌘R or esc to stop"
+            : "Gloom: walk the code in the order your prose takes it (⌘R)"}
         >
-          {reading ? "▶ Gloom" : "▷ Gloom"}
+          <!-- The verb when it is something you can do, its present continuous
+               while you are doing it: ▷ Gloom, ▶ Glooming. One label for both
+               read as a command in both states. -->
+          {reading ? "▶ Glooming" : "▷ Gloom"}
         </button>
       {/if}
       <span class="spacer"></span>
