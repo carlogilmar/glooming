@@ -263,7 +263,8 @@ src/
       FileIcon.svelte          the tree's icons: folder, the Elixir drop, a page per kind
       FnPalette.svelte         ⌘P — jump to a function by name
       RefMenu.svelte           / — insert a reference to the module on screen or one of its functions
-      HelpModal.svelte         ? — what everything does
+      HelpModal.svelte         ? — the six shortcuts
+      NewGloomModal.svelte     ⌘N — a new gloom's name, asked before it exists
       Divider.svelte           the draggable split between code and the right pane, double-click reset
       Hub.svelte               the project's front page and ⌘K: topics, Recent, filter, quick look, delete
     stores/
@@ -343,25 +344,41 @@ reference renders *plain*, never struck through — "not read yet" is not "gone"
 so an edit made in your editor is there when you return. Only files whose source
 changed are replaced, so unchanged panes do not re-render.
 
-**Glooms belong to a project.** `docs.project_id` has no `ON DELETE CASCADE`, and
-`forget_project` refuses while glooms exist: tidying the recents list must never
-be the gesture that deletes what you wrote. Home lists projects, with their gloom
-counts; inside one, the Hub lists its glooms (below).
+**Glooms belong to a project.** Home lists projects, with their gloom counts;
+inside one, the Hub lists its glooms (below). **Removing a project deletes its
+glooms and topics** (`forget_project`, one transaction, children first —
+`docs.project_id` has no `ON DELETE CASCADE`, so the order is explicit). It used to
+refuse while glooms existed, so that tidying the recents list could never delete
+what you wrote, and there was no remove button at all: a project with glooms had
+no way out. Now the row's `×` asks first, in the row, naming how many glooms go
+and saying the folder itself is not touched — nothing on disk ever is.
 
 **The band is always there.** Inside a project the ink band under the header is
-where you are: a gloom's name and tags, *The Hub*, or *Exploring — nothing is
-saved*. It used to appear only once a gloom was open, so the way in to glooms
+where you are, and its wordmark says it: **HUB**, **GLOOM** (the note, or walking
+it), or **WOOP** (the live views — and all there is with no gloom open), following
+`⌘1`. It said `GLOOM` always, beside *Exploring — nothing is saved*, which a
+newcomer read as a warning and which never said what the pane beside it was. It used to appear only once a gloom was open, so the way in to glooms
 lived in the sidebar, which made the band a surprise rather than a place. A
 `Glooms ▾` picker sat in it for a while and was replaced by `⌂ Hub` — anything
 that hangs below the band must render *outside* it, because the band clips for its
 opening sweep.
 
 **Exploring needs no gloom.** With none open the right pane is the Woop alone and
-there is no Woop | Gloom switch; the band says so, which is why the Woop carries no
-*Start a gloom* bar. `DocPane`
+there is no Woop | Gloom switch; the band's wordmark says WOOP, which is why the
+Woop carries no *Start a gloom* bar.
+
+**A project with no glooms has no Hub.** An empty table of contents is not a
+place, so `noGlooms` keeps `hubFull` false, hides `⌂ Hub` (and `⌘K` does
+nothing), and **opens the file tree** — not persisted — so a newcomer starts where
+they can do something: pick a file, read its Woop. `+ New Gloom` is then the only
+action in the band, filled rather than tinted, and a ring leaves it at `--slow`.
+That ring is the one ambient motion added since the first pass, allowed because
+it ends with the first gloom; under reduced motion it holds still. `DocPane`
 stays mounted in that state (`gloom={false}`) because it owns the reach
-diagram's hover and trace wiring. A new gloom is unnamed, opens with its name
-field focused, and starts as the invitation (`INVITATION` in `commands/docs.rs`).
+diagram's hover and trace wiring. With no file open either, the Woop is not left
+blank — an empty pane read as broken — but says what each side is, Woop and
+Gloom, with `+ New Gloom` under them. A new gloom is named before it exists (see
+below) and starts as the invitation (`INVITATION` in `commands/docs.rs`).
 Opening a gloom lands the code pane on the first module its prose names; closing
 one is done by opening another from the Hub. `close ×` was cut from the band
 once the Hub became the way between glooms: closing to "no gloom" was a state
@@ -369,7 +386,7 @@ nobody went to on purpose.
 
 **The band starts with its actions**: `⌂ Hub` filled in `--gloom` (hollowed while
 you are on the Hub, so it reads "you are here" and a click goes back), then
-`+ New` tinted in `--gloom-new`, a lilac that means nothing else in the chrome,
+`+ New Gloom` tinted in `--gloom-new`, a lilac that means nothing else in the chrome,
 then a hairline and the name. They are the same in every gloom, so they get a
 fixed place instead of drifting after a name of any length.
 
@@ -525,8 +542,8 @@ pushed darker to be legible at all. Four tokens, because a dark surface needs it
 own ink and its own muted grey: `--gloom`, `--gloom-bg`, `--gloom-ink`,
 `--gloom-dim`.
 
-**One line: `⌂ Hub` and `+ New`, a hairline, the name and its tags, then the
-wordmark at the right end.** A title is the first thing after the actions, not the
+**One line: `⌂ Hub` and `+ New Gloom`, a hairline, the name and its tags, then the
+wordmark at the right end** — HUB, GLOOM or WOOP, the Woop's in its warm hue. A title is the first thing after the actions, not the
 middle of the line — centring it needed a three-column grid and 56px of height to
 hold a stacked caption, and bought nothing. A file count lived on the right
 briefly and was cut, then the gloom's set of files went altogether.
@@ -563,17 +580,21 @@ paths stay mono and sans, because they are data rather than something you wrote.
 **A gloom has a name, and it is `docs.title`** — empty until you give it one. Click
 the name to rename it, `↵` to commit, `esc` to throw the edit away.
 
-**A new gloom opens with its name selected**, so naming it costs a sentence and
-skipping it costs one key. That is the only moment it happens: on a gloom you
-have already named, taking the caret is an interruption rather than an
-invitation. There is deliberately no dialog on the way in — asking for a name
-*before* you have read anything asks at the one moment you cannot answer, which
-is the same reason there is no "new group?" prompt.
+**A gloom is named before it exists.** `⌘N`, `+ New Gloom` and the Hub's start
+all open `NewGloomModal` — *What are you trying to understand?*, the name set in
+the band's serif on the band's ink — and nothing is created until it has a name;
+cancelling leaves nothing behind. `create_doc` takes the title and refuses an
+empty one, so the rule does not depend on the UI. Renaming refuses empty too.
 
-**An unnamed gloom shows as an invitation** — *Unnamed gloom*, dimmed and italic,
-with *say what you are here to find out* beside it. Derived from the empty title
-rather than stored as a flag: a flag would have to be maintained by every path that
-writes a title, and this one cannot drift.
+This reverses a decision. A new gloom used to open unnamed with its name
+selected, on the argument that asking *before* you have read anything asks at
+the one moment you cannot answer. In use, skipping the name was what happened,
+and the Hub — a table of contents — filled with *Unnamed gloom*, entries that say
+nothing. A name can always be changed; it cannot be missing.
+
+**An unnamed gloom from before that** still shows as *Unnamed gloom*, dimmed and
+italic, derived from the empty title. The *say what you are here to find out*
+nudge beside it was cut.
 
 The rename takes the server's row but puts **your** markdown back — an autosave
 may be in flight, and adopting the server's copy would lose the sentence you are
@@ -1855,7 +1876,7 @@ newcomer the order is for. New glooms land at the top of Unsorted. Unsorted is
 shown only while it holds something; with every gloom filed it would be a
 heading over nothing. Removing a
 topic moves its glooms to Unsorted in the same transaction; it never deletes one.
-`forget_project` takes a project's (necessarily empty) topics with it.
+`forget_project` takes a project's topics with it, along with its glooms.
 
 **The order is the reading order**, numbered across the whole Hub, topic to
 topic; Unsorted has no numbers because it is not on the path yet. A drag sends the

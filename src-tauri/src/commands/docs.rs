@@ -5,7 +5,7 @@ use crate::commands::files::normalize_path;
 use crate::commands::AppState;
 use crate::db::models::{Doc, DocSummary};
 use crate::db::docs as docs_db;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use std::path::Path;
 use tauri::State;
 
@@ -19,13 +19,18 @@ Press `/` while editing to reference the module on screen, or type any full name
 `MyApp.Billing.charge/2`; once your prose names one, `▷ Gloom` will walk the code in \
 the order you wrote it._\n";
 
-/// Start a gloom in a project. Unnamed: the band selects the name for you, so
-/// naming it costs a sentence and skipping it costs one key — and asking before
-/// you have read anything would ask at the one moment you cannot answer.
+/// Start a gloom in a project, with its name. A name is required: it is what the
+/// Hub lists, and "Unnamed gloom" in a table of contents is an entry that says
+/// nothing. It was optional once, on the argument that asking before you have
+/// read anything asks too early — in use, unnamed glooms piled up instead.
 #[tauri::command]
-pub async fn create_doc(state: State<'_, AppState>, project_id: i64) -> AppResult<Doc> {
+pub async fn create_doc(state: State<'_, AppState>, project_id: i64, title: String) -> AppResult<Doc> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(AppError::BadInput("a gloom needs a name".into()));
+    }
     crate::db::projects::get(&state.pool, project_id).await?;
-    docs_db::create(&state.pool, project_id, "", INVITATION).await
+    docs_db::create(&state.pool, project_id, title, INVITATION).await
 }
 
 #[tauri::command]

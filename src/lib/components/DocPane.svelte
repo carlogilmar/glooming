@@ -22,6 +22,7 @@
     onshowfile,
     onrefs,
     onreading,
+    onside,
     explore,
     opened = 0,
     gloom = true,
@@ -60,6 +61,11 @@
      * would eventually disagree with the button about which is on.
      */
     onreading?: (on: boolean) => void;
+    /**
+     * Which side is on screen, so the band's wordmark can say it — reported, like
+     * `onreading`, because the pane owns the switch.
+     */
+    onside?: (side: "woop" | "gloom") => void;
     /**
      * What you navigate the current file by, rendered at the top of this pane's
      * scroll container.
@@ -202,6 +208,9 @@
   export function flip() {
     show(side === "gloom" ? "woop" : "gloom");
   }
+
+  // Reads `side`, writes only the shell's state — never its own.
+  $effect(() => onside?.(side));
 
   let body = $state<HTMLDivElement | null>(null);
   let pane = $state<HTMLDivElement | null>(null);

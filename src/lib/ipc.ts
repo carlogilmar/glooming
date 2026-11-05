@@ -284,7 +284,8 @@ export const blameFile = (path: string) =>
 // ---- docs ----------------------------------------------------------------
 
 /** Start an unnamed gloom in a project. */
-export const createDoc = (projectId: number) => invoke<Doc>("create_doc", { projectId });
+export const createDoc = (projectId: number, title: string) =>
+  invoke<Doc>("create_doc", { projectId, title });
 
 export const saveDoc = (args: {
   id: number;

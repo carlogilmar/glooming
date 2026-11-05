@@ -10,6 +10,7 @@
   import Hub from "$lib/components/Hub.svelte";
   import FnPalette from "$lib/components/FnPalette.svelte";
   import HelpModal from "$lib/components/HelpModal.svelte";
+  import NewGloomModal from "$lib/components/NewGloomModal.svelte";
   import FilePalette from "$lib/components/FilePalette.svelte";
   import ExploreSections from "$lib/components/ExploreSections.svelte";
   import Sky from "$lib/components/Sky.svelte";
@@ -54,6 +55,8 @@
   let docPane = $state<DocPane | null>(null);
   /** Read mode takes both panes; the sidebar and the views stand down. */
   let readingNow = $state(false);
+  /** Which side the right pane shows — the band's wordmark says it. */
+  let paneSide = $state<"woop" | "gloom">("gloom");
   /**
    * Bumped when a *different* gloom opens — the doc pane's cue to play its
    * arrival animations once, rather than on every keystroke's re-render.
@@ -78,6 +81,8 @@
   let showPalette = $state(false);
   /** `?` — what everything does. */
   let showHelp = $state(false);
+  /** Asking for a new gloom's name — nothing exists until it has one. */
+  let askingName = $state(false);
 
   const file = $derived(byPath(files, currentPath));
   const outline = $derived(file?.outline ?? null);
@@ -167,6 +172,19 @@
       side = sideBeforeHub;
       sideBeforeHub = null;
     }
+  });
+
+  /**
+   * A project with no glooms opens on its files. The Hub is a table of contents,
+   * and an empty one is a page saying nothing; what a newcomer can do on day one
+   * is pick a file and look at its Woop, so the tree is where they start. Runs on
+   * the transition only (it reads `noGlooms`, nothing else), so ⌘B can still
+   * close it — and declared after the Hub's effect, so deleting the last gloom
+   * from the Hub opens the tree rather than restoring whatever was before.
+   * Not persisted, like the Hub's: `sidebar` keeps meaning what you chose.
+   */
+  $effect(() => {
+    if (noGlooms) side = true;
   });
 
   function toggleSide() {
@@ -490,6 +508,21 @@
     if (!project) void loadProjects();
   });
 
+  /**
+   * Removing a project deletes its glooms with it, so it asks first — in the row,
+   * naming how many — rather than in a dialog over the list. Only the database is
+   * touched; the folder is never written to.
+   */
+  let forgetting = $state<number | null>(null);
+  async function forgetProject(id: number) {
+    forgetting = null;
+    try {
+      await ipc.forgetProject(id);
+    } finally {
+      void loadProjects();
+    }
+  }
+
   async function loadGlooms() {
     if (!project) return;
     try {
@@ -500,16 +533,32 @@
   }
 
   /**
+   * Nothing written in this project yet. There is no Hub then — an empty table of
+   * contents is not a place — and `+ New Gloom` is the one thing the band offers.
+   */
+  const noGlooms = $derived(!!project && hubData.glooms.length === 0);
+
+  /**
    * The Hub fills the two panes when nothing is open yet, or when you asked for
    * it. Opening a gloom or a file from anywhere steps it aside; esc returns to
    * whatever was open, which is still there — the gloom, the file, the trail.
    */
-  const hubFull = $derived(!!project && (hubPage || (!doc && !currentPath)));
+  const hubFull = $derived(!!project && !noGlooms && (hubPage || (!doc && !currentPath)));
   /** There is work behind the Hub to go back to. */
   const hubOverWork = $derived(hubFull && (!!doc || !!currentPath));
 
+  /**
+   * The band's wordmark: where you are. The Hub, the Gloom (the note, or walking
+   * it), or the Woop — which is also all there is with no gloom open. It was
+   * `GLOOM` always, beside an "Exploring — nothing is saved" that a newcomer read
+   * as a warning; naming the side says the same thing without one.
+   */
+  const where = $derived(
+    hubFull ? "Hub" : doc && (paneSide === "gloom" || readingNow) ? "Gloom" : "Woop",
+  );
+
   function toggleHub() {
-    if (!project) return;
+    if (!project || noGlooms) return;
     if (hubFull) {
       // Back to the work, if there is any; with nothing open the Hub is the page.
       hubPage = false;
@@ -631,13 +680,20 @@
    * sentence and skipping it costs one key. The code pane stays where you were:
    * a gloom usually starts *because* of what you are looking at.
    */
-  async function newGloom() {
+  /** ⌘N, `+ New Gloom`, the Hub's new: ask for the name first. */
+  function newGloom() {
+    if (project) askingName = true;
+  }
+
+  /** Create it, named. The backend refuses an empty name as well. */
+  async function createGloom(title: string) {
     if (!project) return;
     try {
       await closeGloom();
-      const d = await ipc.createDoc(project.id);
+      const d = await ipc.createDoc(project.id, title);
+      askingName = false;
+      hubPage = false;
       adoptDoc(d);
-      renaming = "";
       await loadGlooms();
     } catch (e) {
       error = clean(e);
@@ -799,6 +855,7 @@
 
     // The Hub answers first while it is on screen — its ↑/↓, Space, ↵ and esc
     // mean something different there — unless a dialog is over it.
+    if (askingName) return; // the modal owns the keys while it is up
     if (hubFull && !showHelp && !showFiles && !showPalette && hubRef?.key(e)) return;
 
     if (e.key === "Escape") {
@@ -893,8 +950,7 @@
     // A new gloom, from anywhere in a project — the Hub included.
     if (meta && key === "n" && !e.shiftKey) {
       e.preventDefault();
-      hubPage = false;
-      void newGloom();
+      newGloom();
       return;
     }
     if (meta && key === "e") {
@@ -924,6 +980,17 @@
       onjump={(module, fn) => openModule(module, fn)}
       oncursor={cursorFromExplore}
     />
+  {:else}
+    <!-- No file yet: an empty pane read as broken. Say what will be here, and
+         what the other side is — the Woop/Gloom split is the one idea a newcomer
+         has to get. -->
+    <div class="woopempty">
+      <b>Woop</b>
+      <p>What the code shows you. Pick a file and this side maps it: its moduledoc, its functions, what it reaches.</p>
+      <b class="g">Gloom</b>
+      <p>What you make of it — a note in your own words, whose references walk the code.</p>
+      <button class="gnew" onclick={newGloom}>+ New Gloom</button>
+    </div>
   {/if}
 {/snippet}
 
@@ -998,14 +1065,36 @@
             {#if projects.length}
               <div class="rlist">
                 {#each projects as p (p.id)}
-                  <button class="rrow" onclick={() => enterProject(p.path)} title={p.path}>
-                    <span class="pname">{p.name}</span>
-                    <span class="ppath">{p.path}</span>
-                    <span class="pcount" class:none={!p.gloomCount}>
-                      {p.gloomCount ? `${p.gloomCount} ${p.gloomCount === 1 ? "gloom" : "glooms"}` : "no glooms"}
-                    </span>
-                    <span class="rwhen">{when(p.openedAt)}</span>
-                  </button>
+                  <!-- The remove button is a sibling of the row's button, never
+                       inside it. -->
+                  <div class="prow" class:asking={forgetting === p.id}>
+                    {#if forgetting === p.id}
+                      <span class="pask">
+                        Remove <b>{p.name}</b>{#if p.gloomCount}
+                          and delete its {p.gloomCount === 1 ? "gloom" : `${p.gloomCount} glooms`}{/if}?
+                        <span class="pfine">The folder itself is not touched.</span>
+                      </span>
+                      <button class="pyes" onclick={() => forgetProject(p.id)}>
+                        {p.gloomCount ? "Delete" : "Remove"}
+                      </button>
+                      <button class="pno" onclick={() => (forgetting = null)}>Cancel</button>
+                    {:else}
+                      <button class="rrow" onclick={() => enterProject(p.path)} title={p.path}>
+                        <span class="pname">{p.name}</span>
+                        <span class="ppath">{p.path}</span>
+                        <span class="pcount" class:none={!p.gloomCount}>
+                          {p.gloomCount ? `${p.gloomCount} ${p.gloomCount === 1 ? "gloom" : "glooms"}` : "no glooms"}
+                        </span>
+                        <span class="rwhen">{when(p.openedAt)}</span>
+                      </button>
+                      <button
+                        class="prm"
+                        onclick={() => (forgetting = p.id)}
+                        title="Remove this project{p.gloomCount ? ' and its glooms' : ''}"
+                        aria-label="Remove {p.name}">×</button
+                      >
+                    {/if}
+                  </div>
                 {/each}
               </div>
             {:else}
@@ -1070,17 +1159,28 @@
                they are the same whatever gloom you are in, so they get a fixed
                place rather than drifting after a name of any length. There is no
                `close ×` any more — the Hub is how you move between glooms. -->
+          {#if !noGlooms}
+            <button
+              class="gpick"
+              class:on={hubFull}
+              onclick={toggleHub}
+              title="This project's glooms, as a table of contents (⌘K)"
+            >
+              ⌂ Hub <kbd>⌘K</kbd>
+            </button>
+          {/if}
+          <!-- With no glooms yet it pulses: the Woop is free to browse, and this is
+               the one step from looking at code to writing down what it does. -->
           <button
-            class="gpick"
-            class:on={hubFull}
-            onclick={toggleHub}
-            title="This project's glooms, as a table of contents (⌘K)"
+            class="gnew"
+            class:first={noGlooms}
+            onclick={newGloom}
+            title="Start a gloom — a note on what you are working out (⌘N)"
           >
-            ⌂ Hub <kbd>⌘K</kbd>
+            + New Gloom
           </button>
-          <button class="gnew" onclick={newGloom} title="Start a gloom (⌘N)">+ New</button>
-          <span class="gsep"></span>
           {#if doc}
+            <span class="gsep"></span>
             {#if renaming !== null}
               <input
                 class="gname"
@@ -1143,20 +1243,11 @@
                 <button class="gtag add" onclick={() => (tagging = true)} title="Add a tag">+</button>
               {/if}
             </span>
-          {:else if hubFull && !currentPath}
-            <!-- The counts are on the Hub's own masthead, right below; saying them
-                 here too was the same fact twice. -->
-            <span class="ghub">The Hub</span>
-          {:else}
-            <span class="gexplore">Exploring — nothing is saved</span>
           {/if}
 
           <span class="spacer"></span>
 
-          {#if doc && !doc.title && renaming === null}
-            <span class="nudge">say what you are here to find out</span>
-          {/if}
-          <span class="glabel">Gloom</span>
+          <span class="glabel {where.toLowerCase()}">{where}</span>
         </div>
       {/key}
 
@@ -1243,10 +1334,7 @@
           current={doc?.id ?? null}
           back={hubOverWork}
           onopen={openFromHub}
-          onnew={() => {
-            hubPage = false;
-            void newGloom();
-          }}
+          onnew={newGloom}
           onchanged={loadGlooms}
           ondeleted={onDocDeleted}
           onback={() => (hubPage = false)}
@@ -1276,12 +1364,12 @@
                   trail={{ back: back.length > 0, forward: fwd.length > 0 }}
                   onback={goBack}
                   onforward={goForward}
-                  keysEnabled={!showFiles && !showPalette && !showHelp}
+                  keysEnabled={!showFiles && !showPalette && !showHelp && !askingName}
                 />
               {/key}
             {:else}
               <div class="nofile">
-                <p>Pick a module from the sidebar, or find one by name.</p>
+                <p>Pick a file from the tree to see its Woop, or find one by name.</p>
                 <button class="btn" onclick={() => (showFiles = true)}>Find a module… <kbd>⌘T</kbd></button>
               </div>
             {/if}
@@ -1306,6 +1394,7 @@
             onshowfile={(p) => openPath(p, !readingNow)}
             onrefs={(paths) => (referenced = paths)}
             onreading={(on) => (readingNow = on)}
+            onside={(v) => (paneSide = v)}
             explore={exploreSections}
           />
         </div>
@@ -1382,6 +1471,9 @@
   {#if showHelp}
     <HelpModal onclose={() => (showHelp = false)} />
   {/if}
+  {#if askingName}
+    <NewGloomModal oncreate={createGloom} onclose={() => (askingName = false)} />
+  {/if}
 
 </div>
 
@@ -1420,17 +1512,6 @@
   .gloombar .spacer {
     flex: 1;
   }
-  .nudge {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .nudge {
-    flex: none;
-    font-size: 10.5px;
-    font-style: italic;
-    color: var(--gloom-dim);
-  }
   /* Lettering, not a chip. Condensed and spaced out, it reads as a wordmark —
      the name of the thing you are in — where a filled pill read as a status. */
   .glabel {
@@ -1447,6 +1528,11 @@
        light, 9.5:1 dark. On the old pale band the same colour was 4.2:1 and had
        to be pushed darker. */
     color: var(--gloom);
+  }
+  /* The Woop wears its own warm hue, as it does in the pane's switch — pulled
+     toward the band's ink, because the light theme's gold is too dark for it. */
+  .glabel.woop {
+    color: color-mix(in srgb, var(--read) 55%, var(--gloom-ink));
   }
 
   .gname {
@@ -2115,7 +2201,6 @@
     color: var(--fg);
     background: transparent;
     border: 0;
-    border-bottom: 1px solid var(--line-soft);
     /* Explicit, and on the children too: a row is one target, and the text inside
        it must not offer an I-beam for a selection it will never make. */
     cursor: pointer;
@@ -2123,11 +2208,82 @@
   .rrow * {
     cursor: pointer;
   }
-  .rrow:last-child {
+  .prow {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .prow:last-child {
     border-bottom: 0;
   }
-  .rrow:hover {
+  .prow:hover {
     background: color-mix(in srgb, var(--gloom-deep) 8%, transparent);
+  }
+  .rrow {
+    flex: 1;
+    min-width: 0;
+  }
+  /* Quiet until the row is under the pointer: removing is the rare thing. */
+  .prm {
+    flex: none;
+    width: 26px;
+    margin-right: 6px;
+    font: inherit;
+    font-size: 14px;
+    line-height: 1;
+    padding: 3px 0;
+    color: var(--fg-faint);
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+  .prow:hover .prm,
+  .prm:focus-visible {
+    opacity: 1;
+  }
+  .prm:hover {
+    color: var(--priv);
+    background: color-mix(in srgb, currentColor 10%, transparent);
+  }
+  .prow.asking {
+    gap: 8px;
+    padding: 6px 12px;
+    background: color-mix(in srgb, var(--priv) 7%, transparent);
+  }
+  .pask {
+    flex: 1;
+    min-width: 0;
+    font-size: 12.5px;
+    color: var(--fg);
+  }
+  .pfine {
+    margin-left: 4px;
+    font-size: 11px;
+    color: var(--fg-dim);
+  }
+  .pyes,
+  .pno {
+    flex: none;
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .pyes {
+    /* The page's own ground on the fill, so it holds in both themes. */
+    color: var(--bg);
+    background: var(--priv);
+    border: 1px solid var(--priv);
+  }
+  .pno {
+    color: var(--fg);
+    background: transparent;
+    border: 1px solid var(--line);
   }
 
   /* The origin filename was here and went: the name identifies the gloom, and a
@@ -2261,15 +2417,6 @@
     font-size: 10px;
     opacity: 0.8;
   }
-  /* The band's place for a gloom when there is none: said once, here, where the
-     name would be — which is why the views no longer carry a bar saying it. */
-  .gexplore {
-    font-family: var(--serif);
-    font-size: 15px;
-    font-style: italic;
-    color: var(--gloom-dim);
-    white-space: nowrap;
-  }
   /* The Hub, filled in the band's own bright teal: the one way around the
      knowledge base, so it is the strongest thing on the line. Ink on teal, 7.4:1
      light and 11.1:1 dark. */
@@ -2308,6 +2455,44 @@
   .gnew:hover {
     background: color-mix(in srgb, var(--gloom-new) 24%, transparent);
   }
+  /* The project's first gloom: a ring leaves the button and fades, at the focus
+     pulse's beat. Ambient, which the budget otherwise refuses — but it lasts only
+     until the first gloom exists, and it is the one thing a newcomer has to find.
+     A pseudo-element scaled by transform, so it is composited and the band's
+     clip (it has to clip for its sweep) keeps it inside the strip. */
+  .gnew.first {
+    position: relative;
+    color: var(--gloom-bg);
+    background: var(--gloom-new);
+  }
+  .gnew.first::after {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    border: 1.5px solid var(--gloom-new);
+    pointer-events: none;
+    animation: firstGloom var(--slow) var(--ease-out) infinite;
+  }
+  @keyframes firstGloom {
+    from {
+      transform: scale(1);
+      opacity: 0.8;
+    }
+    70%,
+    to {
+      transform: scale(1.14, 1.5);
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* The ring holds still, close to the button: still says "here". */
+    .gnew.first::after {
+      animation: none;
+      transform: scale(1.06, 1.3);
+      opacity: 0.5;
+    }
+  }
   /* Between the actions and the name: a hairline, so the name reads as the
      start of its own thing rather than a third button. */
   .gsep {
@@ -2320,14 +2505,6 @@
   .bandwrap {
     position: relative;
     flex: none;
-  }
-  /* The Hub names itself where a gloom's name would be: on the Hub, that is
-     where you are. */
-  .ghub {
-    font-family: var(--serif);
-    font-size: 16px;
-    color: var(--gloom-ink);
-    white-space: nowrap;
   }
   .gpick kbd {
     margin-left: 4px;
@@ -2543,6 +2720,41 @@
     font-size: 10.5px;
     line-height: 1.4;
     color: var(--fg-faint);
+  }
+  .woopempty {
+    max-width: 340px;
+    margin: 0 auto;
+    padding: 18vh 24px 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .woopempty b {
+    font-family: var(--display);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--read) 80%, var(--fg));
+  }
+  .woopempty b.g {
+    margin-top: 10px;
+    color: var(--gloom-deep);
+  }
+  .woopempty p {
+    margin: 0;
+    font-family: var(--serif);
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--fg-dim);
+  }
+  /* The band's button, on paper: the lilac is ink-only, so here it is filled. */
+  .woopempty .gnew {
+    margin-top: 14px;
+    color: var(--gloom-bg);
+    background: var(--gloom-new);
+    border-color: var(--gloom-new);
   }
   .nofile {
     flex: 1;

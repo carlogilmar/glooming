@@ -44,32 +44,24 @@ pub async fn recent(pool: &SqlitePool, limit: i64) -> AppResult<Vec<Project>> {
     .await?)
 }
 
-/// Drop a folder from the recents.
+/// Remove a project, and everything written about it: its glooms and topics.
 ///
-/// Refused while glooms belong to it: forgetting a folder is tidying a list, and
-/// it must never be the gesture that throws away what you wrote about it.
+/// It used to refuse while glooms existed, on the grounds that tidying the recents
+/// list must not delete what you wrote — which left a project with glooms no way
+/// out at all. Removing is now a deliberate act the UI confirms, naming how many
+/// glooms go with it. Only the database is touched; the folder on disk never is.
+/// One transaction, children first: a gloom points at its topic and its project,
+/// and a topic at its project.
 pub async fn forget(pool: &SqlitePool, id: i64) -> AppResult<()> {
-    let p = get(pool, id).await?;
-    if p.gloom_count > 0 {
-        return Err(AppError::BadInput(format!(
-            "{} has {} gloom{} — delete {} first to forget the folder",
-            p.name,
-            p.gloom_count,
-            if p.gloom_count == 1 { "" } else { "s" },
-            if p.gloom_count == 1 { "it" } else { "them" },
-        )));
-    }
-    // Empty topics go with it: with no glooms left they are headings over
-    // nothing, and the foreign key would otherwise refuse the delete.
+    get(pool, id).await?;
     let mut tx = pool.begin().await?;
-    sqlx::query("DELETE FROM topics WHERE project_id = ?")
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("DELETE FROM projects WHERE id = ?")
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
+    for sql in [
+        "DELETE FROM docs WHERE project_id = ?",
+        "DELETE FROM topics WHERE project_id = ?",
+        "DELETE FROM projects WHERE id = ?",
+    ] {
+        sqlx::query(sql).bind(id).execute(&mut *tx).await?;
+    }
     tx.commit().await?;
     Ok(())
 }
@@ -109,15 +101,25 @@ mod tests {
         assert_eq!(recent(&pool, 10).await.unwrap()[0].gloom_count, 2);
     }
 
-    /// Tidying the recents list must never delete what you wrote.
+    /// Removing a project takes its glooms and topics with it — and only its own.
     #[tokio::test]
-    async fn a_folder_with_glooms_cannot_be_forgotten() {
+    async fn forgetting_a_project_deletes_its_glooms_and_topics() {
         let pool = test_pool().await;
         let p = touch(&pool, "/code/my_app", "my_app").await.unwrap();
+        let other = touch(&pool, "/code/other", "other").await.unwrap();
         crate::db::docs::create(&pool, p.id, "One", "").await.unwrap();
+        crate::db::docs::create(&pool, p.id, "Two", "").await.unwrap();
+        crate::db::docs::create(&pool, other.id, "Kept", "").await.unwrap();
+        crate::db::topics::create(&pool, p.id, "Billing").await.unwrap();
 
-        let err = forget(&pool, p.id).await.expect_err("refuses");
-        assert!(err.to_string().contains("1 gloom"), "got: {err}");
-        assert_eq!(recent(&pool, 10).await.unwrap().len(), 1, "still there");
+        forget(&pool, p.id).await.unwrap();
+
+        let left = recent(&pool, 10).await.unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].path, "/code/other");
+        assert_eq!(left[0].gloom_count, 1, "another project's glooms are untouched");
+        let (docs,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM docs").fetch_one(&pool).await.unwrap();
+        let (topics,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM topics").fetch_one(&pool).await.unwrap();
+        assert_eq!((docs, topics), (1, 0));
     }
 }
